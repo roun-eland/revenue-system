@@ -94,12 +94,12 @@ function renderDash() {
     `<div><div class="k">과잉 투입 합계</div><div class="v" style="color:var(--crit)">+${won(tOver)}</div><div class="s">MH/월 · 절감 여지</div></div>`;
   const maxOver = Math.max(...rows.map(r => Math.abs(r.over)));
   let html = '<table><colgroup><col style="width:150px"><col style="width:80px"><col style="width:80px"><col style="width:90px"><col style="width:80px"><col style="width:170px"><col style="width:90px"></colgroup>' +
-    '<thead><tr><th>매장</th><th>매출(억)</th><th>총 MH</th><th>생산성(원/MH)</th><th>필요 MH</th><th>과잉 MH</th><th>밴드</th></tr></thead><tbody>';
+    '<thead><tr><th>매장</th><th>매출(억)</th><th>총 MH</th><th>생산성(원/MH)</th><th>생산성 점수</th><th>과잉 MH</th><th>밴드</th></tr></thead><tbody>';
   for (const r of rows) {
     const b = prodBand(r.prod);
     const w = Math.round(Math.abs(r.over) / maxOver * 90);
     html += `<tr class="rowlink" data-code="${r.code}"><td>${r.name}</td><td>${(r.sales/1e8).toFixed(2)}</td>` +
-      `<td>${won(r.mh)}</td><td><b>${won(r.prod)}</b></td><td>${won(r.need)}</td>` +
+      `<td>${won(r.mh)}</td><td><b>${won(r.prod)}</b></td><td><b>${(r.prod / TARGET * 100).toFixed(0)}%</b></td>` +
       `<td>${r.over > 0 ? '+' + won(r.over) : won(r.over)} <span class="mini" style="width:${w}px;${r.over<=0?'background:var(--dark)':''}"></span></td>` +
       `<td><span class="band ${b}">${b==='g'?'목표권':b==='w'?'관리':'미달'}</span></td></tr>`;
   }
