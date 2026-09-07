@@ -228,11 +228,15 @@ async function upsertChunks(table, rows, conflict) {
   }
 }
 
-// ① 일별매출 (EATS 일자별 엑셀 그대로)
+// ① 일별매출 — 두 포맷 지원:
+//   (a) EATS 세로 포맷: 행 = 매장×일 (매장코드/날짜/런치/디너/합계/객수)
+//   (b) 월별 와이드 포맷: 행 = 매장, 열 = 1~31일 합계 ('영업일수' 헤더, 파일명 YYMM.xlsx로 월 판별)
 async function uploadSales(file) {
   report('acSalesMsg', '', '읽는 중…');
   try {
-    const rows = (await sheetRows(file)).filter(r => isCode(r[0]) && normDate(r[2]));
+    const all = await sheetRows(file);
+    if (all.some(r => r && r.some(c => String(c).includes('영업일수')))) return uploadSalesWide(file, all);
+    const rows = all.filter(r => isCode(r[0]) && normDate(r[2]));
     if (!rows.length) throw new Error('매장코드(RUxxx)+날짜 형식의 행을 찾지 못했습니다 — EATS 일자별 매출 원본인지 확인해주세요.');
     const out = [], perStore = {}, badCodes = new Set();
     rows.forEach(r => {
@@ -247,6 +251,37 @@ async function uploadSales(file) {
     report('acSalesMsg', 'ok', `저장됨: ${out.length}행 · ${Object.keys(perStore).length}개 매장 · 합계 ${(tot/1e8).toFixed(2)}억` +
       (badCodes.size ? ` <span style="color:var(--warn)">(미등록 코드 제외: ${[...badCodes].join(',')})</span>` : ''));
   } catch (e) { report('acSalesMsg', 'err', '실패: ' + e.message); }
+}
+
+// ①-b 월별 와이드 포맷 파서 — total만 upsert(런치/디너/객수 키를 아예 보내지 않아
+// 이미 상세가 들어있는 달을 덮어써도 그 컬럼들은 보존됨). 0원 일자 = 휴점으로 간주, 행 미생성.
+async function uploadSalesWide(file, all) {
+  const m = String(file.name || '').match(/(\d{2})(\d{2})/);
+  if (!m || +m[2] < 1 || +m[2] > 12) throw new Error('와이드 포맷은 파일명이 YYMM.xlsx(예: 2401.xlsx)여야 대상 월을 알 수 있습니다.');
+  const ym = `20${m[1]}-${m[2]}`;
+  const daysInMonth = new Date(+('20' + m[1]), +m[2], 0).getDate();
+  const out = [], badCodes = new Set(), warns = [];
+  let nStores = 0;
+  all.forEach(r => {
+    const code = String(r[1] || '').trim();
+    if (!/^RU\d{3}$/.test(code)) return;
+    if (!OT_DATA[code]) { badCodes.add(code); return; }
+    nStores++;
+    let sum = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const v = num(r[4 + d]);
+      if (v > 0) { out.push({ store_code: code, sales_date: `${ym}-${String(d).padStart(2, '0')}`, total: v }); sum += v; }
+    }
+    const declared = num(r[3]);
+    if (declared && Math.abs(sum - declared) > 1) warns.push(`${code} 합계 불일치(${won(sum)}≠${won(declared)})`);
+  });
+  if (!out.length) throw new Error(`${ym}: 적재할 행이 없습니다.`);
+  await upsertChunks('ot_sales_daily', out, 'store_code,sales_date');
+  const tot = out.reduce((t, r) => t + r.total, 0);
+  report('acSalesMsg', warns.length ? 'err' : 'ok',
+    `저장됨(${ym}): ${nStores}개 매장 · ${out.length}일행 · 합계 ${(tot/1e8).toFixed(2)}억` +
+    (badCodes.size ? ` · 미등록 코드 제외: ${[...badCodes].join(',')}` : '') +
+    (warns.length ? ` · <b>검증 경고: ${warns.join(' / ')}</b>` : ''));
 }
 
 // ② 메이트 급여대장 (시간 단위 '분', 야간·추가는 ×0.5 가산이라 MH 제외, 휴일근무는 배수 ≥1.0인 행만 가산)
