@@ -71,6 +71,9 @@ $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.reload(
 function showView(v) {
   document.querySelectorAll('#otNav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   for (const k of ['dash','plan','feedback','actual','ref']) $('view-' + k).hidden = (k !== v);
+  // M2 화면은 진입 시 로드 (ot-actuals.js)
+  if (v === 'feedback' && typeof loadFeedback === 'function') loadFeedback();
+  if (v === 'actual' && typeof initActualViews === 'function') initActualViews();
 }
 document.querySelectorAll('#otNav button').forEach(b => {
   if (!b.disabled) b.onclick = () => showView(b.dataset.view);

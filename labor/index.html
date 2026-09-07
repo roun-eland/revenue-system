@@ -42,8 +42,8 @@
   <nav class="ot-nav" id="otNav">
     <button data-view="dash" class="on">전사 대시보드</button>
     <button data-view="plan">계획 시뮬레이션</button>
-    <button data-view="feedback" disabled>매장 피드백<span class="soon">M2</span></button>
-    <button data-view="actual" disabled>실적 입력<span class="soon">M2</span></button>
+    <button data-view="feedback">매장 피드백</button>
+    <button data-view="actual">실적 입력</button>
     <button data-view="ref">기준정보</button>
   </nav>
 
@@ -146,14 +146,48 @@
       </div>
     </section>
 
-    <!-- S3/S4 자리 (M2) -->
+    <!-- S3 매장 피드백 -->
     <section id="view-feedback" class="view" hidden>
       <h2>매장 피드백</h2>
-      <div class="placeholder-box"><b>M2에서 제공</b><br>표준 계획 대비 실적 — 달성률·과잉 MH·문제 일자 드릴다운·원인 태깅</div>
+      <p class="view-sub">계획(목표) 대비 실적 — 필요 MH는 그날 <b>실적 매출 기준</b>으로 재계산해 비교합니다. 목표는 확정 계획이 있으면 그 값, 없으면 임시 기준(엔진)입니다.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:200px">매장<select id="fbStore"></select></label>
+        <label class="fld" style="min-width:150px">월<select id="fbMonth"></select></label>
+      </div>
+      <div id="fbBody"></div>
     </section>
+
+    <!-- S4 실적 입력 -->
     <section id="view-actual" class="view" hidden>
       <h2>실적 입력</h2>
-      <div class="placeholder-box"><b>M2에서 제공</b><br>일별매출 업로드(EATS 엑셀) · 월 인건비 입력 · 특이사항 태깅</div>
+      <p class="view-sub">엑셀 원본을 그대로 올리면 파서가 정리해 저장합니다 (저장은 기획자 계정만 가능). 대상 월은 급여대장에만 적용되고, 매출·근태는 파일의 날짜를 그대로 사용합니다.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:150px">대상 월 (급여대장용)<select id="acYm"></select></label>
+      </div>
+      <div class="ref-grid">
+        <div class="card">
+          <h3 style="margin:0 0 6px">① 일별매출</h3>
+          <p class="dnote" style="margin:0 0 10px">EATS "일자별 매출" 엑셀 그대로. 매장코드·날짜·런치·디너·합계·객수를 읽습니다.</p>
+          <input type="file" id="acSalesFile" accept=".xlsx,.xls,.csv">
+          <p class="plan-msg" id="acSalesMsg" style="margin-top:8px"></p>
+        </div>
+        <div class="card">
+          <h3 style="margin:0 0 6px">② 메이트 급여대장 (월 1회)</h3>
+          <p class="dnote" style="margin:0 0 10px">시간 컬럼은 분 단위, 야간·추가수당(×0.5 가산)은 MH에서 제외, 휴일근무는 배수 ≥1.0인 행만 가산 — 파서가 자동 처리합니다.</p>
+          <input type="file" id="acPayFile" accept=".xlsx,.xls,.csv">
+          <p class="plan-msg" id="acPayMsg" style="margin-top:8px"></p>
+        </div>
+        <div class="card">
+          <h3 style="margin:0 0 6px">③ 출퇴근 기록부 (선택 — 시간대 분석용)</h3>
+          <p class="dnote" style="margin:0 0 10px">일별·시간대별 투입 MH를 계산합니다. 없으면 피드백은 월 단위까지만 제공됩니다.</p>
+          <input type="file" id="acAttFile" accept=".xlsx,.xls,.csv">
+          <p class="plan-msg" id="acAttMsg" style="margin-top:8px"></p>
+        </div>
+        <div class="card">
+          <h3 style="margin:0 0 6px">적재 현황</h3>
+          <p class="dnote" style="margin:0 0 10px">2026-08 실적은 원천데이터에서 미리 적재되어 있습니다 (매출 510행 · 근태 512일분 · 급여 17개 매장). 9월부터 여기로 올려주세요.</p>
+        </div>
+      </div>
     </section>
 
     <!-- S5 기준정보 -->
@@ -201,7 +235,9 @@
 </div>
 
 <script src="../vendor/supabase.min.js"></script>
+<script src="../vendor/xlsx.full.min.js"></script>
 <script src="../ot-seed.js?v=202609041641"></script>
-<script src="../ot.js?v=202609070952"></script>
+<script src="../ot.js?v=202609071037"></script>
+<script src="../ot-actuals.js?v=202609071037"></script>
 </body>
 </html>
