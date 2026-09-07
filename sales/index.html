@@ -6,24 +6,115 @@
 <title>로운 매출</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="../ot.css?v=202609041415">
+<style>
+/* 매출 섹션 전용 — v8 체계 위에 일별 캘린더 그리드만 추가 */
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;min-width:720px}
+.cal .ch{font-size:11px;font-weight:700;color:var(--muted2);text-align:center;padding:2px 0}
+.cal .cd{border:1px solid var(--line);border-radius:4px;padding:7px 8px;min-height:74px;background:var(--surface)}
+.cal .cd.off{background:var(--fill);border-style:dashed}
+.cal .cd.hol .dnum{color:var(--hol)}
+.cal .dnum{font-size:12px;font-weight:700}
+.cal .fc{font-size:12px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
+.cal .ac{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+.cal .df{display:inline-block;font-size:10px;font-weight:700;border-radius:8px;padding:0 6px;margin-top:2px}
+.cal .df.up{background:var(--green-bg,#f3fbe7);color:var(--good)}
+.cal .df.dn{background:var(--hol-bg);color:var(--crit)}
+.cal .tag{display:inline-block;font-size:9px;font-weight:700;color:#fff;background:var(--dark);border-radius:8px;padding:0 6px;margin-left:3px;vertical-align:1px}
+.chartbox{position:relative;height:260px}
+</style>
 </head>
 <body>
-<div class="gnav">
-  <span class="gnav-brand">로운</span>
-  <span class="gnav-item on">매출</span>
-  <a class="gnav-item" href="../labor/">생산성</a>
-  <a class="gnav-item" href="../cost/">원가</a>
+
+<div id="loginView" class="ot-login" hidden></div>
+
+<div id="appView" hidden>
+  <div class="gnav">
+    <span class="gnav-brand">로운</span>
+    <span class="gnav-item on">매출</span>
+    <a class="gnav-item" href="../labor/">생산성</a>
+    <a class="gnav-item" href="../cost/">원가</a>
+  </div>
+  <header class="ot-header">
+    <div class="ot-brand"><span class="mark">매출</span><span class="name">매장별 예상매출</span></div>
+    <div class="spacer"></div>
+    <span class="who"><span id="whoEmail"></span> <span class="role-chip" id="roleChip">기획자</span></span>
+    <button id="logoutBtn" class="btn btn-sm" type="button">로그아웃</button>
+  </header>
+
+  <nav class="ot-nav" id="sfNav">
+    <button data-view="brand" class="on">브랜드 대시보드</button>
+    <button data-view="daily">매장 일별</button>
+    <button data-view="acc" disabled>정확도 피드백<span class="soon">M2</span></button>
+    <button data-view="admin">발행 관리</button>
+  </nav>
+
+  <main class="ot-main">
+
+    <!-- V1 브랜드 대시보드 -->
+    <section id="view-brand" class="view">
+      <h2>브랜드 대시보드</h2>
+      <p class="view-sub" id="brandSub">확정 예측 vs 실적 진행 vs 착지 전망. 예측은 발행 시점 컷오프까지의 실적만 사용한 불변 스냅샷입니다.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:160px">조회 월<select id="brandMonth"></select></label>
+      </div>
+      <div class="kpis" id="brandKpis"></div>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 10px">일별 누적 — 예측 vs 실적</h3>
+        <div class="chartbox"><canvas id="brandChart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="tblwrap" id="brandTable"></div>
+        <p class="dnote">페이스 = 실적 누계 ÷ 같은 기간 예측 누계 (100% = 예측대로) · 착지 = 실적 누계 + 잔여일 예측 · YoY = 전년 동월 같은 기간 대비. 행 클릭 → 매장 일별.</p>
+      </div>
+    </section>
+
+    <!-- V2 매장 일별 -->
+    <section id="view-daily" class="view" hidden>
+      <h2>매장 일별</h2>
+      <p class="view-sub">일자별 예상매출과 실적 — 점장님 스케줄 판단 기준 화면. 예측값을 참고해 그날의 인력 배치를 정하세요.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:200px">매장<select id="dailyStore"></select></label>
+        <label class="fld" style="min-width:150px">월<select id="dailyMonth"></select></label>
+        <a id="toPlanBtn" class="btn btn-sm" style="display:inline-flex;align-items:center;text-decoration:none;align-self:flex-end">이 예측으로 TO 계획 →</a>
+      </div>
+      <div class="kpis" id="dailyKpis"></div>
+      <div class="card">
+        <div class="tblwrap"><div class="cal" id="calGrid"></div></div>
+        <p class="dnote">칸: 위 = 실적(굵게), 아래 = 예측. 빗금 = 휴점(정기 휴점·명절 당일). <span style="color:var(--hol)">빨간 날짜</span> = 공휴일. 오차 뱃지는 실적 있는 날만.</p>
+      </div>
+    </section>
+
+    <!-- V3 자리 -->
+    <section id="view-acc" class="view" hidden>
+      <h2>정확도 피드백</h2>
+      <div class="placeholder-box"><b>SF-M2에서 제공</b><br>MAPE 추이 · 오차 상위일 원인 태깅 · 요인별 기여 분석</div>
+    </section>
+
+    <!-- V4 발행 관리 (admin) -->
+    <section id="view-admin" class="view narrow" hidden>
+      <h2>발행 관리</h2>
+      <p class="view-sub">확정 예측은 발행 후 불변 — 오차 측정의 기준이 됩니다. 컷오프(전월 말)까지의 실적만 사용합니다.</p>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 8px">확정 예측 발행</h3>
+        <div class="plan-actions">
+          <label class="fld" style="min-width:150px">대상 월<select id="pubMonth"></select></label>
+          <button id="pubBtn" class="btn btn-green" type="button" style="align-self:flex-end">확정 예측 발행</button>
+          <span class="plan-msg" id="pubMsg" style="align-self:flex-end"></span>
+        </div>
+        <p class="dnote">모델 v1(sfv1): 매장별 최근 4주 요일 중앙값 × 계절비(전년 동월/전월) × 공휴일계수 × 추세(±10%). 199 매장은 2025-09 가격모델 전환 이후 데이터만 사용. 동부산(신규)은 프리미어 평균 가정치.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin:0 0 8px">발행 이력</h3>
+        <div class="tblwrap" id="runsTable"></div>
+      </div>
+    </section>
+
+  </main>
 </div>
-<main class="ot-main">
-  <section class="view narrow">
-    <h2>매출</h2>
-    <p class="view-sub">예상매출 · 일별매출</p>
-    <div class="placeholder-box" style="padding:48px 16px">
-      <b>준비 중입니다</b><br>
-      생산성 시스템 완료 후 오픈 예정 — 예상매출(당월 전망)과 일별매출 조회가 여기에 들어갑니다.<br>
-      일별매출 데이터는 생산성 피드백과 공유됩니다.
-    </div>
-  </section>
-</main>
+
+<script src="../vendor/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+<script src="../ot-seed.js?v=202609071500"></script>
+<script src="../sales.js?v=202609071500"></script>
 </body>
 </html>
