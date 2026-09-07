@@ -40,7 +40,15 @@ async function loadFeedback() {
   const box = $('fbBody');
   box.innerHTML = '<p class="dnote">실적 불러오는 중…</p>';
 
-  const from = ym + '-01', to = ym + '-31';
+  // 월 마지막 날을 정확히 계산 (9월을 '-31'로 조회하면 date 파싱 에러)
+  const mdays = new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
+  const from = ym + '-01', to = `${ym}-${String(mdays).padStart(2, '0')}`;
+  // 피드백 기간: 완결된 주차(화~월)까지 — 월 중에는 "지난주까지"를 평가, 지난 달은 월 전체
+  const now2 = new Date();
+  const todayStr = `${now2.getFullYear()}-${String(now2.getMonth() + 1).padStart(2, '0')}-${String(now2.getDate()).padStart(2, '0')}`;
+  const wksAll = weekOptionsForMonth(+ym.slice(0, 4), +ym.slice(5));
+  const wksDone = wksAll.filter(w => w.periodEnd < todayStr);
+  const cap = wksDone.length ? wksDone[wksDone.length - 1].periodEnd : to;
   const [sales, labor, monthly, plans, notes, periodsRes] = await Promise.all([
     sb.from('ot_sales_daily').select('*').eq('store_code', code).gte('sales_date', from).lte('sales_date', to).order('sales_date'),
     sb.from('ot_labor_daily').select('*').eq('store_code', code).gte('work_date', from).lte('work_date', to),
@@ -60,8 +68,8 @@ async function loadFeedback() {
   const notesByDate = {}; (notes.data || []).forEach(n => { (notesByDate[n.note_date] = notesByDate[n.note_date] || []).push(n); });
   const dowKeyOf = d => String((new Date(d + 'T00:00:00').getDay() + 6) % 7);
 
-  // ---- 일별 계산 ----
-  const days = sales.data.map(r => {
+  // ---- 일별 계산 (완결 주차까지만 — 진행 중 주의 반쪽 데이터로 판단하지 않는다) ----
+  const days = sales.data.filter(r => r.sales_date <= cap).map(r => {
     const dk = dowKeyOf(r.sales_date);
     const need = needMHof(s, Number(r.total), dk);
     const ld = laborByDate[r.sales_date];
@@ -84,7 +92,13 @@ async function loadFeedback() {
   const fullpay0 = p?.staffing_snapshot?.fullpay ?? s.fullpay;
   const plan = computeMonthPlan(code, ym, planM, nfull, fullpay0);
   const planRatio = p?.output?.ratio ?? plan.ratio;
-  const achieve = actSales / planM * 100;
+  // 기간 계획 매출: 월 계획을 요일지수로 일할해 기간(월초~완결 주차 끝)만큼만 비교 — 월 중에도 달성률 100% 기준이 됨
+  const mdAll = monthDates(ym, s).filter(x => !x.closed);
+  const wAll = mdAll.reduce((t, x) => t + (x.hol ? s.hol : s.wd[x.wd]), 0);
+  const wCap = mdAll.filter(x => x.iso <= cap).reduce((t, x) => t + (x.hol ? s.hol : s.wd[x.wd]), 0);
+  const planPeriod = wAll ? planM * wCap / wAll : planM;
+  const achieve = planPeriod ? actSales / planPeriod * 100 : 0;
+  const capLabel = cap < to ? `${from.slice(5).replace('-', '/')}~${cap.slice(5).replace('-', '/')} · ${wksDone.length}주차까지` : '월 전체';
 
   // ---- 실적 인건비율 — 주차 급여(ot_labor_periods)가 있으면 그 기간 기준, 없으면 월 급여(8월) 기준 ----
   const monthDays = new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
@@ -118,7 +132,7 @@ async function loadFeedback() {
   // ---- 렌더 ----
   const kb = (v, band) => `<span class="band ${band}">${v}</span>`;
   let html = `<div class="kpis">
-    <div><div class="k">매출 달성률</div><div class="v">${achieve.toFixed(0)}%</div><div class="s">실적 ${(actSales/1e8).toFixed(2)}억 / 계획 ${(planM/1e8).toFixed(2)}억 (${p ? '확정 계획' : '기본값'})</div></div>
+    <div><div class="k">매출 달성률 (${capLabel})</div><div class="v">${achieve.toFixed(0)}%</div><div class="s">실적 ${(actSales/1e8).toFixed(2)}억 / 기간 계획 ${(planPeriod/1e8).toFixed(2)}억 (월 계획 ${(planM/1e8).toFixed(1)}억 ${p ? '확정' : '기본값'} 요일지수 일할)</div></div>
     <div><div class="k">인건비율 (실적)</div><div class="v">${actRatio != null ? actRatio.toFixed(1) + '%' : '—'}</div><div class="s">${ratioNote}</div></div>
     <div><div class="k">생산성 (실적)</div><div class="v">${won(prod)} <span style="font-size:14px;font-weight:700;color:var(--good)">(${(prod/TARGET*100).toFixed(0)}%)</span></div><div class="s">원/MH · 목표 72,000</div></div>
     <div><div class="k">과잉 투입</div><div class="v" style="color:${over > 0 ? 'var(--crit)' : 'var(--good)'}">${over > 0 ? '+' : ''}${won(over)} MH</div><div class="s">실투입 ${won(actMH)} − 필요 ${won(needMH)} (실적 매출 기준) ≈ ${over > 0 ? won(overCost/10000) + '만원' : '여유'}</div></div>

@@ -623,7 +623,7 @@ async function renderAcc() {
     return;
   }
   const { data: notesRaw } = await sb.from('sf_error_notes').select('*')
-    .gte('err_date', ym + '-01').lte('err_date', ym + '-31');
+    .gte('err_date', ym + '-01').lte('err_date', `${ym}-${String(daysIn(ym)).padStart(2, '0')}`);
   const notesBy = {};
   (notesRaw || []).forEach(n => (notesBy[n.store_code + '|' + n.err_date] = notesBy[n.store_code + '|' + n.err_date] || []).push(n));
 
