@@ -296,9 +296,11 @@ const isHolCmp = d => OT_HOLIDAYS.has(d) || SF_PAST_HOLIDAYS.has(d);
 
 // 동일매장 성장율: 전년 비교 기간은 -364일(같은 요일), 양쪽 모두 영업 실적이 있는 날짜쌍만 사용,
 // 어느 한쪽이라도 공휴일이면 그 쌍은 제외. 두 기간 모두 실적이 있는 매장(동일매장)만 합산.
+// byStore에 매장별 성장율도 담아 표에서 재사용.
 function sameStoreGrowth(ym, asOf) {
   if (!asOf) return null;
   let cur = 0, prv = 0, nStores = 0;
+  const byStore = {};
   for (const code of Object.keys(OT_DATA)) {
     const m = SALES[code]; if (!m) continue;
     let c = 0, p = 0;
@@ -308,10 +310,13 @@ function sameStoreGrowth(ym, asOf) {
       const cv = m.get(d), pv = m.get(pd);
       if (cv > 0 && pv > 0) { c += cv; p += pv; }
     }
-    if (c > 0 && p > 0) { cur += c; prv += p; nStores++; }
+    if (c > 0 && p > 0) { cur += c; prv += p; nStores++; byStore[code] = (c / p - 1) * 100; }
   }
-  return prv ? { g: (cur / prv - 1) * 100, n: nStores, from: addD(ym + '-01', -364), to: addD(asOf, -364) } : null;
+  return prv ? { g: (cur / prv - 1) * 100, n: nStores, from: addD(ym + '-01', -364), to: addD(asOf, -364), byStore } : null;
 }
+// 성장율 밴드색: 음수 빨강 / 0~5% 주황 / 5% 이상 초록
+const growColor = g => g < 0 ? 'var(--crit)' : g < 5 ? 'var(--warn)' : 'var(--good)';
+const signColor = v => v >= 0 ? 'var(--good)' : 'var(--crit)';
 
 function renderBrand() {
   const ym = $('brandMonth').value;
@@ -347,30 +352,40 @@ function renderBrand() {
     (asOf ? ` · 실적 반영 ~${asOf.slice(5).replace('-', '/')}` : ' · 이 달 실적 미적재 (생산성 > 실적 입력에서 일별매출 업로드 시 자동 반영)');
 
   const ssg = sameStoreGrowth(ym, asOf);
+  const vsT = fcT ? (landT / fcT - 1) * 100 : 0;
   $('brandKpis').innerHTML = `
     <div><div class="k">월초 예상 매출</div><div class="v">${eok1(fcT)}</div><div class="s">18개 매장 · 확정 v${run.version}</div></div>
-    <div><div class="k">현재 예상 매출</div><div class="v">${eok1(landT)}</div><div class="s">예측 대비 ${fcT ? ((landT / fcT - 1) * 100).toFixed(1) : '0.0'}% · 누적 매출 ${asOf ? eok1(actT) : '—'}</div></div>
-    <div><div class="k">동일매장 성장율</div><div class="v">${ssg ? (ssg.g >= 0 ? '+' : '') + ssg.g.toFixed(1) + '%' : '—'}</div>
+    <div><div class="k">현재 예상 매출</div><div class="v">${eok1(landT)}</div><div class="s">예측 대비 <b style="color:${signColor(vsT)}">${vsT >= 0 ? '+' : ''}${vsT.toFixed(1)}%</b> · 누적 매출 ${asOf ? eok1(actT) : '—'}</div></div>
+    <div><div class="k">동일매장 성장율</div><div class="v" style="color:${ssg ? growColor(ssg.g) : 'inherit'}">${ssg ? (ssg.g >= 0 ? '+' : '') + ssg.g.toFixed(1) + '%' : '—'}</div>
       <div class="s">${ssg ? `전년 ${ssg.from.slice(5).replace('-', '/')}~${ssg.to.slice(5).replace('-', '/')} (요일 맞춤·공휴일 제외) · ${ssg.n}개점` : '실적 업로드 대기'}</div></div>
-    <div><div class="k">전년 동월 대비</div><div class="v">${yoyT === null ? '—' : (yoyT >= 0 ? '+' : '') + yoyT.toFixed(1) + '%'}</div>
+    <div><div class="k">전년 동월 대비</div><div class="v" style="color:${yoyT === null ? 'inherit' : signColor(yoyT)}">${yoyT === null ? '—' : (yoyT >= 0 ? '+' : '') + yoyT.toFixed(1) + '%'}</div>
       <div class="s">${pyT ? `${ymLabel(prevYearYm)} 실적 ${eok(pyT)}` : '전년 데이터 없음'}</div></div>`;
 
+  // 오차율 바: 0 기준 좌우 벌어짐을 한눈에 — 최대 |오차율| 대비 폭
+  const errOf = r => r.fc ? (r.landing / r.fc - 1) * 100 : null;
+  const maxErr = Math.max(...rows.map(r => Math.abs(errOf(r) || 0)), 0.1);
+  const errCell = v => v === null ? '—'
+    : `<b style="color:${signColor(v)}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</b> <span class="mini" style="width:${Math.max(2, Math.round(Math.abs(v) / maxErr * 70))}px;${v < 0 ? 'background:var(--crit)' : ''}"></span>`;
+  const growCell = g => g == null ? '<span style="color:var(--muted2)">—</span>'
+    : `<b style="color:${growColor(g)}">${g >= 0 ? '+' : ''}${g.toFixed(1)}%</b>`;
   $('brandTable').innerHTML = `
-    <table class="data-table" style="min-width:680px">
-      <colgroup><col style="width:200px"><col style="width:130px"><col style="width:130px"><col style="width:130px"><col style="width:110px"></colgroup>
-      <thead><tr><th>매장</th><th>월초 예상매출</th><th>누적 매출</th><th>현재 예상매출</th><th>오차율</th></tr></thead>
+    <table class="data-table" style="min-width:820px">
+      <colgroup><col style="width:190px"><col style="width:120px"><col style="width:110px"><col style="width:120px"><col style="width:170px"><col style="width:120px"></colgroup>
+      <thead><tr><th>매장</th><th>월초 예상매출</th><th>누적 매출</th><th>현재 예상매출</th><th>오차율</th><th>동일매장 성장율</th></tr></thead>
       <tbody>
       ${rows.map(r => `<tr data-code="${r.code}" style="cursor:pointer">
         <td>${r.name} <span style="color:var(--muted2);font-size:11px">${r.code}</span></td>
         <td style="text-align:right">${eok(r.fc)}</td>
         <td style="text-align:right">${asOf ? eok(r.act) : '—'}</td>
         <td style="text-align:right"><b>${eok(r.landing)}</b></td>
-        <td style="text-align:right">${r.fc ? `<b style="color:${Math.abs(r.landing / r.fc - 1) <= 0.03 ? 'var(--good)' : Math.abs(r.landing / r.fc - 1) <= 0.07 ? 'var(--warn)' : 'var(--crit)'}">${((r.landing / r.fc - 1) * 100).toFixed(1)}%</b>` : '—'}</td>
+        <td style="text-align:right;white-space:nowrap">${errCell(errOf(r))}</td>
+        <td style="text-align:right">${growCell(ssg && ssg.byStore[r.code] != null ? ssg.byStore[r.code] : null)}</td>
       </tr>`).join('')}
       <tr style="font-weight:700;border-top:2px solid var(--outline)">
         <td>합계</td><td style="text-align:right">${eok(fcT)}</td><td style="text-align:right">${asOf ? eok(actT) : '—'}</td>
         <td style="text-align:right">${eok(landT)}</td>
-        <td style="text-align:right">${fcT ? ((landT / fcT - 1) * 100).toFixed(1) + '%' : '—'}</td>
+        <td style="text-align:right;white-space:nowrap">${fcT ? errCell(vsT) : '—'}</td>
+        <td style="text-align:right">${growCell(ssg ? ssg.g : null)}</td>
       </tr>
       </tbody>
     </table>`;

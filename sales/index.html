@@ -8,6 +8,9 @@
 <link rel="stylesheet" href="../ot.css?v=202609041415">
 <style>
 /* 매출 섹션 전용 — v8 체계 위에 일별 캘린더 그리드만 추가 */
+/* 테두리 강화: 기본 헤어라인(#ebebeb)이 흐릿하다는 피드백 — 이 페이지는 한 단계 진하게 */
+.kpis>div,.card{border-color:#cfcfcf}
+.cal .cd{border-color:#d8d8d8}
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;min-width:720px}
 .cal .ch{font-size:11px;font-weight:700;color:var(--muted2);text-align:center;padding:2px 0}
 .cal .cd{border:1px solid var(--line);border-radius:4px;padding:7px 8px;min-height:74px;background:var(--surface)}
@@ -65,7 +68,7 @@
       </div>
       <div class="card">
         <div class="tblwrap" id="brandTable"></div>
-        <p class="dnote">현재 예상매출 = 누적 매출 + 남은 날 예측 · 오차율 = 현재 예상매출 ÷ 월초 예상매출 − 1 (색: ±3% 이내 녹색 / ±7% 주황 / 초과 빨강). 행 클릭 → 매장 일별.</p>
+        <p class="dnote">현재 예상매출 = 누적 매출 + 남은 날 예측 · 오차율 = 현재 예상매출 ÷ 월초 예상매출 − 1 — 바 길이는 0 기준 벌어진 정도(<span style="color:var(--good)">+초록</span>/<span style="color:var(--crit)">−빨강</span>) · 동일매장 성장율 = 전년 같은 요일 기간 대비(공휴일 제외), <span style="color:var(--crit)">음수 빨강</span>·<span style="color:var(--warn)">0~5% 주황</span>·<span style="color:var(--good)">5%↑ 초록</span>, 전년 실적 없는 매장은 —. 행 클릭 → 매장 일별.</p>
       </div>
     </section>
 
@@ -134,6 +137,6 @@
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
-<script src="../sales.js?v=202609071940"></script>
+<script src="../sales.js?v=202609072010"></script>
 </body>
 </html>
