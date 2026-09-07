@@ -134,11 +134,21 @@ async function renderDash() {
     const tMH = rows.reduce((t, r) => t + r.mh, 0);
     const tOver = rows.reduce((t, r) => t + Math.max(0, r.over), 0);
     const nOk = rows.filter(r => r.prod >= TARGET).length;
+    // 8월 실측 인건비 근사: 메이트(실근무MH×실질시급) + 정직원 급여 + 연차수당 + 퇴직(순매출 0.6%)
+    const laborTot = rows.reduce((t, r) => {
+      const s = OT_DATA[r.code];
+      return t + s.aug.mmh * s.eff + s.fullpay + s.nfull * 100000 + s.augM / 1.1 * 0.006;
+    }, 0);
+    const ratioTot = laborTot / (tSales / 1.1) * 100;
+    // 과잉 MH를 인건비액으로 환산(매장별 실질시급) — 줄였다면 그대로 이익이 됐을 금액
+    const overCost = rows.reduce((t, r) => t + Math.max(0, r.over) * OT_DATA[r.code].eff, 0);
+    const overPct = laborTot ? overCost / laborTot * 100 : 0;
+    const score = (tSales / tMH / TARGET * 100).toFixed(0);
     $('dashKpis').innerHTML =
-      `<div><div class="k">전사 매출 (8월)</div><div class="v">${(tSales/1e8).toFixed(1)}억</div><div class="s">17개 매장</div></div>` +
-      `<div><div class="k">전사 생산성</div><div class="v">${won(tSales/tMH)}</div><div class="s">원/MH · 목표 72,000</div></div>` +
+      `<div><div class="k">전사 매출 · 인건비율 (8월)</div><div class="v">${(tSales/1e8).toFixed(1)}억 <span style="font-size:15px;font-weight:700;color:var(--muted)">· ${ratioTot.toFixed(1)}%</span></div><div class="s">17개 매장 · 인건비율 = 총 인건비 ÷ 순매출</div></div>` +
+      `<div><div class="k">전사 생산성</div><div class="v">${won(tSales/tMH)} <span style="font-size:15px;font-weight:700;color:var(--good)">(${score}%)</span></div><div class="s">원/MH · 브랜드 생산성 점수, 목표 72,000</div></div>` +
       `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">생산성 ≥ 72,000</div></div>` +
-      `<div><div class="k">과잉 투입 합계</div><div class="v" style="color:var(--crit)">+${won(tOver)}</div><div class="s">MH/월 · 절감 여지</div></div>`;
+      `<div><div class="k">과잉 투입 인건비</div><div class="v" style="color:var(--crit)">+${won(overCost/10000)}만원</div><div class="s">+${won(tOver)} MH · 인건비의 ${overPct.toFixed(1)}% — 줄이면 그만큼 이익</div></div>`;
     const maxOver = Math.max(...rows.map(r => Math.abs(r.over)));
     let html = '<table><colgroup><col style="width:150px"><col style="width:80px"><col style="width:80px"><col style="width:90px"><col style="width:80px"><col style="width:170px"><col style="width:90px"></colgroup>' +
       '<thead><tr><th>매장</th><th>매출(억)</th><th>총 MH</th><th>생산성(원/MH)</th><th>생산성 점수</th><th>과잉 MH</th><th>밴드</th></tr></thead><tbody>';
