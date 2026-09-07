@@ -279,7 +279,8 @@ function buildPayWeekOptions() {
   wk.innerHTML = weeks.map(w => `<option value="${w.periodStart}|${w.periodEnd}">${w.label}</option>`).join('');
   const today = new Date(), tstr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   const done = weeks.filter(w => w.periodEnd < tstr);
-  const pick = done.length ? done[done.length - 1] : weeks[weeks.length - 1];
+  // 완결 주차가 있으면 마지막 완결 주차, 없으면(월초) 1주차
+  const pick = done.length ? done[done.length - 1] : weeks[0];
   if (pick) wk.value = `${pick.periodStart}|${pick.periodEnd}`;
 }
 function sheetRows(file) {
