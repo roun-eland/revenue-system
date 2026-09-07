@@ -217,6 +217,7 @@ function showView(v) {
   document.querySelectorAll('#sfNav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   for (const k of ['brand', 'daily', 'weekly', 'acc', 'admin']) $('view-' + k).hidden = (k !== v);
   if (v === 'weekly') renderWeekly();
+  if (v === 'acc') renderAcc();
 }
 document.querySelectorAll('#sfNav button').forEach(b => { if (!b.disabled) b.onclick = () => showView(b.dataset.view); });
 
@@ -224,7 +225,7 @@ document.querySelectorAll('#sfNav button').forEach(b => { if (!b.disabled) b.onc
 function buildSelectors() {
   const runYms = [...new Set(RUNS.filter(r => r.kind === '확정').map(r => r.ym))].sort().reverse();
   const yms = runYms.length ? runYms : ['2026-09'];
-  for (const id of ['brandMonth', 'dailyMonth']) {
+  for (const id of ['brandMonth', 'dailyMonth', 'accMonth']) {
     const sel = $(id), keep = sel.value;
     sel.innerHTML = '';
     for (const ym of yms) {
@@ -270,6 +271,7 @@ function buildSelectors() {
   $('dailyStore').onchange = renderDaily;
   $('wkStore').onchange = renderWeekly;
   $('wkYear').onchange = renderWeekly;
+  $('accMonth').onchange = renderAcc;
   $('toPlanBtn').href = '../labor/';
 }
 
@@ -596,6 +598,163 @@ function renderWeekly() {
           <td>${tagHtml(r.tags)}</td>
         </tr>`).join('')}
       </tbody>
+    </table>`;
+}
+
+// ---------- V3 정확도 피드백 ----------
+// 얼마나 맞았나(KPI) → 어디서 틀렸나(매장·일) → 왜 틀렸나(원인 태깅, sf_error_notes) → 무엇을 고칠까(요일 진단·버전 비교)
+const ERR_TAGS = ['날씨', '유통점 행사', '단체·이벤트', '프로모션', '휴점정보 오류', '상권 특이', '기타'];
+let accDowChartObj = null;
+
+async function renderAcc() {
+  const ym = $('accMonth').value;
+  const run = getRun(ym);
+  if (!run) {
+    $('accKpis').innerHTML = '';
+    $('accWorst').innerHTML = $('accTable').innerHTML = $('accVers').innerHTML =
+      `<div class="placeholder-box"><b>${ymLabel(ym)} 확정 예측이 없습니다.</b></div>`;
+    return;
+  }
+  const asOf = lastActualDate(ym);
+  if (!asOf) {
+    $('accKpis').innerHTML = '';
+    $('accWorst').innerHTML = $('accTable').innerHTML = $('accVers').innerHTML =
+      `<div class="placeholder-box"><b>${ymLabel(ym)} 실적이 아직 없습니다.</b><br>생산성 > 실적 입력에서 일별매출을 올리면 자동 계산됩니다.</div>`;
+    return;
+  }
+  const { data: notesRaw } = await sb.from('sf_error_notes').select('*')
+    .gte('err_date', ym + '-01').lte('err_date', ym + '-31');
+  const notesBy = {};
+  (notesRaw || []).forEach(n => (notesBy[n.store_code + '|' + n.err_date] = notesBy[n.store_code + '|' + n.err_date] || []).push(n));
+
+  // 일 단위 (예측·실적 모두 있는 날만 — 휴점·미적재 제외)
+  const st = run.daily.stores, dates = monthDates(ym).filter(d => d <= asOf);
+  const pairs = [];
+  for (const [code, f] of Object.entries(st)) {
+    const m = SALES[code] || new Map();
+    for (const d of dates) {
+      const fv = f.daily[d] || 0, av = m.get(d) || 0;
+      if (fv > 0 && av > 0) pairs.push({ code, name: f.name, d, f: fv, a: av });
+    }
+  }
+
+  // 매장별 지표
+  const rows = Object.entries(st).map(([code, f]) => {
+    const ps = pairs.filter(p => p.code === code);
+    const sa = ps.reduce((t, p) => t + p.a, 0), sf2 = ps.reduce((t, p) => t + p.f, 0);
+    const sad = ps.reduce((t, p) => t + Math.abs(p.a - p.f), 0);
+    const m = SALES[code] || new Map();
+    let landing = 0;
+    for (const d of monthDates(ym)) landing += (d <= asOf ? (m.get(d) || 0) : (f.daily[d] || 0));
+    return { code, name: f.name, fc: f.total, act: sa, landing, n: ps.length,
+      err: f.total ? (landing / f.total - 1) * 100 : null,
+      wape: sa ? sad / sa * 100 : null, bias: sa ? (sf2 - sa) / sa * 100 : null, src: f.src };
+  }).sort((a, b) => (a.code < b.code ? -1 : 1));
+
+  const saT = pairs.reduce((t, p) => t + p.a, 0), sfT = pairs.reduce((t, p) => t + p.f, 0);
+  const sadT = pairs.reduce((t, p) => t + Math.abs(p.a - p.f), 0);
+  const fcT = rows.reduce((t, r) => t + r.fc, 0), landT = rows.reduce((t, r) => t + r.landing, 0);
+  const errT = fcT ? (landT / fcT - 1) * 100 : 0;
+  const measurable = rows.filter(r => r.n > 0);
+  const hit = measurable.filter(r => Math.abs(r.err) <= 5).length;
+  const biasT = saT ? (sfT - saT) / saT * 100 : 0;
+
+  $('accKpis').innerHTML = `
+    <div><div class="k">월 오차율</div><div class="v" style="color:${Math.abs(errT) <= 5 ? 'var(--good)' : 'var(--warn)'}">${errT >= 0 ? '+' : ''}${errT.toFixed(1)}%</div><div class="s">확정 v${run.version} 대비 · 실적 반영 ~${asOf.slice(5).replace('-', '/')}</div></div>
+    <div><div class="k">일평균 오차 (MAPE)</div><div class="v">${saT ? (sadT / saT * 100).toFixed(1) + '%' : '—'}</div><div class="s">매출가중 · ${pairs.length}일치 (매장×일)</div></div>
+    <div><div class="k">적중 매장 (±5%)</div><div class="v">${hit} / ${measurable.length}</div><div class="s">월 오차율 기준 · 실적 있는 매장만</div></div>
+    <div><div class="k">편향 (Bias)</div><div class="v" style="color:${Math.abs(biasT) <= 2 ? 'var(--good)' : 'var(--warn)'}">${biasT >= 0 ? '+' : ''}${biasT.toFixed(1)}%</div><div class="s">${biasT > 2 ? '전반적으로 과대예측 경향' : biasT < -2 ? '전반적으로 과소예측 경향' : '체계적 편향 없음'}</div></div>`;
+
+  // 오차 상위일 (금액 기준 상위 15)
+  const worst = [...pairs].sort((x, y) => Math.abs(y.a - y.f) - Math.abs(x.a - x.f)).slice(0, 15);
+  $('accWorst').innerHTML = `
+    <table class="data-table" style="min-width:820px">
+      <colgroup><col style="width:150px"><col style="width:100px"><col style="width:90px"><col style="width:90px"><col style="width:95px"><col style="width:130px"><col></colgroup>
+      <thead><tr><th>매장</th><th>일자</th><th>실적(만)</th><th>예측(만)</th><th>오차</th><th>태그</th><th>메모</th></tr></thead>
+      <tbody>${worst.map(p => {
+        const e = (p.a / p.f - 1) * 100;
+        const exist = (notesBy[p.code + '|' + p.d] || []).map(n => `${n.tag}${n.memo ? '·' + n.memo : ''}`).join(', ');
+        return `<tr><td>${p.name}</td><td>${+p.d.slice(8)}일(${WD[dowIdx(p.d)]})</td>
+          <td style="text-align:right">${won(p.a / 1e4)}</td><td style="text-align:right">${won(p.f / 1e4)}</td>
+          <td style="text-align:right"><b style="color:${signColor(e)}">${e >= 0 ? '+' : ''}${e.toFixed(0)}%</b></td>
+          <td><select class="acc-tag" data-code="${p.code}" data-date="${p.d}" style="height:30px;padding:0 6px;font-size:12px"><option value="">선택</option>${ERR_TAGS.map(t => `<option>${t}</option>`).join('')}</select></td>
+          <td><input class="acc-memo" data-code="${p.code}" data-date="${p.d}" placeholder="${exist || '메모(선택)'}" style="height:30px;font-size:12px;padding:0 8px;width:100%"></td></tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  $('accSaveNotes').onclick = async () => {
+    const out = [];
+    document.querySelectorAll('.acc-tag').forEach(sel2 => {
+      if (!sel2.value) return;
+      const memo = document.querySelector(`.acc-memo[data-code="${sel2.dataset.code}"][data-date="${sel2.dataset.date}"]`)?.value || null;
+      out.push({ store_code: sel2.dataset.code, err_date: sel2.dataset.date, tag: sel2.value, memo, created_by: currentUser?.id });
+    });
+    const msg = $('accNoteMsg');
+    if (!out.length) { msg.className = 'plan-msg err'; msg.textContent = '태그를 선택한 행이 없습니다.'; return; }
+    const { error } = await sb.from('sf_error_notes').insert(out);
+    if (error) { msg.className = 'plan-msg err'; msg.textContent = '저장 실패: ' + error.message; }
+    else { msg.className = 'plan-msg ok'; msg.textContent = `${out.length}건 저장됨`; renderAcc(); }
+  };
+
+  // 매장별 표
+  $('accTable').innerHTML = `
+    <table class="data-table" style="min-width:820px">
+      <colgroup><col style="width:180px"><col style="width:110px"><col style="width:100px"><col style="width:95px"><col style="width:90px"><col style="width:95px"><col style="width:90px"><col style="width:80px"></colgroup>
+      <thead><tr><th>매장</th><th>월초 예상매출</th><th>누적 매출</th><th>오차율</th><th>MAPE</th><th>편향</th><th>계수</th><th>적중</th></tr></thead>
+      <tbody>${rows.map(r => `
+        <tr data-code="${r.code}" style="cursor:pointer">
+          <td>${r.name} <span style="color:var(--muted2);font-size:11px">${r.code}</span></td>
+          <td style="text-align:right">${eok(r.fc)}</td>
+          <td style="text-align:right">${r.n ? eok(r.act) : '—'}</td>
+          <td style="text-align:right">${r.err != null && r.n ? `<b style="color:${signColor(r.err)}">${r.err >= 0 ? '+' : ''}${r.err.toFixed(1)}%</b>` : '—'}</td>
+          <td style="text-align:right">${r.wape != null ? r.wape.toFixed(1) + '%' : '—'}</td>
+          <td style="text-align:right">${r.bias != null ? `<span style="color:${Math.abs(r.bias) <= 3 ? 'var(--muted)' : 'var(--warn)'}">${r.bias >= 0 ? '+' : ''}${r.bias.toFixed(1)}%</span>` : '—'}</td>
+          <td style="font-size:11px;color:var(--muted2)">${r.src}</td>
+          <td>${r.n ? (Math.abs(r.err) <= 5 ? '<span class="band g">적중</span>' : '<span class="band w">이탈</span>') : '—'}</td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+  $('accTable').querySelectorAll('tr[data-code]').forEach(tr => tr.onclick = () => {
+    $('dailyStore').value = tr.dataset.code; $('dailyMonth').value = ym; renderDaily(); showView('daily');
+  });
+
+  // 요일 진단 (브랜드 합산: 요일별 Σ실적/Σ예측 − 1)
+  const dow = Array.from({ length: 7 }, () => ({ a: 0, f: 0 }));
+  pairs.forEach(p => { const i = dowIdx(p.d); dow[i].a += p.a; dow[i].f += p.f; });
+  const dowErr = dow.map(x => x.f ? (x.a / x.f - 1) * 100 : null);
+  if (typeof Chart !== 'undefined') {
+    if (accDowChartObj) accDowChartObj.destroy();
+    accDowChartObj = new Chart($('accDowChart'), {
+      type: 'bar',
+      data: { labels: WD, datasets: [{ label: '실적/예측 − 1 (%)', data: dowErr,
+        backgroundColor: dowErr.map(v => v == null ? '#ccc' : v >= 0 ? 'rgba(130,220,40,.6)' : 'rgba(217,83,79,.55)') }] },
+      options: { responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false } }, scales: { y: { ticks: { font: { size: 11 }, callback: v => v + '%' } } } },
+    });
+  }
+
+  // 발행 버전별 사후 정확도 (같은 실적 구간에 각 버전의 예측을 대입)
+  const versions = RUNS.filter(r => r.ym === ym && r.kind === '확정').sort((a, b) => a.version - b.version);
+  $('accVers').innerHTML = `
+    <table class="data-table" style="min-width:360px">
+      <colgroup><col style="width:70px"><col style="width:100px"><col style="width:90px"><col style="width:90px"></colgroup>
+      <thead><tr><th>버전</th><th>월초 예측 합</th><th>MAPE</th><th>월 오차율</th></tr></thead>
+      <tbody>${versions.map(v => {
+        const vs = v.daily.stores;
+        let sa = 0, sad = 0, tot = 0, land = 0;
+        for (const [code, f] of Object.entries(vs)) {
+          const m = SALES[code] || new Map();
+          tot += f.total || 0;
+          for (const d of monthDates(ym)) {
+            const fv = f.daily[d] || 0, av = d <= asOf ? (m.get(d) || 0) : 0;
+            if (d <= asOf) { land += av; if (fv > 0 && av > 0) { sa += av; sad += Math.abs(av - fv); } }
+            else land += fv;
+          }
+        }
+        const cur = v.version === run.version;
+        return `<tr${cur ? ' style="font-weight:700"' : ''}><td>v${v.version}${cur ? ' ◀' : ''}</td>
+          <td style="text-align:right">${eok(tot)}</td>
+          <td style="text-align:right">${sa ? (sad / sa * 100).toFixed(1) + '%' : '—'}</td>
+          <td style="text-align:right">${tot ? ((land / tot - 1) * 100).toFixed(1) + '%' : '—'}</td></tr>`;
+      }).join('')}</tbody>
     </table>`;
 }
 

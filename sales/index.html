@@ -47,7 +47,7 @@
     <button data-view="brand" class="on">브랜드 대시보드</button>
     <button data-view="daily">매장 일별</button>
     <button data-view="weekly">주차별 매출</button>
-    <button data-view="acc" disabled>정확도 피드백<span class="soon">M2</span></button>
+    <button data-view="acc">정확도 피드백</button>
     <button data-view="admin">발행 관리</button>
   </nav>
 
@@ -105,10 +105,39 @@
       </div>
     </section>
 
-    <!-- V3 자리 -->
+    <!-- V3 정확도 피드백 -->
     <section id="view-acc" class="view" hidden>
       <h2>정확도 피드백</h2>
-      <div class="placeholder-box"><b>SF-M2에서 제공</b><br>MAPE 추이 · 오차 상위일 원인 태깅 · 요인별 기여 분석</div>
+      <p class="view-sub">확정 예측이 얼마나 맞았는지, 어디서·왜 틀렸는지 — 원인 태그가 쌓이면 다음 버전 모델(날씨·이벤트 계수)의 근거가 됩니다. 태그는 매장 관리자 계정도 저장할 수 있습니다.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:160px">조회 월<select id="accMonth"></select></label>
+      </div>
+      <div class="kpis" id="accKpis"></div>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 8px">오차 상위 일자 — 원인을 태그로 남겨주세요</h3>
+        <div class="tblwrap" id="accWorst"></div>
+        <div class="plan-actions" style="margin:10px 0 0">
+          <button id="accSaveNotes" class="btn btn-sm" type="button">태그 저장</button>
+          <span class="plan-msg" id="accNoteMsg"></span>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 8px">매장별 정확도</h3>
+        <div class="tblwrap" id="accTable"></div>
+        <p class="dnote">오차율 = 현재 예상매출 ÷ 월초 예상매출 − 1 (월 마감 후엔 확정 오차) · MAPE = 일별 |실적−예측| 합 ÷ 실적 합 (매출가중, 실적 있는 날만) · 편향 = 예측−실적의 평균 방향 (<span style="color:var(--crit)">＋과대</span>/<span style="color:var(--good)">−과소</span> 지속 여부) · 적중 = 오차율 ±5% 이내.</p>
+      </div>
+      <div class="ref-grid">
+        <div class="card">
+          <h3 style="margin:0 0 8px">요일 진단 — 평균 오차율</h3>
+          <div class="chartbox" style="height:200px"><canvas id="accDowChart"></canvas></div>
+          <p class="dnote">특정 요일이 계속 한 방향으로 틀리면 그 요일의 기준값(요일 중앙값) 산정을 조정할 후보입니다.</p>
+        </div>
+        <div class="card">
+          <h3 style="margin:0 0 8px">발행 버전별 사후 정확도</h3>
+          <div class="tblwrap" id="accVers"></div>
+          <p class="dnote">같은 실적 구간에 대해 각 발행본의 오차를 비교 — 모델 수정이 실제로 정확도를 올렸는지 기록됩니다.</p>
+        </div>
+      </div>
     </section>
 
     <!-- V4 발행 관리 (admin) -->
@@ -136,6 +165,6 @@
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
-<script src="../sales.js?v=202609072010"></script>
+<script src="../sales.js?v=202609081020"></script>
 </body>
 </html>
