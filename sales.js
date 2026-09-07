@@ -34,7 +34,10 @@ const ymLabel = ym => `${ym.slice(0, 4)}년 ${+ym.slice(5)}월`;
 const nthOfDow = s => Math.ceil(+s.slice(8) / 7); // 그 달의 몇 번째 해당 요일인지
 const isHol = s => OT_HOLIDAYS.has(s);
 function isClosed(code, s) {
-  if (OT_CLOSED_DATES.has(s)) return true; // 명절 당일 전점 휴무
+  // 유통점 공지 확정치가 있는 달은 그 날짜만 휴점 (규칙·전점휴무 무시 — 예: 해운대 2026-09-25 영업)
+  const ov = OT_CLOSED_ACTUAL[s.slice(0, 7)] && OT_CLOSED_ACTUAL[s.slice(0, 7)][code];
+  if (ov) return ov.includes(+s.slice(8));
+  if (OT_CLOSED_DATES.has(s)) return true; // 명절 당일 전 매장 휴무
   const c = OT_DATA[code].closed;
   return !!(c && dowIdx(s) === c.wd && c.nth.includes(nthOfDow(s)));
 }

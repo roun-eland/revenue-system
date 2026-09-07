@@ -403,8 +403,10 @@ function monthDates(ym, s) {
   for (let d = 1; d <= n; d++) {
     const dt = new Date(y, m - 1, d), wd = (dt.getDay() + 6) % 7;
     const iso = `${ym}-${String(d).padStart(2, "0")}`;
-    let closed = OT_CLOSED_DATES.has(iso);
-    if (!closed && s && s.closed && wd === s.closed.wd) {
+    // 유통점 공지 확정치가 있는 달은 그 날짜만 휴점 (규칙·전점휴무 무시 — 예: 해운대 2026-09-25 영업)
+    const ov = s && s.code && OT_CLOSED_ACTUAL[ym] && OT_CLOSED_ACTUAL[ym][s.code];
+    let closed = ov ? ov.includes(d) : OT_CLOSED_DATES.has(iso);
+    if (!closed && !ov && s && s.closed && wd === s.closed.wd) {
       const nth = Math.ceil(d / 7), isLast = d + 7 > n;
       closed = s.closed.nth.includes(nth) || (s.closed.nth.includes(9) && isLast);
     }
