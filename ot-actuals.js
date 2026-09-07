@@ -41,12 +41,14 @@ async function loadFeedback() {
   box.innerHTML = '<p class="dnote">실적 불러오는 중…</p>';
 
   const from = ym + '-01', to = ym + '-31';
-  const [sales, labor, monthly, plans, notes] = await Promise.all([
+  const [sales, labor, monthly, plans, notes, periodsRes] = await Promise.all([
     sb.from('ot_sales_daily').select('*').eq('store_code', code).gte('sales_date', from).lte('sales_date', to).order('sales_date'),
     sb.from('ot_labor_daily').select('*').eq('store_code', code).gte('work_date', from).lte('work_date', to),
     sb.from('ot_labor_monthly').select('*').eq('store_code', code).eq('ym', ym).maybeSingle(),
     sb.from('ot_plan_runs').select('*').eq('store_code', code).eq('ym', ym).eq('status', 'confirmed').maybeSingle(),
     sb.from('ot_day_notes').select('*').eq('store_code', code).gte('note_date', from).lte('note_date', to),
+    // 주차 급여 — 주차는 실사일(period_end)이 속한 달 기준, 월 경계를 넘지 않음
+    sb.from('ot_labor_periods').select('*').eq('store_code', code).gte('period_end', from).lte('period_end', to),
   ]);
   if (sales.error) { box.innerHTML = `<p class="dnote">불러오기 실패: ${sales.error.message}</p>`; return; }
   if (!sales.data || !sales.data.length) {
@@ -84,9 +86,23 @@ async function loadFeedback() {
   const planRatio = p?.output?.ratio ?? plan.ratio;
   const achieve = actSales / planM * 100;
 
-  // ---- 실적 인건비율 (월 인건비 실적이 있을 때) ----
-  let actRatio = null, ratioNote = '급여 실적 미입력';
-  if (monthly.data && monthly.data.mate_pay != null) {
+  // ---- 실적 인건비율 — 주차 급여(ot_labor_periods)가 있으면 그 기간 기준, 없으면 월 급여(8월) 기준 ----
+  const monthDays = new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
+  const periods = (periodsRes.data || []).slice().sort((a, b) => (a.period_start < b.period_start ? -1 : 1));
+  const salesInRange = (a, b) => days.filter(x => x.date >= a && x.date <= b).reduce((t, x) => t + x.sales, 0);
+  const dayCount = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000) + 1;
+  let actRatio = null, ratioNote = '급여 실적 미입력 — 실적 입력 탭에서 주차 급여를 올려주세요';
+  if (periods.length) {
+    const covDays = periods.reduce((t, p) => t + dayCount(p.period_start, p.period_end), 0);
+    const covSales = periods.reduce((t, p) => t + salesInRange(p.period_start, p.period_end), 0);
+    const matePay = periods.reduce((t, p) => t + Number(p.mate_pay), 0);
+    if (covSales > 0) {
+      const frac = covDays / monthDays;
+      const cost = matePay + fullpay0 * frac + nfull * 100000 * frac + covSales / 1.1 * 0.006;
+      actRatio = cost / (covSales / 1.1) * 100;
+      ratioNote = `계획 ${planRatio.toFixed(1)}% 대비 ${(actRatio - planRatio) >= 0 ? '+' : ''}${(actRatio - planRatio).toFixed(1)}%p · 급여 ${periods.length}주 반영 (${periods[0].period_start.slice(5)}~${periods[periods.length - 1].period_end.slice(5)}, 정직원 일할)`;
+    }
+  } else if (monthly.data && monthly.data.mate_pay != null) {
     const m = monthly.data;
     const cost = Number(m.mate_pay) + Number(m.ft_pay || fullpay0) + nfull * 100000 + actSales / 1.1 * 0.006;
     actRatio = cost / (actSales / 1.1) * 100;
@@ -107,6 +123,37 @@ async function loadFeedback() {
     <div><div class="k">생산성 (실적)</div><div class="v">${won(prod)} <span style="font-size:14px;font-weight:700;color:var(--good)">(${(prod/TARGET*100).toFixed(0)}%)</span></div><div class="s">원/MH · 목표 72,000</div></div>
     <div><div class="k">과잉 투입</div><div class="v" style="color:${over > 0 ? 'var(--crit)' : 'var(--good)'}">${over > 0 ? '+' : ''}${won(over)} MH</div><div class="s">실투입 ${won(actMH)} − 필요 ${won(needMH)} (실적 매출 기준) ≈ ${over > 0 ? won(overCost/10000) + '만원' : '여유'}</div></div>
   </div>`;
+
+  // ---- 주차별 실적 (원가 자재사용량과 동일 주차: 화~월, 말일 마감) — 매주 확인용 ----
+  const payByWeek = {};
+  periods.forEach(p2 => { payByWeek[p2.period_start + '|' + p2.period_end] = p2; });
+  const wkRows = weekOptionsForMonth(+ym.slice(0, 4), +ym.slice(5)).map(w => {
+    const inW = days.filter(x => x.date >= w.periodStart && x.date <= w.periodEnd);
+    if (!inW.length) return null;
+    const wS = inW.reduce((t, x) => t + x.sales, 0);
+    const wMH = inW.reduce((t, x) => t + (x.used || 0), 0);
+    const wNeed = inW.reduce((t, x) => t + x.need, 0);
+    const p2 = payByWeek[w.periodStart + '|' + w.periodEnd];
+    let wRatio = null;
+    if (p2 && wS > 0) {
+      const frac = dayCount(w.periodStart, w.periodEnd) / monthDays;
+      wRatio = (Number(p2.mate_pay) + fullpay0 * frac + nfull * 100000 * frac + wS / 1.1 * 0.006) / (wS / 1.1) * 100;
+    }
+    return { w, wS, wMH, wNeed, pay: p2 ? Number(p2.mate_pay) : null, wRatio, prod: wMH ? wS / wMH : null };
+  }).filter(Boolean);
+  if (wkRows.length) {
+    const rc = v => v == null ? '' : v <= 24 ? 'color:var(--good);font-weight:700' : v <= 28 ? 'color:var(--warn);font-weight:700' : 'color:var(--crit);font-weight:700';
+    html += `<div class="card" style="margin-bottom:14px"><h3 style="margin:0 0 8px">주차별 인건비율 — 매주 화요일 등록 기준</h3>
+      <div class="tblwrap"><table><colgroup><col style="width:150px"><col style="width:95px"><col style="width:100px"><col style="width:85px"><col style="width:85px"><col style="width:95px"><col style="width:95px"></colgroup>
+      <thead><tr><th>주차 (화~월)</th><th>매출(만)</th><th>메이트 급여(만)</th><th>투입 MH</th><th>필요 MH</th><th>생산성</th><th>인건비율</th></tr></thead><tbody>
+      ${wkRows.map(r => `<tr><td>${r.w.label}</td><td>${won(r.wS / 10000)}</td>
+        <td>${r.pay != null ? won(r.pay / 10000) : '<span style="color:var(--muted2)">미입력</span>'}</td>
+        <td>${r.wMH ? r.wMH.toFixed(0) : '—'}</td><td>${r.wNeed.toFixed(0)}</td>
+        <td>${r.prod ? won(r.prod) : '—'}</td>
+        <td style="${rc(r.wRatio)}">${r.wRatio != null ? r.wRatio.toFixed(1) + '%' : '—'}</td></tr>`).join('')}
+      </tbody></table></div>
+      <p class="dnote">인건비율(주간) = (메이트 급여 + 정직원 급여·연차 일할 + 퇴직 0.6%) ÷ 주간 순매출. 밴드: <span class="band g">≤24%</span> <span class="band w">24~28%</span> <span class="band c">&gt;28%</span> · 급여 미입력 주는 실적 입력 탭에서 해당 주차를 올리면 채워집니다.</p></div>`;
+  }
 
   if (worstDows.length)
     html += `<p class="dnote" style="margin:0 0 10px"><b style="color:var(--ink)">요일 패턴:</b> ${worstDows.map(w => `${WD[w.i]}요일 평균 +${w.avg.toFixed(0)}MH`).join(' · ')} 과잉 — 해당 요일 시프트 축소 검토 대상입니다.</p>`;
@@ -186,8 +233,29 @@ async function loadFeedback() {
   };
 }
 
+// ---------- 주차 체계 (원가 app.js computeWeekOptionsForMonth와 동일 규칙 — 변경 시 반드시 함께 수정) ----------
+// 실사일 = 매주 월요일 + 매달 말일. 한 주의 기간은 (직전 실사일+1일) ~ 이번 실사일 = 화~월, 월 경계를 넘지 않음.
+// 주차 귀속은 실사일(period_end)이 속한 달 기준 — 자재사용량과 같은 날짜에 같은 주차로 등록한다.
+function weekOptionsForMonth(year, month) {
+  const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const isCutoffDay = d => d.getDay() === 1 || d.getDate() === new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const scanStart = new Date(year, month - 2, 1);
+  const scanEnd = new Date(year, month - 1, new Date(year, month, 0).getDate());
+  const cutoffs = [];
+  for (let d = new Date(scanStart); d <= scanEnd; d.setDate(d.getDate() + 1)) if (isCutoffDay(d)) cutoffs.push(new Date(d));
+  const weeks = [];
+  for (let i = 1; i < cutoffs.length; i++) {
+    const end = cutoffs[i];
+    if (end.getFullYear() !== year || end.getMonth() + 1 !== month) continue;
+    const start = new Date(cutoffs[i - 1]);
+    start.setDate(start.getDate() + 1);
+    weeks.push({ periodStart: fmt(start), periodEnd: fmt(end) });
+  }
+  weeks.forEach((w, i) => { w.label = `${i + 1}주차 (${w.periodStart.slice(5)} ~ ${w.periodEnd.slice(5)})`; });
+  return weeks;
+}
+
 // ---------- S4 실적 입력 (엑셀 업로드) ----------
-function ymOf() { return $('acYm').value; }
 function buildAcControls() {
   const mo = $('acYm');
   if (!mo || mo.options.length) return;
@@ -199,6 +267,20 @@ function buildAcControls() {
   const now = new Date();
   const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   mo.value = [...mo.options].some(o => o.value === cur) ? cur : '2026-08';
+  mo.onchange = buildPayWeekOptions;
+  buildPayWeekOptions();
+}
+// 급여 주차 드롭다운 — 기본값은 오늘 기준 마지막으로 끝난(완결) 주차
+function buildPayWeekOptions() {
+  const wk = $('acPayWeek');
+  if (!wk) return;
+  const [y, m] = $('acYm').value.split('-').map(Number);
+  const weeks = weekOptionsForMonth(y, m);
+  wk.innerHTML = weeks.map(w => `<option value="${w.periodStart}|${w.periodEnd}">${w.label}</option>`).join('');
+  const today = new Date(), tstr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const done = weeks.filter(w => w.periodEnd < tstr);
+  const pick = done.length ? done[done.length - 1] : weeks[weeks.length - 1];
+  if (pick) wk.value = `${pick.periodStart}|${pick.periodEnd}`;
 }
 function sheetRows(file) {
   return new Promise((res, rej) => {
@@ -228,6 +310,24 @@ async function upsertChunks(table, rows, conflict) {
   }
 }
 
+// 파일이 커버하는 날짜 범위 안에서는 파일이 진실 — 범위 내 기존 행 중 파일에 없는 날짜는 삭제.
+// 누적 파일을 다시 올려도 중복 없이 최신본만 남고, 이후 휴점(0원)으로 정정된 날도 함께 정리된다.
+async function cleanupStaleSales(out) {
+  const byStore = {};
+  out.forEach(r => { (byStore[r.store_code] = byStore[r.store_code] || new Set()).add(r.sales_date); });
+  let removed = 0;
+  for (const [code, dates] of Object.entries(byStore)) {
+    const arr = [...dates].sort();
+    const { data, error } = await sb.from('ot_sales_daily').delete()
+      .eq('store_code', code).gte('sales_date', arr[0]).lte('sales_date', arr[arr.length - 1])
+      .not('sales_date', 'in', `(${arr.join(',')})`)
+      .select('sales_date');
+    if (error) throw error;
+    removed += (data || []).length;
+  }
+  return removed;
+}
+
 // ① 일별매출 — 두 포맷 지원:
 //   (a) EATS 세로 포맷: 행 = 매장×일 (매장코드/날짜/런치/디너/합계/객수)
 //   (b) 월별 와이드 포맷: 행 = 매장, 열 = 1~31일 합계 ('영업일수' 헤더, 파일명 YYMM.xlsx로 월 판별)
@@ -247,8 +347,10 @@ async function uploadSales(file) {
       perStore[code] = (perStore[code] || 0) + 1;
     });
     const tot = out.reduce((t, r) => t + r.total, 0);
+    const removed = await cleanupStaleSales(out);
     await upsertChunks('ot_sales_daily', out, 'store_code,sales_date');
     report('acSalesMsg', 'ok', `저장됨: ${out.length}행 · ${Object.keys(perStore).length}개 매장 · 합계 ${(tot/1e8).toFixed(2)}억` +
+      (removed ? ` · 구버전 ${removed}행 정리` : '') +
       (badCodes.size ? ` <span style="color:var(--warn)">(미등록 코드 제외: ${[...badCodes].join(',')})</span>` : ''));
   } catch (e) { report('acSalesMsg', 'err', '실패: ' + e.message); }
 }
@@ -276,18 +378,25 @@ async function uploadSalesWide(file, all) {
     if (declared && Math.abs(sum - declared) > 1) warns.push(`${code} 합계 불일치(${won(sum)}≠${won(declared)})`);
   });
   if (!out.length) throw new Error(`${ym}: 적재할 행이 없습니다.`);
+  const removed = await cleanupStaleSales(out);
   await upsertChunks('ot_sales_daily', out, 'store_code,sales_date');
   const tot = out.reduce((t, r) => t + r.total, 0);
   report('acSalesMsg', warns.length ? 'err' : 'ok',
     `저장됨(${ym}): ${nStores}개 매장 · ${out.length}일행 · 합계 ${(tot/1e8).toFixed(2)}억` +
+    (removed ? ` · 구버전 ${removed}행 정리` : '') +
     (badCodes.size ? ` · 미등록 코드 제외: ${[...badCodes].join(',')}` : '') +
     (warns.length ? ` · <b>검증 경고: ${warns.join(' / ')}</b>` : ''));
 }
 
 // ② 메이트 급여대장 (시간 단위 '분', 야간·추가는 ×0.5 가산이라 MH 제외, 휴일근무는 배수 ≥1.0인 행만 가산)
+// 주차 단위 저장(ot_labor_periods) — 파일에 기간 정보가 없으므로 화면에서 고른 주차가 기간의 진실.
+// 개인정보 비저장: 성명 등 텍스트 신원 컬럼은 아예 읽지 않고, 행 단위 값은 매장 합계로 접은 뒤 즉시 버린다.
 async function uploadPayroll(file) {
   report('acPayMsg', '', '읽는 중…');
   try {
+    const wkVal = $('acPayWeek') && $('acPayWeek').value;
+    if (!wkVal) throw new Error('주차를 먼저 선택해주세요.');
+    const [pStart, pEnd] = wkVal.split('|');
     const rows = (await sheetRows(file)).filter(r => isCode(r[0]));
     if (!rows.length) throw new Error('매장코드(RUxxx) 행을 찾지 못했습니다 — 메이트 급여대장 원본인지 확인해주세요.');
     const agg = {};
@@ -301,12 +410,19 @@ async function uploadPayroll(file) {
       const a = (agg[code] = agg[code] || { pay: 0, mh: 0, n: 0 });
       a.pay += total; a.mh += nm / 60 + holH; a.n++;
     });
-    const ym = ymOf();
     const out = Object.entries(agg).map(([code, a]) => ({
-      store_code: code, ym, mate_pay: Math.round(a.pay), mate_mh: +a.mh.toFixed(1), source: `업로드 ${new Date().toISOString().slice(0, 10)}` }));
-    await upsertChunks('ot_labor_monthly', out, 'store_code,ym');
+      store_code: code, period_start: pStart, period_end: pEnd,
+      mate_pay: Math.round(a.pay), mate_mh: +a.mh.toFixed(1), headcount: a.n,
+      source: `업로드 ${new Date().toISOString().slice(0, 10)}` }));
+    if (!out.length) throw new Error('등록된 매장의 행이 없습니다.');
+    // 같은 주차 재업로드 = 교체 (주차가 고정 슬롯이라 기간이 어긋날 일이 없음)
+    const { data: prev } = await sb.from('ot_labor_periods').select('store_code')
+      .eq('period_start', pStart).eq('period_end', pEnd);
+    await upsertChunks('ot_labor_periods', out, 'store_code,period_start,period_end');
     const totPay = out.reduce((t, r) => t + r.mate_pay, 0);
-    report('acPayMsg', 'ok', `저장됨(${ym}): ${out.length}개 매장 · 인원 ${Object.values(agg).reduce((t,a)=>t+a.n,0)}명 · 급여 합계 ${(totPay/1e8).toFixed(2)}억`);
+    const wkLabel = $('acPayWeek').selectedOptions[0].textContent;
+    report('acPayMsg', 'ok', `저장됨 <b>${$('acYm').value} ${wkLabel}</b>: ${out.length}개 매장 · 인원 ${Object.values(agg).reduce((t,a)=>t+a.n,0)}명 · 급여 합계 ${(totPay/1e8).toFixed(2)}억` +
+      (prev && prev.length ? ` · 기존 ${prev.length}개 매장 값 교체` : '') + ' · 성명 등 개인정보는 저장되지 않았습니다');
   } catch (e) { report('acPayMsg', 'err', '실패: ' + e.message); }
 }
 
