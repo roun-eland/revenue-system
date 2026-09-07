@@ -519,3 +519,7 @@ body.viewer :is(.data-table, .pivot-table) input,
 body.viewer :is(.data-table, .pivot-table) select,
 body.viewer textarea,
 body.viewer input[type="file"] { pointer-events: none; background: #f5f5f5 !important; color: #888; }
+
+/* 조회 전용: 시즌 범위(날짜) 수정 차단 — 시즌 드롭다운은 조회 전환용이라 유지 */
+body.viewer .season-range-input { pointer-events: none; background: #f5f5f5 !important; color: #888; }
+body.viewer #seasonDatePopup { display: none !important; }
