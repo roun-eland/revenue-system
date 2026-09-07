@@ -3037,7 +3037,7 @@ async function renderProduceCards() {
   grid.innerHTML = '<p class="hint">시장 등급별 집계 불러오는 중…</p>';
   let agg;
   try { agg = await ensureProduceAgg(); }
-  catch (e) { grid.innerHTML = '<p class="hint">집계 로드 실패 — 잠시 후 다시 시도해주세요.</p>'; return; }
+  catch (e) { grid.innerHTML = `<p class="hint">집계 로드 실패(${e?.message || e}) — 새로고침 후 다시 시도해주세요.</p>`; return; }
   const ym = $('#produceMonthInput').value;
   const grades = produceCardState.grade === 'all' ? ['상', '특'] : [produceCardState.grade];
   const monthRows = agg.market.filter(mr => mr.ym === ym && grades.includes(mr.grade));
@@ -3180,7 +3180,7 @@ async function loadProduceChart(itemName) {
   try { agg = await ensureProduceAgg(); }
   catch (e) {
     console.error('produce agg load failed', e);
-    if (wrapEl) wrapEl.innerHTML = '<p class="hint" style="padding:12px 0">집계 로드에 실패했습니다 — 잠시 후 다시 클릭해주세요.</p>';
+    if (wrapEl) wrapEl.innerHTML = `<p class="hint" style="padding:12px 0">집계 로드 실패(${e?.message || e}) — 새로고침 후 다시 시도해주세요.</p>`;
     return;
   }
 
