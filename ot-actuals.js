@@ -3,11 +3,11 @@
 // 피드백 원칙(PRD §5.7): 필요 MH는 "실적 매출" 기준으로 재계산 — 매출 미달을 인력 과잉으로 오판하지 않는다.
 
 const NOTE_TAGS = ['휴점', '공휴일', '우천', '행사', '결원', '교육', '기타'];
-// 근태·급여 업로드용: 기록부의 매장명 → 코드 (동부산은 세팅 대상 외라 제외)
+// 근태·급여 업로드용: 기록부의 매장명 → 코드 (동부산은 2026-09 편입으로 추가)
 const STORE_NAME_MAP = [['신촌','RU019'],['청량리','RU025'],['평촌','RU029'],['수원터미널','RU030'],
   ['중앙로역','RU031'],['강서','RU032'],['일산','RU033'],['송파','RU034'],['순천','RU035'],
-  ['괴정','RU037'],['야탑','RU038'],['광주역','RU039'],['부산대','RU041'],['동탄','RU042'],
-  ['의정부','RU043'],['해운대','RU044'],['광명','RU045']];
+  ['괴정','RU037'],['야탑','RU038'],['광주역','RU039'],['동부산','RU046'],['부산대','RU041'],
+  ['동탄','RU042'],['의정부','RU043'],['해운대','RU044'],['광명','RU045']];
 const FT_ROLE_SET = new Set(['점장','선임점장','부점장','매니저','캡틴','헤드','HIT','ST','TM','GM']);
 
 // 필요 MH 산식(needMHof)은 ot.js에 공통 정의 — 운영 제약(최소 2명·준비 2명) 포함
@@ -440,9 +440,10 @@ async function uploadAtt(file) {
     };
     const day = {};
     let skipped = 0;
+    const badNames = {}; // 매핑 실패한 매장명 → 행수 (원인 확인용 — 매장명은 개인정보 아님)
     rows.forEach(r => {
       const code = toCode(r[2]);
-      if (!code) { skipped++; return; }
+      if (!code) { skipped++; const nm2 = String(r[2]).trim() || '(빈값)'; badNames[nm2] = (badNames[nm2] || 0) + 1; return; }
       const th = num(r[10]);
       if (th <= 0) return;
       const d = normDate(r[4]);
@@ -465,7 +466,8 @@ async function uploadAtt(file) {
       store_code: o.code, work_date: o.d, mate_mh: +o.mate.toFixed(2), ft_mh: +o.ft.toFixed(2),
       by_hour: o.hours.map(x => +x.toFixed(2)) }));
     await upsertChunks('ot_labor_daily', out, 'store_code,work_date');
-    report('acAttMsg', 'ok', `저장됨: ${out.length}일분(매장×일) · 원본 ${rows.length}행` + (skipped ? ` · 매장 매핑 실패 ${skipped}행 제외` : ''));
+    report('acAttMsg', 'ok', `저장됨: ${out.length}일분(매장×일) · 원본 ${rows.length}행` +
+      (skipped ? ` · <span style="color:var(--warn)">매핑 실패 ${skipped}행 제외 — ${Object.entries(badNames).map(([n, c]) => `${n}(${c}행)`).join(', ')}</span>` : ''));
   } catch (e) { report('acAttMsg', 'err', '실패: ' + e.message); }
 }
 
