@@ -530,16 +530,21 @@
       <div class="card">
         <div class="card-head">
           <h3>사용량 입력</h3>
-          <span class="hint">📋 엑셀 표를 그대로 복사해 첫 칸에 붙여넣으세요 (매장코드~실사용량금액 15열, 조닝 칸은 빼고 붙여넣으세요. 비고·품목·과세여부는 자재코드 기준으로 자동으로 채워집니다)</span>
+          <span class="hint">EATS "매장별-자재사용량조회" 엑셀 원본을 그대로 올리면 파서가 정리해 저장합니다. 비고·품목·과세여부는 자재코드 기준 자동. 같은 주차 재업로드는 겹치는 매장×자재만 교체됩니다.</span>
         </div>
         <div class="history-year-row">
           <span class="hint">등록 연월</span>
           <input type="month" id="usageMonthInput">
           <span class="hint">주차</span>
           <select id="usageWeekSelect"></select>
-          <button id="saveUsageGridBtn" class="btn btn-primary btn-sm" type="button">저장</button>
+          <input type="file" id="usageFileInput" accept=".xlsx,.xls">
           <span id="usageSaveMsg" class="save-msg"></span>
         </div>
+        <details style="margin-top:6px">
+          <summary class="hint" style="cursor:pointer">직접 붙여넣기 (백업 — 파일이 없을 때)</summary>
+          <div class="history-year-row" style="margin-top:6px">
+            <button id="saveUsageGridBtn" class="btn btn-primary btn-sm" type="button">붙여넣은 표 저장</button>
+          </div>
         <div class="table-scroll">
           <table class="data-table editable-grid" id="usageGrid">
             <thead>
@@ -555,6 +560,7 @@
         <div class="grid-actions">
           <button id="addUsageRowBtn" class="btn btn-ghost btn-sm" type="button">+ 행 추가</button>
         </div>
+        </details>
       </div>
 
       <div class="card">
@@ -658,12 +664,17 @@
       <div class="card">
         <div class="card-head">
           <h3>매출/객수 입력</h3>
-          <span class="hint">📋 엑셀 표를 그대로 복사해 첫 칸에 붙여넣으세요 (매장코드~객수합계 11열)</span>
+          <span class="hint">EATS "시간대별매출조회-일자별" 엑셀 원본을 그대로 올리면 파서가 정리해 저장합니다. 시즌 범위 밖 날짜는 건너뛰고, 같은 매장×날짜는 새 값으로 교체됩니다.</span>
         </div>
         <div class="history-year-row">
-          <button id="saveSalesGridBtn" class="btn btn-primary btn-sm" type="button">저장</button>
+          <input type="file" id="storeSalesFileInput" accept=".xlsx,.xls">
           <span id="salesSaveMsg" class="save-msg"></span>
         </div>
+        <details style="margin-top:6px">
+          <summary class="hint" style="cursor:pointer">직접 붙여넣기 (백업 — 파일이 없을 때)</summary>
+          <div class="history-year-row" style="margin-top:6px">
+            <button id="saveSalesGridBtn" class="btn btn-primary btn-sm" type="button">붙여넣은 표 저장</button>
+          </div>
         <div class="table-scroll">
           <table class="data-table editable-grid" id="salesGrid">
             <thead>
@@ -679,6 +690,7 @@
         <div class="grid-actions">
           <button id="addSalesRowBtn" class="btn btn-ghost btn-sm" type="button">+ 행 추가</button>
         </div>
+        </details>
       </div>
 
       <div class="card">
@@ -721,6 +733,6 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../app.js?v=202609071100"></script>
+<script src="../app.js?v=202609081215"></script>
 </body>
 </html>

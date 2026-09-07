@@ -3485,59 +3485,102 @@ for (let i = 0; i < 3; i++) addUsageRow();
 $('#addUsageRowBtn').addEventListener('click', () => addUsageRow());
 attachPasteFill(usageGridBody, addUsageRow);
 
-$('#saveUsageGridBtn').addEventListener('click', async () => {
-  if (!state.currentSeasonId) return;
+// 주차 검증 — 파일 업로드·붙여넣기 공용. 유효하면 {periodStart, periodEnd, usageMonth}, 아니면 null.
+function usageWeekSelection() {
+  if (!state.currentSeasonId) return null;
   const monthValue = $('#usageMonthInput').value; // "YYYY-MM"
-  if (!monthValue) { flash($('#usageSaveMsg'), '등록 연월을 선택해주세요.', false); return; }
+  if (!monthValue) { flash($('#usageSaveMsg'), '등록 연월을 선택해주세요.', false); return null; }
   const weekValue = $('#usageWeekSelect').value; // "periodStart|periodEnd"
-  if (!weekValue) { flash($('#usageSaveMsg'), '주차를 선택해주세요.', false); return; }
+  if (!weekValue) { flash($('#usageSaveMsg'), '주차를 선택해주세요.', false); return null; }
   const [periodStart, periodEnd] = weekValue.split('|');
-  const usageMonth = `${periodEnd.slice(0, 7)}-01`; // 실사일(period_end)이 속한 달 기준
+  return { periodStart, periodEnd, usageMonth: `${periodEnd.slice(0, 7)}-01` };
+}
+
+// 사용량 저장 공용 코어 — 분류 자동 채움 + 같은 주차 겹침 교체 + insert (그리드·파일 업로드 공용)
+async function saveUsageRecords(rows, periodStart, periodEnd) {
+  // 비고/품목/과세여부는 자재코드(별칭 그룹 포함) 기준으로 과거 이력에서 자동으로 이어받는다.
+  // 이번에 저장하는 자재코드만 조회 범위로 좁혀서(전체 이력을 다 훑지 않도록) 속도를 확보한다.
+  const codesOfInterest = [...new Set(rows.map(r => r.material_code).filter(Boolean))];
+  const classificationByCode = await buildMaterialClassificationLookup(codesOfInterest);
+  rows.forEach(r => {
+    const cls = r.material_code ? classificationByCode.get(r.material_code) : null;
+    r.remark = cls?.remark ?? null;
+    r.item_name = cls?.item_name ?? null;
+    r.tax_status = cls?.tax_status ?? null;
+  });
+
+  // 같은 주차(period_start~period_end)에 매장+자재 조합이 이미 있으면 이전 값을 지우고 새 값으로 교체
+  // (다른 주차 데이터는 그대로 유지 — 한 달에 여러 주를 나눠 저장해도 서로 지우지 않는다)
+  const keys = new Set(rows.map(r => `${r.store_code}||${r.material_code}`));
+  const { data: existing } = await fetchAllRows('material_usage',
+    q => q.eq('period_start', periodStart).eq('period_end', periodEnd), 'id, store_code, material_code');
+  const toDelete = (existing || []).filter(e => keys.has(`${e.store_code}||${e.material_code}`)).map(e => e.id);
+  if (toDelete.length) await deleteInChunks('material_usage', toDelete);
+
+  const { error } = await sb.from('material_usage').insert(rows);
+  if (error) throw new Error(error.message);
+  await loadUsageView();
+  return toDelete.length;
+}
+
+$('#saveUsageGridBtn').addEventListener('click', async () => {
+  const wk = usageWeekSelection();
+  if (!wk) return;
   const rows = [];
   $$('tr', usageGridBody).forEach(tr => {
     const values = USAGE_GRID_FIELDS.map((_, i) => tr.querySelector(`input[data-col="${i}"]`).value);
     if (!values[3] && !values[2]) return; // need at least material name or code
-    const rec = { season_id: state.currentSeasonId, usage_month: usageMonth, period_start: periodStart, period_end: periodEnd };
+    const rec = { season_id: state.currentSeasonId, usage_month: wk.usageMonth, period_start: wk.periodStart, period_end: wk.periodEnd };
     USAGE_GRID_FIELDS.forEach((f, i) => {
       rec[f] = (i >= USAGE_NUMERIC_FROM && i <= USAGE_NUMERIC_TO) ? numOrNull(values[i]) : (values[i] ? values[i].trim() : null);
     });
     rows.push(rec);
   });
   if (!rows.length) { flash($('#usageSaveMsg'), '입력된 행이 없습니다.', false); return; }
-
   const btn = $('#saveUsageGridBtn');
   const originalLabel = btn.textContent;
   btn.disabled = true;
   btn.textContent = '저장 중...';
   try {
-    // 비고/품목/과세여부는 자재코드(별칭 그룹 포함) 기준으로 과거 이력에서 자동으로 이어받는다.
-    // 이번에 저장하는 자재코드만 조회 범위로 좁혀서(전체 이력을 다 훑지 않도록) 속도를 확보한다.
-    const codesOfInterest = [...new Set(rows.map(r => r.material_code).filter(Boolean))];
-    const classificationByCode = await buildMaterialClassificationLookup(codesOfInterest);
-    rows.forEach(r => {
-      const cls = r.material_code ? classificationByCode.get(r.material_code) : null;
-      r.remark = cls?.remark ?? null;
-      r.item_name = cls?.item_name ?? null;
-      r.tax_status = cls?.tax_status ?? null;
-    });
-
-    // 같은 주차(period_start~period_end)에 매장+자재 조합이 이미 있으면 이전 값을 지우고 새 값으로 교체
-    // (다른 주차 데이터는 그대로 유지 — 한 달에 여러 주를 나눠 저장해도 서로 지우지 않는다)
-    const keys = new Set(rows.map(r => `${r.store_code}||${r.material_code}`));
-    const { data: existing } = await fetchAllRows('material_usage',
-      q => q.eq('period_start', periodStart).eq('period_end', periodEnd), 'id, store_code, material_code');
-    const toDelete = (existing || []).filter(e => keys.has(`${e.store_code}||${e.material_code}`)).map(e => e.id);
-    if (toDelete.length) await deleteInChunks('material_usage', toDelete);
-
-    const { error } = await sb.from('material_usage').insert(rows);
-    if (error) { flash($('#usageSaveMsg'), '저장 실패: ' + error.message, false); return; }
+    const replaced = await saveUsageRecords(rows, wk.periodStart, wk.periodEnd);
     usageGridBody.innerHTML = '';
     for (let i = 0; i < 3; i++) addUsageRow();
-    flash($('#usageSaveMsg'), `${rows.length}개 행이 저장되었습니다.${toDelete.length ? ` (${periodStart}~${periodEnd} 내 겹치는 ${toDelete.length}개 교체됨)` : ''}`);
-    await loadUsageView();
+    flash($('#usageSaveMsg'), `${rows.length}개 행이 저장되었습니다.${replaced ? ` (${wk.periodStart}~${wk.periodEnd} 내 겹치는 ${replaced}개 교체됨)` : ''}`);
+  } catch (e) {
+    flash($('#usageSaveMsg'), '저장 실패: ' + e.message, false);
   } finally {
     btn.disabled = false;
     btn.textContent = originalLabel;
+  }
+});
+
+// EATS "매장별-자재사용량조회" 원본 업로드 — 15열이 그리드와 동일 순서 (RU 매장코드 행만 인식)
+$('#usageFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const wk = usageWeekSelection();
+  if (!wk) return;
+  flash($('#usageSaveMsg'), '읽는 중…');
+  try {
+    const raw = await readSheetRows(file);
+    const rows = [];
+    raw.forEach(r => {
+      const code = String(r[0] || '').trim();
+      if (!/^RU\d{3}$/.test(code)) return;
+      const rec = { season_id: state.currentSeasonId, usage_month: wk.usageMonth, period_start: wk.periodStart, period_end: wk.periodEnd };
+      USAGE_GRID_FIELDS.forEach((f, i) => {
+        const v = r[i];
+        rec[f] = (i >= USAGE_NUMERIC_FROM && i <= USAGE_NUMERIC_TO) ? excelCellToNumber(v) : (v != null && String(v).trim() ? String(v).trim() : null);
+      });
+      rows.push(rec);
+    });
+    if (!rows.length) throw new Error('매장코드(RUxxx) 행을 찾지 못했습니다 — 자재사용량 원본인지 확인해주세요.');
+    const replaced = await saveUsageRecords(rows, wk.periodStart, wk.periodEnd);
+    const nStores = new Set(rows.map(r => r.store_code)).size;
+    flash($('#usageSaveMsg'), `저장됨 (${wk.periodStart}~${wk.periodEnd}): ${nStores}개 매장 · ${rows.length}행${replaced ? ` · 겹치는 ${replaced}개 교체` : ''}`);
+  } catch (err) {
+    flash($('#usageSaveMsg'), '실패: ' + err.message, false);
   }
 });
 
@@ -3760,6 +3803,18 @@ for (let i = 0; i < 3; i++) addSalesRow();
 $('#addSalesRowBtn').addEventListener('click', () => addSalesRow());
 attachPasteFill(salesGridBody, addSalesRow);
 
+// 매출/객수 저장 공용 코어 — 같은 시즌의 매장+날짜 겹침 교체 + insert (그리드·파일 업로드 공용)
+async function saveStoreSalesRecords(rows) {
+  const keys = new Set(rows.map(r => `${r.store_code}||${r.sales_date}`));
+  const { data: existing } = await fetchAllRows('store_sales', q => applySeasonDateFilter(q, 'sales_date'), 'id, store_code, sales_date');
+  const toDelete = (existing || []).filter(e => keys.has(`${e.store_code}||${e.sales_date}`)).map(e => e.id);
+  if (toDelete.length) await deleteInChunks('store_sales', toDelete);
+  const { error } = await sb.from('store_sales').insert(rows);
+  if (error) throw new Error(error.message);
+  await loadSalesView();
+  return toDelete.length;
+}
+
 $('#saveSalesGridBtn').addEventListener('click', async () => {
   if (!state.currentSeasonId) return;
   const rows = [];
@@ -3773,20 +3828,63 @@ $('#saveSalesGridBtn').addEventListener('click', async () => {
     rows.push(rec);
   });
   if (!rows.length) { flash($('#salesSaveMsg'), '입력된 행이 없습니다.', false); return; }
-
-  // 같은 시즌에 매장+날짜 조합이 이미 있으면(재업로드로 겹치는 기간) 이전 값을 지우고 새 값으로 교체
-  const keys = new Set(rows.map(r => `${r.store_code}||${r.sales_date}`));
-  const { data: existing } = await fetchAllRows('store_sales', q => applySeasonDateFilter(q, 'sales_date'), 'id, store_code, sales_date');
-  const toDelete = (existing || []).filter(e => keys.has(`${e.store_code}||${e.sales_date}`)).map(e => e.id);
-  if (toDelete.length) await deleteInChunks('store_sales', toDelete);
-
-  const { error } = await sb.from('store_sales').insert(rows);
-  if (error) { flash($('#salesSaveMsg'), '저장 실패: ' + error.message, false); return; }
-  salesGridBody.innerHTML = '';
-  for (let i = 0; i < 3; i++) addSalesRow();
-  flash($('#salesSaveMsg'), `${rows.length}개 행이 저장되었습니다.${toDelete.length ? ` (겹치는 ${toDelete.length}개 교체됨)` : ''}`);
-  await loadSalesView();
+  try {
+    const replaced = await saveStoreSalesRecords(rows);
+    salesGridBody.innerHTML = '';
+    for (let i = 0; i < 3; i++) addSalesRow();
+    flash($('#salesSaveMsg'), `${rows.length}개 행이 저장되었습니다.${replaced ? ` (겹치는 ${replaced}개 교체됨)` : ''}`);
+  } catch (e2) { flash($('#salesSaveMsg'), '저장 실패: ' + e2.message, false); }
 });
+
+// EATS "시간대별매출조회-일자별" 원본 업로드 — 11열이 그리드와 동일 순서.
+// 시즌 범위 밖 날짜는 잘못된 시즌에 태깅되지 않도록 건너뛴다.
+$('#storeSalesFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file || !state.currentSeasonId) return;
+  flash($('#salesSaveMsg'), '읽는 중…');
+  try {
+    const raw = await readSheetRows(file);
+    const season = currentSeason();
+    const rows = [];
+    let outOfRange = 0;
+    raw.forEach(r => {
+      const code = String(r[0] || '').trim();
+      if (!/^RU\d{3}$/.test(code)) return;
+      const d = excelCellToDateStr(r[2]);
+      if (!d) return;
+      if (season?.start_month && season?.end_month && (d < season.start_month || d > season.end_month)) { outOfRange++; return; }
+      const rec = { season_id: state.currentSeasonId, store_code: code, sales_date: d };
+      SALES_FIELDS.forEach((f, i) => {
+        if (i === 0 || i === 2) return;
+        rec[f] = (i >= SALES_NUMERIC_FROM) ? excelCellToNumber(r[i]) : (r[i] != null && String(r[i]).trim() ? String(r[i]).trim() : null);
+      });
+      rows.push(rec);
+    });
+    if (!rows.length) throw new Error('시즌 범위 안의 매장코드(RUxxx)+날짜 행을 찾지 못했습니다' + (outOfRange ? ` (시즌 밖 ${outOfRange}행)` : '') + ' — 일자별 매출 원본인지 확인해주세요.');
+    const replaced = await saveStoreSalesRecords(rows);
+    const nStores = new Set(rows.map(r => r.store_code)).size;
+    const dates = rows.map(r => r.sales_date).sort();
+    flash($('#salesSaveMsg'), `저장됨: ${nStores}개 매장 · ${rows.length}행 (${dates[0]}~${dates[dates.length - 1]})${replaced ? ` · 겹치는 ${replaced}개 교체` : ''}${outOfRange ? ` · 시즌 밖 ${outOfRange}행 건너뜀` : ''}`);
+  } catch (err) {
+    flash($('#salesSaveMsg'), '실패: ' + err.message, false);
+  }
+});
+
+// 엑셀 파일 → 2차원 배열 (raw:false — 표시 문자열 기준, 시장 업로드와 별도 공용 헬퍼)
+function readSheetRows(file) {
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onload = ev => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: 'array' });
+        resolve(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' }));
+      } catch (err) { reject(err); }
+    };
+    rd.onerror = reject;
+    rd.readAsArrayBuffer(file);
+  });
+}
 
 let salesViewCache = [];
 async function loadSalesView() {
