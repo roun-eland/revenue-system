@@ -230,7 +230,7 @@ function buildSelectors() {
   }
   const ss = $('dailyStore');
   if (!ss.options.length) {
-    const codes = Object.keys(OT_DATA).sort((a, b) => (OT_DATA[b].augM || 0) - (OT_DATA[a].augM || 0));
+    const codes = Object.keys(OT_DATA).sort(); // 매장코드 순
     for (const c of codes) {
       const o = document.createElement('option');
       o.value = c; o.textContent = `${OT_DATA[c].name} (${c})`;
