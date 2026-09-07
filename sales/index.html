@@ -44,6 +44,7 @@
   <nav class="ot-nav" id="sfNav">
     <button data-view="brand" class="on">브랜드 대시보드</button>
     <button data-view="daily">매장 일별</button>
+    <button data-view="weekly">주차별 매출</button>
     <button data-view="acc" disabled>정확도 피드백<span class="soon">M2</span></button>
     <button data-view="admin">발행 관리</button>
   </nav>
@@ -84,6 +85,24 @@
       </div>
     </section>
 
+    <!-- V2b 주차별 매출 (실적 전용) -->
+    <section id="view-weekly" class="view" hidden>
+      <h2>주차별 매출</h2>
+      <p class="view-sub">추정이 아닌 <b>실적</b>을 주 단위(월~일)로 보는 화면입니다. 급락·급증 주에는 우리가 아는 요인(명절·공휴일·휴점·가격변경·공사 등)을 특이사항으로 붙여줍니다. ※ 생산성 급여 주차(화~월)와는 기준이 다릅니다.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:200px">매장<select id="wkStore"></select></label>
+        <label class="fld" style="min-width:120px">연도<select id="wkYear"></select></label>
+      </div>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 10px" id="wkChartTitle">주차별 매출 (백만원)</h3>
+        <div class="chartbox" style="height:280px"><canvas id="wkChart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="tblwrap" id="wkTable"></div>
+        <p class="dnote">주 = 월~일 (1주차 = 1월 1일이 포함된 주) · 전주/전년 대비는 매출 있는 주만 · 특이사항은 공휴일 달력·휴무 규칙·매장 이벤트 기록(sf_events)에서 자동 생성 — <b style="color:var(--crit)">±15% 이상 급변인데 요인이 없는 주</b>는 확인 대상입니다.</p>
+      </div>
+    </section>
+
     <!-- V3 자리 -->
     <section id="view-acc" class="view" hidden>
       <h2>정확도 피드백</h2>
@@ -115,6 +134,6 @@
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
-<script src="../sales.js?v=202609071910"></script>
+<script src="../sales.js?v=202609071940"></script>
 </body>
 </html>

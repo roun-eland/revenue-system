@@ -66,6 +66,11 @@ async function loadRuns() {
   if (error) throw error;
   RUNS = data || [];
 }
+let SF_EVENTS = []; // 매장 이벤트 기록 (가격변경·공사·오픈 등) — 주차별 특이사항 주석에 사용
+async function loadEvents() {
+  const { data } = await sb.from('sf_events').select('store_code,start_date,end_date,kind,memo');
+  SF_EVENTS = data || [];
+}
 function getRun(ym) { return RUNS.find(r => r.ym === ym && r.kind === '확정') || null; } // 정렬상 최신 버전이 먼저
 
 // ---------- 분해 모델 sfv1 ----------
@@ -195,7 +200,7 @@ async function enterApp(user) {
   document.querySelector('#sfNav button[data-view="admin"]').hidden = !isPlanner;
 
   try {
-    await Promise.all([loadSales(), loadRuns()]);
+    await Promise.all([loadSales(), loadRuns(), loadEvents()]);
   } catch (e) {
     $('brandKpis').innerHTML = `<div style="grid-column:1/-1;color:var(--crit)">데이터 로드 실패: ${e.message}</div>`;
     return;
@@ -210,7 +215,8 @@ $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace
 
 function showView(v) {
   document.querySelectorAll('#sfNav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
-  for (const k of ['brand', 'daily', 'acc', 'admin']) $('view-' + k).hidden = (k !== v);
+  for (const k of ['brand', 'daily', 'weekly', 'acc', 'admin']) $('view-' + k).hidden = (k !== v);
+  if (v === 'weekly') renderWeekly();
 }
 document.querySelectorAll('#sfNav button').forEach(b => { if (!b.disabled) b.onclick = () => showView(b.dataset.view); });
 
@@ -245,9 +251,25 @@ function buildSelectors() {
       ps.appendChild(o);
     }
   }
+  const ws = $('wkStore');
+  if (!ws.options.length) {
+    for (const c of Object.keys(OT_DATA).sort()) {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = `${OT_DATA[c].name} (${c})`;
+      ws.appendChild(o);
+    }
+    const wy = $('wkYear');
+    for (const y of [2026, 2025, 2024]) {
+      const o = document.createElement('option');
+      o.value = y; o.textContent = y + '년';
+      wy.appendChild(o);
+    }
+  }
   $('brandMonth').onchange = renderBrand;
   $('dailyMonth').onchange = renderDaily;
   $('dailyStore').onchange = renderDaily;
+  $('wkStore').onchange = renderWeekly;
+  $('wkYear').onchange = renderWeekly;
   $('toPlanBtn').href = '../labor/';
 }
 
@@ -431,6 +453,135 @@ function renderDaily() {
     html += `<div class="cd${closed || newNotOpen ? ' off' : ''}${hol ? ' hol' : ''}"><span class="dnum">${+d.slice(8)}</span>${tag}${body}</div>`;
   }
   $('calGrid').innerHTML = html;
+}
+
+// ---------- V2b 주차별 매출 (실적 전용, 주 = 월~일 — 생산성 급여 주차(화~월)와 다른 기준) ----------
+let weeklyChartObj = null;
+
+// 특이사항 주석용 공휴일·명절 달력 (2024~) — 모델 산출에는 사용하지 않음
+const SF_HOL_ANNOT = new Set([...OT_HOLIDAYS, ...SF_PAST_HOLIDAYS,
+  '2024-01-01', '2024-02-09', '2024-02-10', '2024-02-11', '2024-02-12', '2024-03-01', '2024-04-10',
+  '2024-05-05', '2024-05-06', '2024-05-15', '2024-06-06', '2024-08-15', '2024-09-16', '2024-09-17',
+  '2024-09-18', '2024-10-03', '2024-10-09', '2024-12-25',
+  '2025-01-01', '2025-01-27', '2025-01-28', '2025-01-29', '2025-01-30', '2025-03-01', '2025-03-03',
+  '2025-05-05', '2025-05-06', '2025-06-03', '2025-06-06']);
+// 명절 당일 (전점 휴무 관례)
+const SF_FEST = new Set(['2024-02-10', '2024-09-17', '2025-01-29', '2025-10-06', '2026-02-17', '2026-09-25', '2027-02-07', '2027-09-15']);
+
+// 1주차 = 1월 1일이 포함된 월~일 주
+function weeksOfYear(y) {
+  let start = `${y}-01-01`;
+  start = addD(start, -dowIdx(start));
+  const weeks = [];
+  for (let i = 0; ; i++) {
+    const s = addD(start, i * 7);
+    if (s > `${y}-12-31`) break;
+    weeks.push({ n: i + 1, s, e: addD(s, 6) });
+  }
+  return weeks;
+}
+
+function renderWeekly() {
+  const code = $('wkStore').value || Object.keys(OT_DATA)[0];
+  const year = +($('wkYear').value || new Date().getFullYear());
+  const m = SALES[code] || new Map();
+  const allDates = [...m.keys()].sort();
+  const first = allDates[0], last = allDates[allDates.length - 1];
+  const weeks = weeksOfYear(year);
+  const today = dStr(new Date());
+
+  const sumWeek = (s, e, map) => {
+    let t = 0, days = 0;
+    for (let d = s; d <= e; d = addD(d, 1)) { const v = map.get(d); if (v > 0) { t += v; days++; } }
+    return { t, days };
+  };
+
+  const rows = weeks.map(w => {
+    const { t, days } = sumWeek(w.s, w.e, m);
+    // 전년 같은 주차 번호
+    const pw = weeksOfYear(year - 1)[w.n - 1];
+    const pv = pw ? sumWeek(pw.s, pw.e, m).t : 0;
+
+    // 특이사항 수집
+    const tags = [];
+    if (first && w.e >= first && w.s <= first && first > `${year}-01-01`) tags.push({ c: 'i', t: '오픈' });
+    let hol = 0, fest = false;
+    for (let d = w.s; d <= w.e; d = addD(d, 1)) {
+      if (SF_FEST.has(d)) fest = true;
+      else if (SF_HOL_ANNOT.has(d)) hol++;
+    }
+    if (fest) tags.push({ c: 'i', t: '명절 (당일 전점휴무)' });
+    else if (hol) tags.push({ c: 'i', t: `공휴일 ${hol}일` });
+    // 매장 이벤트: 기간형은 겹치는 주 전부, 시점형(end 없음)은 시작일이 든 주만
+    for (const ev of SF_EVENTS) {
+      if (ev.store_code && ev.store_code !== code) continue;
+      const hit = ev.end_date ? (ev.start_date <= w.e && ev.end_date >= w.s)
+        : (ev.start_date >= w.s && ev.start_date <= w.e);
+      if (hit) tags.push({ c: 'e', t: ev.kind + (ev.end_date ? '' : ' 시작') });
+    }
+    // 미영업일: 데이터 범위 안(과거)인데 7일이 다 없는 주
+    const inRange = first && w.s >= first && w.e <= (last < today ? last : today);
+    if (inRange && days < 7 && days > 0 && !fest) tags.push({ c: 'i', t: `미영업 ${7 - days}일` });
+    if (inRange && days === 0) tags.push({ c: 'w', t: '휴점/데이터 없음' });
+    return { w, t, days, pv, tags };
+  });
+
+  // 전주 대비 + 요인 없는 급변 플래그
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i], b = rows[i - 1];
+    if (a.t > 0 && b.t > 0 && b.days === 7 && a.days === 7) {
+      a.wow = (a.t / b.t - 1) * 100;
+      if (Math.abs(a.wow) >= 15 && !a.tags.length && !b.tags.length) a.tags.push({ c: 'w', t: a.wow > 0 ? '급증 — 요인 미확인' : '급감 — 요인 미확인' });
+    }
+  }
+
+  $('wkChartTitle').textContent = `${OT_DATA[code].name} ${year}년 주차별 매출 (백만원)`;
+  if (typeof Chart !== 'undefined') {
+    if (weeklyChartObj) weeklyChartObj.destroy();
+    weeklyChartObj = new Chart($('wkChart'), {
+      data: {
+        labels: rows.map(r => r.w.n),
+        datasets: [
+          { type: 'bar', label: `${year} 주간 매출(백만)`, data: rows.map(r => r.t ? +(r.t / 1e6).toFixed(1) : null),
+            backgroundColor: rows.map(r => r.tags.some(x => x.c === 'w') ? 'rgba(217,83,79,.55)' : 'rgba(130,220,40,.55)'),
+            borderColor: 'transparent' },
+          { type: 'line', label: `${year - 1} 같은 주차(백만)`, data: rows.map(r => r.pv ? +(r.pv / 1e6).toFixed(1) : null),
+            borderColor: cssVar('--dark') || '#2f3030', borderDash: [6, 4], borderWidth: 2, pointRadius: 0, spanGaps: true },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { labels: { boxWidth: 18, font: { size: 11 } } },
+          tooltip: { callbacks: { afterBody: items => {
+            const r = rows[items[0].dataIndex];
+            return [`기간 ${r.w.s.slice(5)}~${r.w.e.slice(5)}`].concat(r.tags.map(x => '· ' + x.t));
+          } } } },
+        scales: { y: { ticks: { font: { size: 11 } } }, x: { ticks: { font: { size: 10 }, maxTicksLimit: 26 } } },
+      },
+    });
+  }
+
+  const tagHtml = tags => tags.map(x =>
+    `<span style="display:inline-block;font-size:11px;font-weight:700;border-radius:9px;padding:0 7px;margin-right:4px;` +
+    (x.c === 'w' ? 'background:var(--hol-bg);color:var(--crit)' : x.c === 'e' ? 'background:var(--fill);color:var(--ink)' : 'background:var(--accent-bg);color:var(--good)') +
+    `">${x.t}</span>`).join('');
+  const pct = v => v == null ? '—' : `<span style="color:${v >= 0 ? 'var(--good)' : 'var(--crit)'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+  $('wkTable').innerHTML = `
+    <table class="data-table" style="min-width:760px">
+      <colgroup><col style="width:70px"><col style="width:120px"><col style="width:110px"><col style="width:95px"><col style="width:110px"><col></colgroup>
+      <thead><tr><th>주차</th><th>기간</th><th>매출</th><th>전주 대비</th><th>전년 동주차</th><th>특이사항</th></tr></thead>
+      <tbody>${rows.map(r => `
+        <tr${r.tags.some(x => x.c === 'w') ? ' style="background:var(--hol-bg)"' : ''}>
+          <td>${r.w.n}주차</td>
+          <td style="color:var(--muted)">${r.w.s.slice(5).replace('-', '/')}~${r.w.e.slice(5).replace('-', '/')}</td>
+          <td style="text-align:right"><b>${r.t ? won(r.t / 10000) + '만' : '—'}</b></td>
+          <td style="text-align:right">${pct(r.wow != null ? r.wow : null)}</td>
+          <td style="text-align:right">${r.t && r.pv ? pct((r.t / r.pv - 1) * 100) : '—'}</td>
+          <td>${tagHtml(r.tags)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
 }
 
 // ---------- V4 발행 관리 ----------
