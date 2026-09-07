@@ -264,6 +264,32 @@ function lastActualDate(ym) {
 // ---------- V1 브랜드 대시보드 ----------
 let brandChartObj = null;
 const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const eok1 = n => (n / 1e8).toFixed(1) + '억';
+
+// 동일매장 성장율용 공휴일 판정 — 전년 비교 기간에 걸리는 과거 공휴일 포함(모델 산출에는 사용 안 함)
+const SF_PAST_HOLIDAYS = new Set(['2025-08-15', '2025-10-03', '2025-10-05', '2025-10-06', '2025-10-07',
+  '2025-10-08', '2025-10-09', '2025-12-25', '2026-01-01', '2026-02-16', '2026-02-17', '2026-02-18',
+  '2026-03-01', '2026-03-02', '2026-05-05', '2026-05-24', '2026-05-25', '2026-06-06', '2026-08-15', '2026-08-17']);
+const isHolCmp = d => OT_HOLIDAYS.has(d) || SF_PAST_HOLIDAYS.has(d);
+
+// 동일매장 성장율: 전년 비교 기간은 -364일(같은 요일), 양쪽 모두 영업 실적이 있는 날짜쌍만 사용,
+// 어느 한쪽이라도 공휴일이면 그 쌍은 제외. 두 기간 모두 실적이 있는 매장(동일매장)만 합산.
+function sameStoreGrowth(ym, asOf) {
+  if (!asOf) return null;
+  let cur = 0, prv = 0, nStores = 0;
+  for (const code of Object.keys(OT_DATA)) {
+    const m = SALES[code]; if (!m) continue;
+    let c = 0, p = 0;
+    for (let d = ym + '-01'; d <= asOf; d = addD(d, 1)) {
+      const pd = addD(d, -364);
+      if (isHolCmp(d) || isHolCmp(pd)) continue;
+      const cv = m.get(d), pv = m.get(pd);
+      if (cv > 0 && pv > 0) { c += cv; p += pv; }
+    }
+    if (c > 0 && p > 0) { cur += c; prv += p; nStores++; }
+  }
+  return prv ? { g: (cur / prv - 1) * 100, n: nStores, from: addD(ym + '-01', -364), to: addD(asOf, -364) } : null;
+}
 
 function renderBrand() {
   const ym = $('brandMonth').value;
@@ -298,36 +324,31 @@ function renderBrand() {
   $('brandSub').textContent = `${ymLabel(ym)} 확정 v${run.version} · 모델 ${run.model_version} · 컷오프 ${run.cutoff_date} · 발행 ${String(run.published_at).slice(0, 10)}` +
     (asOf ? ` · 실적 반영 ~${asOf.slice(5).replace('-', '/')}` : ' · 이 달 실적 미적재 (생산성 > 실적 입력에서 일별매출 업로드 시 자동 반영)');
 
+  const ssg = sameStoreGrowth(ym, asOf);
   $('brandKpis').innerHTML = `
-    <div><div class="k">월 예측 합계</div><div class="v">${eok(fcT)}</div><div class="s">18개 매장 · 확정 v${run.version}</div></div>
-    <div><div class="k">실적 누계${asOf ? ` (~${asOf.slice(8)}일)` : ''}</div><div class="v">${asOf ? eok(actT) : '—'}</div>
-      <div class="s">${asOf && paceT !== null ? `페이스 ${paceT.toFixed(1)}% (같은 기간 예측 ${eok(fcAsT)})` : '실적 업로드 대기'}</div></div>
-    <div><div class="k">착지 전망</div><div class="v">${eok(landT)}</div><div class="s">예측 대비 ${fcT ? ((landT / fcT - 1) * 100).toFixed(1) : '0.0'}%</div></div>
+    <div><div class="k">월초 예상 매출</div><div class="v">${eok1(fcT)}</div><div class="s">18개 매장 · 확정 v${run.version}</div></div>
+    <div><div class="k">현재 예상 매출</div><div class="v">${eok1(landT)}</div><div class="s">예측 대비 ${fcT ? ((landT / fcT - 1) * 100).toFixed(1) : '0.0'}% · 누적 매출 ${asOf ? eok1(actT) : '—'}</div></div>
+    <div><div class="k">동일매장 성장율</div><div class="v">${ssg ? (ssg.g >= 0 ? '+' : '') + ssg.g.toFixed(1) + '%' : '—'}</div>
+      <div class="s">${ssg ? `전년 ${ssg.from.slice(5).replace('-', '/')}~${ssg.to.slice(5).replace('-', '/')} (요일 맞춤·공휴일 제외) · ${ssg.n}개점` : '실적 업로드 대기'}</div></div>
     <div><div class="k">전년 동월 대비</div><div class="v">${yoyT === null ? '—' : (yoyT >= 0 ? '+' : '') + yoyT.toFixed(1) + '%'}</div>
       <div class="s">${pyT ? `${ymLabel(prevYearYm)} 실적 ${eok(pyT)}` : '전년 데이터 없음'}</div></div>`;
 
-  const pace = r => r.fcToAsOf ? (r.act / r.fcToAsOf * 100) : null;
-  const badge = p => p === null ? '—' : `<b style="color:${p >= 100 ? 'var(--good)' : p >= 90 ? 'var(--warn)' : 'var(--crit)'}">${p.toFixed(1)}%</b>`;
   $('brandTable').innerHTML = `
-    <table class="data-table" style="min-width:860px">
-      <colgroup><col style="width:190px"><col style="width:110px"><col style="width:110px"><col style="width:90px"><col style="width:110px"><col style="width:90px"><col style="width:90px"><col style="width:150px"></colgroup>
-      <thead><tr><th>매장</th><th>예측 (월)</th><th>실적 누계</th><th>페이스</th><th>착지 전망</th><th>vs 예측</th><th>YoY</th><th>계수 (SR·T·출처)</th></tr></thead>
+    <table class="data-table" style="min-width:680px">
+      <colgroup><col style="width:200px"><col style="width:130px"><col style="width:130px"><col style="width:130px"><col style="width:110px"></colgroup>
+      <thead><tr><th>매장</th><th>월초 예상매출</th><th>누적 매출</th><th>현재 예상매출</th><th>오차율</th></tr></thead>
       <tbody>
       ${rows.map(r => `<tr data-code="${r.code}" style="cursor:pointer">
         <td>${r.name} <span style="color:var(--muted2);font-size:11px">${r.code}</span></td>
         <td style="text-align:right">${eok(r.fc)}</td>
         <td style="text-align:right">${asOf ? eok(r.act) : '—'}</td>
-        <td style="text-align:right">${badge(pace(r))}</td>
         <td style="text-align:right"><b>${eok(r.landing)}</b></td>
-        <td style="text-align:right">${r.fc ? ((r.landing / r.fc - 1) * 100).toFixed(1) + '%' : '—'}</td>
-        <td style="text-align:right">${r.py ? ((r.landing / r.py - 1) * 100).toFixed(0) + '%' : '—'}</td>
-        <td style="font-size:11px;color:var(--muted2)">${r.sr !== null && r.sr !== undefined ? `SR ${r.sr.toFixed(2)} · T ${r.trend.toFixed(2)} · ${r.src}` : r.src}</td>
+        <td style="text-align:right">${r.fc ? `<b style="color:${Math.abs(r.landing / r.fc - 1) <= 0.03 ? 'var(--good)' : Math.abs(r.landing / r.fc - 1) <= 0.07 ? 'var(--warn)' : 'var(--crit)'}">${((r.landing / r.fc - 1) * 100).toFixed(1)}%</b>` : '—'}</td>
       </tr>`).join('')}
       <tr style="font-weight:700;border-top:2px solid var(--outline)">
         <td>합계</td><td style="text-align:right">${eok(fcT)}</td><td style="text-align:right">${asOf ? eok(actT) : '—'}</td>
-        <td style="text-align:right">${badge(paceT)}</td><td style="text-align:right">${eok(landT)}</td>
+        <td style="text-align:right">${eok(landT)}</td>
         <td style="text-align:right">${fcT ? ((landT / fcT - 1) * 100).toFixed(1) + '%' : '—'}</td>
-        <td style="text-align:right">${pyT ? ((landT / pyT - 1) * 100).toFixed(0) + '%' : '—'}</td><td></td>
       </tr>
       </tbody>
     </table>`;
@@ -350,8 +371,8 @@ function renderBrand() {
     data: {
       labels: dates.map(d => +d.slice(8)),
       datasets: [
-        { label: '예측 누적(억)', data: fcCum, borderColor: cssVar('--muted2') || '#999', borderDash: [5, 4], pointRadius: 0, borderWidth: 2 },
-        { label: '실적 누적(억)', data: actCum, borderColor: cssVar('--good') || '#5a8f29', backgroundColor: 'transparent', pointRadius: 2, borderWidth: 2.5 },
+        { label: '예측 누적(억)', data: fcCum, borderColor: cssVar('--dark') || '#2f3030', borderDash: [6, 4], pointRadius: 0, borderWidth: 2.5 },
+        { label: '실적 누적(억)', data: actCum, borderColor: cssVar('--good') || '#3f9e12', backgroundColor: 'transparent', pointRadius: 3, borderWidth: 3.5 },
       ],
     },
     options: {
