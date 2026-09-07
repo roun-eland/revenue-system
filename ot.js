@@ -129,10 +129,11 @@ async function renderDash() {
 
   if (ym === '2026-08') { // ---- 실측 모드 ----
     $('dashSub').textContent = '2026-08 실측(근태·매출) 기준 — 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
-    const rows = Object.entries(OT_DATA).map(([code, s]) => ({
-      code, name: s.name, sales: s.augM, mh: s.aug.mh,
-      prod: s.aug.prod, need: s.aug.need, over: s.aug.mh - s.aug.need
-    })).sort((a, b) => b.prod - a.prod);
+    const rows = Object.entries(OT_DATA).map(([code, s]) => {
+      const need = monthNeedMH(code, '2026-08', s.augM); // 운영 제약 포함 필요 (피드백과 동일 산식)
+      return { code, name: s.name, sales: s.augM, mh: s.aug.mh,
+               prod: s.aug.prod, need, over: s.aug.mh - need, needTheory: s.aug.need };
+    }).sort((a, b) => b.prod - a.prod);
     const tSales = rows.reduce((t, r) => t + r.sales, 0);
     const tMH = rows.reduce((t, r) => t + r.mh, 0);
     const tOver = rows.reduce((t, r) => t + Math.max(0, r.over), 0);
@@ -146,12 +147,14 @@ async function renderDash() {
     // 과잉 MH를 인건비액으로 환산(매장별 실질시급) — 줄였다면 그대로 이익이 됐을 금액
     const overCost = rows.reduce((t, r) => t + Math.max(0, r.over) * OT_DATA[r.code].eff, 0);
     const overPct = laborTot ? overCost / laborTot * 100 : 0;
+    // 이론 여지: 순수 목표 환산(매출÷72,000, 제약 미포함) 대비
+    const overTheory = rows.reduce((t, r) => t + Math.max(0, r.mh - r.needTheory), 0);
     const score = (tSales / tMH / TARGET * 100).toFixed(0);
     $('dashKpis').innerHTML =
       `<div><div class="k">전사 매출 · 인건비율 (8월)</div><div class="v">${(tSales/1e8).toFixed(1)}억 <span style="font-size:15px;font-weight:700;color:var(--muted)">· ${ratioTot.toFixed(1)}%</span></div><div class="s">17개 매장 · 인건비율 = 총 인건비 ÷ 순매출</div></div>` +
       `<div><div class="k">전사 생산성</div><div class="v">${won(tSales/tMH)} <span style="font-size:15px;font-weight:700;color:var(--good)">(${score}%)</span></div><div class="s">원/MH · 브랜드 생산성 점수, 목표 72,000</div></div>` +
       `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">생산성 ≥ 72,000</div></div>` +
-      `<div><div class="k">과잉 투입 인건비</div><div class="v" style="color:var(--crit)">+${won(overCost/10000)}만원</div><div class="s">+${won(tOver)} MH · 인건비의 ${overPct.toFixed(1)}% — 줄이면 그만큼 이익</div></div>`;
+      `<div><div class="k">과잉 투입 인건비</div><div class="v" style="color:var(--crit)">+${won(overCost/10000)}만원</div><div class="s">+${won(tOver)} MH(운영 제약 반영) · 인건비의 ${overPct.toFixed(1)}% · 이론 여지 +${won(overTheory)} MH</div></div>`;
     const maxOver = Math.max(...rows.map(r => Math.abs(r.over)));
     let html = '<table><colgroup><col style="width:150px"><col style="width:80px"><col style="width:80px"><col style="width:90px"><col style="width:80px"><col style="width:170px"><col style="width:90px"></colgroup>' +
       '<thead><tr><th>매장</th><th>매출(억)</th><th>총 MH</th><th>생산성(원/MH)</th><th>생산성 점수</th><th>과잉 MH</th><th>밴드</th></tr></thead><tbody>';
@@ -371,6 +374,27 @@ function dayCalc(s, A, shifts, dow) {
   }
   return { rows, totMH, mateMH };
 }
+// 목표 기준 필요 MH (운영 제약 포함: 시간대 최소 2명 + 09시 준비 2명) — 대시보드·피드백 공통 (PRD §5.7)
+function needMHof(s, daySales, dowKey) {
+  const pct = pctFor(s, dowKey);
+  let t = PREP;
+  for (let i = 0; i < 12; i++) t += Math.max(MINP, Math.round(daySales * pct[i] / TARGET * 2) / 2);
+  return t;
+}
+function monthNeedMH(code, ym, M) {
+  const s = OT_DATA[code];
+  const dates = monthDates(ym, s), open = dates.filter(x => !x.closed);
+  const wsum = open.reduce((t, x) => t + (x.hol ? s.hol : s.wd[x.wd]), 0);
+  const cache = {};
+  let t = 0;
+  for (const x of open) {
+    const key = x.hol ? 'H' : x.wd;
+    if (!(key in cache)) cache[key] = needMHof(s, M * (x.hol ? s.hol : s.wd[x.wd]) / wsum, key);
+    t += cache[key];
+  }
+  return t;
+}
+
 function monthDates(ym, s) {
   const [y, m] = ym.split("-").map(Number);
   const n = new Date(y, m, 0).getDate(), out = [];

@@ -10,13 +10,7 @@ const STORE_NAME_MAP = [['신촌','RU019'],['청량리','RU025'],['평촌','RU02
   ['의정부','RU043'],['해운대','RU044'],['광명','RU045']];
 const FT_ROLE_SET = new Set(['점장','선임점장','부점장','매니저','캡틴','헤드','HIT','ST','TM','GM']);
 
-// 실적 매출 기준 필요 MH (일 단위, 12개 영업시간대 — 8월 분석과 동일 산식)
-function needMHof(s, daySales, dowKey) {
-  const pct = pctFor(s, dowKey);
-  let t = 0;
-  for (let i = 0; i < 12; i++) t += Math.max(MINP, Math.round(daySales * pct[i] / TARGET * 2) / 2);
-  return t;
-}
+// 필요 MH 산식(needMHof)은 ot.js에 공통 정의 — 운영 제약(최소 2명·준비 2명) 포함
 // 시간대별 필요 인원 (히트맵용, 준비 09시 포함 13칸)
 function needByHour(s, daySales, dowKey) {
   const pct = pctFor(s, dowKey);
