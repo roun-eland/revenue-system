@@ -76,36 +76,132 @@ document.querySelectorAll('#otNav button').forEach(b => {
   if (!b.disabled) b.onclick = () => showView(b.dataset.view);
 });
 
-// ---------- S1 전사 대시보드 (2026-08 실측) ----------
+// ---------- S1 전사 대시보드 (월 선택: 2026-08 실측 / 이후 달은 계획) ----------
 function prodBand(p) { return p >= TARGET ? 'g' : p >= 60000 ? 'w' : 'c'; }
-function renderDash() {
-  const rows = Object.entries(OT_DATA).map(([code, s]) => ({
-    code, name: s.name, sales: s.augM, mh: s.aug.mh, mmh: s.aug.mmh,
-    prod: s.aug.prod, need: s.aug.need, over: s.aug.mh - s.aug.need
-  })).sort((a, b) => b.prod - a.prod);
-  const tSales = rows.reduce((t, r) => t + r.sales, 0);
-  const tMH = rows.reduce((t, r) => t + r.mh, 0);
-  const tOver = rows.reduce((t, r) => t + Math.max(0, r.over), 0);
-  const nOk = rows.filter(r => r.prod >= TARGET).length;
-  $('dashKpis').innerHTML =
-    `<div><div class="k">전사 매출 (8월)</div><div class="v">${(tSales/1e8).toFixed(1)}억</div><div class="s">17개 매장</div></div>` +
-    `<div><div class="k">전사 생산성</div><div class="v">${won(tSales/tMH)}</div><div class="s">원/MH · 목표 72,000</div></div>` +
-    `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">생산성 ≥ 72,000</div></div>` +
-    `<div><div class="k">과잉 투입 합계</div><div class="v" style="color:var(--crit)">+${won(tOver)}</div><div class="s">MH/월 · 절감 여지</div></div>`;
-  const maxOver = Math.max(...rows.map(r => Math.abs(r.over)));
-  let html = '<table><colgroup><col style="width:150px"><col style="width:80px"><col style="width:80px"><col style="width:90px"><col style="width:80px"><col style="width:170px"><col style="width:90px"></colgroup>' +
-    '<thead><tr><th>매장</th><th>매출(억)</th><th>총 MH</th><th>생산성(원/MH)</th><th>생산성 점수</th><th>과잉 MH</th><th>밴드</th></tr></thead><tbody>';
-  for (const r of rows) {
-    const b = prodBand(r.prod);
-    const w = Math.round(Math.abs(r.over) / maxOver * 90);
-    html += `<tr class="rowlink" data-code="${r.code}"><td>${r.name}</td><td>${(r.sales/1e8).toFixed(2)}</td>` +
-      `<td>${won(r.mh)}</td><td><b>${won(r.prod)}</b></td><td><b>${(r.prod / TARGET * 100).toFixed(0)}%</b></td>` +
-      `<td>${r.over > 0 ? '+' + won(r.over) : won(r.over)} <span class="mini" style="width:${w}px;${r.over<=0?'background:var(--dark)':''}"></span></td>` +
-      `<td><span class="band ${b}">${b==='g'?'목표권':b==='w'?'관리':'미달'}</span></td></tr>`;
+
+// 한 매장의 월 계획치(엔진과 동일 로직): 계획 총 MH·메이트 MH·예상 인건비율
+function computeMonthPlan(code, ym, M, nfull, fullpay) {
+  const s = { ...OT_DATA[code], nfull };
+  const att = attendance(s), holAtt = Math.max(...att);
+  const dates = monthDates(ym, s), open = dates.filter(x => !x.closed);
+  const wsum = open.reduce((t, x) => t + (x.hol ? s.hol : s.wd[x.wd]), 0);
+  let mMH = 0, mMHhol = 0, totMH = 0;
+  const cache = {};
+  for (const x of open) {
+    const key = x.hol ? 'H' : x.wd;
+    if (!(key in cache)) {
+      const sh = shiftsFor(s, x.hol ? holAtt : att[x.wd]);
+      const dc = dayCalc(s, M * (x.hol ? s.hol : s.wd[x.wd]) / wsum, sh, key);
+      cache[key] = { mate: dc.mateMH, tot: dc.totMH };
+    }
+    totMH += cache[key].tot;
+    if (x.hol) mMHhol += cache[key].mate; else mMH += cache[key].mate;
   }
-  $('dashTable').innerHTML = html + '</tbody></table>';
+  const leaveMH = nfull * 8;
+  const mateCost = (mMH + mMHhol * 1.5 + leaveMH) * s.effBase;
+  const cost = mateCost + fullpay + nfull * 100000 + M / 1.1 * 0.006;
+  return { totMH: totMH + leaveMH, ratio: cost / (M / 1.1) * 100 };
+}
+
+function buildDashMonthOptions() {
+  const msel2 = $('dashMonth');
+  if (!msel2 || msel2.options.length) return;
+  const o0 = document.createElement('option');
+  o0.value = '2026-08'; o0.textContent = '2026년 8월 (실측)';
+  msel2.appendChild(o0);
+  for (let y = 2026, m = 9;;) {
+    const v = `${y}-${String(m).padStart(2, '0')}`;
+    const o = document.createElement('option');
+    o.value = v; o.textContent = `${y}년 ${m}월 (계획)`;
+    msel2.appendChild(o);
+    m++; if (m > 12) { m = 1; y++; } if (y === 2028) break;
+  }
+  msel2.value = '2026-08';
+  msel2.onchange = () => renderDash();
+}
+
+async function renderDash() {
+  buildDashMonthOptions();
+  const ym = $('dashMonth') ? $('dashMonth').value : '2026-08';
+
+  if (ym === '2026-08') { // ---- 실측 모드 ----
+    $('dashSub').textContent = '2026-08 실측(근태·매출) 기준 — 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
+    const rows = Object.entries(OT_DATA).map(([code, s]) => ({
+      code, name: s.name, sales: s.augM, mh: s.aug.mh,
+      prod: s.aug.prod, need: s.aug.need, over: s.aug.mh - s.aug.need
+    })).sort((a, b) => b.prod - a.prod);
+    const tSales = rows.reduce((t, r) => t + r.sales, 0);
+    const tMH = rows.reduce((t, r) => t + r.mh, 0);
+    const tOver = rows.reduce((t, r) => t + Math.max(0, r.over), 0);
+    const nOk = rows.filter(r => r.prod >= TARGET).length;
+    $('dashKpis').innerHTML =
+      `<div><div class="k">전사 매출 (8월)</div><div class="v">${(tSales/1e8).toFixed(1)}억</div><div class="s">17개 매장</div></div>` +
+      `<div><div class="k">전사 생산성</div><div class="v">${won(tSales/tMH)}</div><div class="s">원/MH · 목표 72,000</div></div>` +
+      `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">생산성 ≥ 72,000</div></div>` +
+      `<div><div class="k">과잉 투입 합계</div><div class="v" style="color:var(--crit)">+${won(tOver)}</div><div class="s">MH/월 · 절감 여지</div></div>`;
+    const maxOver = Math.max(...rows.map(r => Math.abs(r.over)));
+    let html = '<table><colgroup><col style="width:150px"><col style="width:80px"><col style="width:80px"><col style="width:90px"><col style="width:80px"><col style="width:170px"><col style="width:90px"></colgroup>' +
+      '<thead><tr><th>매장</th><th>매출(억)</th><th>총 MH</th><th>생산성(원/MH)</th><th>생산성 점수</th><th>과잉 MH</th><th>밴드</th></tr></thead><tbody>';
+    for (const r of rows) {
+      const b = prodBand(r.prod);
+      const w = Math.round(Math.abs(r.over) / maxOver * 90);
+      html += `<tr class="rowlink" data-code="${r.code}"><td>${r.name}</td><td>${(r.sales/1e8).toFixed(2)}</td>` +
+        `<td>${won(r.mh)}</td><td><b>${won(r.prod)}</b></td><td><b>${(r.prod / TARGET * 100).toFixed(0)}%</b></td>` +
+        `<td>${r.over > 0 ? '+' + won(r.over) : won(r.over)} <span class="mini" style="width:${w}px;${r.over<=0?'background:var(--dark)':''}"></span></td>` +
+        `<td><span class="band ${b}">${b==='g'?'목표권':b==='w'?'관리':'미달'}</span></td></tr>`;
+    }
+    $('dashTable').innerHTML = html + '</tbody></table>';
+  } else { // ---- 계획 모드 ----
+    $('dashSub').textContent = `${ym} 계획 기준 — 확정 저장된 월 계획이 있으면 그 값을, 없으면 기본값(8월 매출·현재 정직원 구성)으로 계산합니다. 실적이 적재되면(M2) 자동으로 실측으로 전환됩니다.`;
+    $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">계획 계산 중…</p>';
+    // 확정 저장된 계획 불러오기 (없거나 실패해도 기본값으로 진행)
+    let saved = {};
+    try {
+      const { data } = await sb.from('ot_plan_runs')
+        .select('store_code,forecast_sales,staffing_snapshot,output').eq('ym', ym).eq('status', 'confirmed');
+      (data || []).forEach(p => { saved[p.store_code] = p; });
+    } catch (e) { /* 무시 */ }
+    const rows = Object.entries(OT_DATA).map(([code, s]) => {
+      const p = saved[code];
+      const M = p ? Number(p.forecast_sales) : s.augM;
+      const nfull = p?.staffing_snapshot?.nfull ?? s.nfull;
+      const fullpay = p?.staffing_snapshot?.fullpay ?? s.fullpay;
+      const plan = computeMonthPlan(code, ym, M, nfull, fullpay);
+      const prod = M / plan.totMH;
+      return { code, name: s.name, sales: M, mh: plan.totMH, prod,
+               ratio: p?.output?.ratio ?? plan.ratio, src: p ? '확정 계획' : '기본값' };
+    }).sort((a, b) => b.prod - a.prod);
+    const tSales = rows.reduce((t, r) => t + r.sales, 0);
+    const tMH = rows.reduce((t, r) => t + r.mh, 0);
+    const nOk = rows.filter(r => r.prod >= TARGET).length;
+    const nSaved = rows.filter(r => r.src === '확정 계획').length;
+    const wRatio = rows.reduce((t, r) => t + r.ratio * r.sales, 0) / tSales;
+    $('dashKpis').innerHTML =
+      `<div><div class="k">전사 예상매출 (${ym.slice(5)}월)</div><div class="v">${(tSales/1e8).toFixed(1)}억</div><div class="s">확정 계획 ${nSaved} / ${rows.length} 매장</div></div>` +
+      `<div><div class="k">전사 계획 생산성</div><div class="v">${won(tSales/tMH)}</div><div class="s">원/MH · 목표 72,000</div></div>` +
+      `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">계획 생산성 ≥ 72,000</div></div>` +
+      `<div><div class="k">전사 예상 인건비율</div><div class="v">${wRatio.toFixed(1)}%</div><div class="s">매출 가중평균</div></div>`;
+    let html = '<table><colgroup><col style="width:150px"><col style="width:90px"><col style="width:85px"><col style="width:95px"><col style="width:80px"><col style="width:95px"><col style="width:90px"><col style="width:85px"></colgroup>' +
+      '<thead><tr><th>매장</th><th>예상매출(억)</th><th>계획 MH</th><th>계획 생산성</th><th>생산성 점수</th><th>예상 인건비율</th><th>밴드</th><th>기준</th></tr></thead><tbody>';
+    for (const r of rows) {
+      const b = prodBand(r.prod);
+      const rb = r.ratio <= 24 ? 'g' : r.ratio <= 28 ? 'w' : 'c';
+      html += `<tr class="rowlink" data-code="${r.code}"><td>${r.name}</td><td>${(r.sales/1e8).toFixed(2)}</td>` +
+        `<td>${won(r.mh)}</td><td><b>${won(r.prod)}</b></td><td><b>${(r.prod / TARGET * 100).toFixed(0)}%</b></td>` +
+        `<td><span class="band ${rb}">${r.ratio.toFixed(1)}%</span></td>` +
+        `<td><span class="band ${b}">${b==='g'?'목표권':b==='w'?'관리':'미달'}</span></td>` +
+        `<td class="d" style="font-size:11px">${r.src}</td></tr>`;
+    }
+    $('dashTable').innerHTML = html + '</tbody></table>';
+  }
+
   $('dashTable').querySelectorAll('tr.rowlink').forEach(tr => {
-    tr.onclick = () => { sel.value = tr.dataset.code; onStoreChange(); showView('plan'); };
+    tr.onclick = () => {
+      sel.value = tr.dataset.code; onStoreChange();
+      const mv = $('dashMonth') ? $('dashMonth').value : null;
+      if (mv && [...msel.options].some(o => o.value === mv)) { msel.value = mv; render(); }
+      showView('plan');
+    };
   });
 }
 

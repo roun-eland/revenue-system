@@ -52,7 +52,10 @@
     <!-- S1 전사 대시보드 -->
     <section id="view-dash" class="view">
       <h2>전사 대시보드</h2>
-      <p class="view-sub">2026-08 실측 기준 — 실적 모듈(M2) 연결 전까지 8월 근태·매출 데이터로 표시합니다. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.</p>
+      <p class="view-sub" id="dashSub">행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:180px">조회 월<select id="dashMonth"></select></label>
+      </div>
       <div class="kpis" id="dashKpis"></div>
       <div class="card">
         <div class="tblwrap" id="dashTable"></div>
@@ -199,6 +202,6 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../ot-seed.js?v=202609041641"></script>
-<script src="../ot.js?v=202609070807"></script>
+<script src="../ot.js?v=202609070948"></script>
 </body>
 </html>
