@@ -130,7 +130,8 @@ async function renderDash() {
 
   if (ym === '2026-08') { // ---- 실측 모드 ----
     $('dashSub').textContent = '2026-08 실측(근태·매출) 기준 — 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
-    const rows = Object.entries(OT_DATA).map(([code, s]) => {
+    const rows = Object.entries(OT_DATA).filter(([, s]) => s.aug) // 실측 없는 신규점(동부산)은 실측 모드에서 제외
+      .map(([code, s]) => {
       const need = monthNeedMH(code, '2026-08', s.augM); // 운영 제약 포함 필요 (피드백과 동일 산식)
       return { code, name: s.name, sales: s.augM, mh: s.aug.mh,
                prod: s.aug.prod, need, over: s.aug.mh - need, needTheory: s.aug.need };
