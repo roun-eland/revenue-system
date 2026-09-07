@@ -10,10 +10,9 @@
 /* 매출 섹션 전용 — v8 체계 위에 일별 캘린더 그리드만 추가 */
 /* 테두리 강화: 기본 헤어라인(#ebebeb)이 흐릿하다는 피드백 — 이 페이지는 한 단계 진하게 */
 .kpis>div,.card{border-color:#cfcfcf}
-.cal .cd{border-color:#d8d8d8}
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;min-width:720px}
 .cal .ch{font-size:11px;font-weight:700;color:var(--muted2);text-align:center;padding:2px 0}
-.cal .cd{border:1px solid var(--line);border-radius:4px;padding:7px 8px;min-height:74px;background:var(--surface)}
+.cal .cd{border:1px solid #d8d8d8;border-radius:4px;padding:7px 8px;min-height:74px;background:var(--surface)}
 .cal .cd.off{background:var(--fill);border-style:dashed}
 .cal .cd.hol .dnum{color:var(--hol)}
 .cal .dnum{font-size:12px;font-weight:700}
