@@ -3885,6 +3885,8 @@ $('#marketFileInput').addEventListener('change', async (e) => {
       if (!record_date || !item_name) return;
       const variety = (r[2] ?? '').toString().trim() || null;
       const grade = (r[3] ?? '').toString().trim() || null;
+      // 하·보통 등급은 어떤 화면에서도 쓰지 않아 저장하지 않는다 (상·특만 보관 — 2026-09-07 용량 정리 정책)
+      if (grade !== '상' && grade !== '특') return;
       const key = `${record_date}||${item_name}||${variety}||${grade}||${market_name}`;
       recordMap.set(key, {
         record_date, item_name, variety, grade, market_name,
