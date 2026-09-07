@@ -50,8 +50,9 @@ async function enterApp(user) {
       if (data && data.length) { gradeCost = {}; for (const g of data) gradeCost[g.grade] = g.std_monthly_cost; }
     } catch (e) { /* 실패 시 평균 단가 폴백 */ }
   }
-  // 기준정보는 planner 전용, 전사 대시보드는 모두 공개
+  // 기준정보·실적 입력은 planner 전용 (manager = 대시보드·계획·피드백만), 전사 대시보드는 모두 공개
   document.querySelector('#otNav button[data-view="ref"]').hidden = !isPlanner;
+  document.querySelector('#otNav button[data-view="actual"]').hidden = !isPlanner;
   renderDash();
   if (isPlanner) renderRef();
   buildPlanInputs(); render();
