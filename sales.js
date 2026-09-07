@@ -329,7 +329,8 @@ function renderBrand() {
     $('dailyStore').value = tr.dataset.code; $('dailyMonth').value = ym; renderDaily(); showView('daily');
   });
 
-  // 누적 차트
+  // 누적 차트 — Chart.js 미로드 환경(사내망 CDN 차단 등)에서도 표·KPI는 정상 동작해야 함
+  if (typeof Chart === 'undefined') return;
   const fcCum = [], actCum = [];
   let cf = 0, ca = 0;
   for (const d of dates) {
