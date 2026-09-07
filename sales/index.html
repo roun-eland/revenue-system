@@ -7,19 +7,63 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="../ot.css?v=202609041415">
 <style>
-/* 매출 섹션 전용 — v8 체계 위에 일별 캘린더 그리드만 추가 */
+/* 매출 섹션 전용 — v8 체계 유지 + 강조 체계(다크 앵커 KPI·플랫 칩·캘린더 컬러 코딩).
+   원칙: 로운 그린(#82dc28)은 "데이터·성과"에만, 빨강은 공휴일/미달 경고에만 — 색은 적게, 확실하게. */
+
+/* 섹션 타이틀 — 그린 바 마커 */
+.view>h2{display:flex;align-items:center;gap:10px}
+.view>h2::before{content:"";width:5px;height:20px;border-radius:2px;background:var(--accent-soft)}
+
+/* KPI — 첫 카드는 다크 앵커(핵심 숫자), 나머지는 상단 컬러 바 */
+.kpis.sf>div{border-radius:6px;padding:15px 17px}
+.kpis.sf .v{font-size:25px;letter-spacing:-.02em}
+.kpis.sf .k{text-transform:none;font-weight:700}
+.kpis.sf>div.k-dark{background:var(--dark);border-color:var(--dark)}
+.kpis.sf>div.k-dark .k{color:#aab3a6}
+.kpis.sf>div.k-dark .v{color:var(--accent-soft)}
+.kpis.sf>div.k-dark .s{color:#9aa39a}
+.kpis.sf>div.k-bar{border-top:3px solid var(--accent-soft)}
+.kpis.sf>div.k-bar.amber{border-top-color:var(--warn)}
+.kpis.sf>div.k-bar.red{border-top-color:var(--hol)}
+
+/* 플랫 칩 — 표의 페이스·증감·계수 출처 */
+.chip{display:inline-block;font-size:12px;font-weight:700;border-radius:11px;padding:1px 9px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip.g{background:var(--accent-bg);color:var(--good)}
+.chip.w{background:#fbf3df;color:var(--warn)}
+.chip.c{background:var(--hol-bg);color:var(--crit)}
+.chip.n{background:var(--fill);color:var(--muted)}
+.chip.d{background:var(--dark);color:#fff}
+.srcchip{display:inline-block;font-size:10px;font-weight:700;border-radius:9px;padding:0 7px;vertical-align:1px}
+.srcchip.own{background:var(--accent-bg);color:var(--good)}
+.srcchip.grp{background:#fbf3df;color:var(--warn)}
+.srcchip.co{background:var(--fill);color:var(--muted)}
+.srcchip.new{background:var(--dark);color:#fff}
+
+/* 일별 캘린더 — 주말 그린 틴트·공휴일 레드 틴트·휴점 빗금·오늘 아웃라인·볼륨 바 */
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;min-width:720px}
 .cal .ch{font-size:11px;font-weight:700;color:var(--muted2);text-align:center;padding:2px 0}
-.cal .cd{border:1px solid var(--line);border-radius:4px;padding:7px 8px;min-height:74px;background:var(--surface)}
-.cal .cd.off{background:var(--fill);border-style:dashed}
+.cal .ch.we{color:var(--good)}
+.cal .cd{border:1px solid var(--line);border-radius:5px;padding:8px 9px;min-height:84px;background:var(--surface);position:relative}
+.cal .cd.we{background:#f8fcf1;border-color:#e4f0d2}
+.cal .cd.hol{background:var(--hol-bg);border-color:#f2dcdc}
 .cal .cd.hol .dnum{color:var(--hol)}
+.cal .cd.off{background:var(--fill) repeating-linear-gradient(-45deg,transparent 0 5px,rgba(0,0,0,.05) 5px 6px);border-style:dashed}
+.cal .cd.today{outline:2px solid var(--dark);outline-offset:-1px}
 .cal .dnum{font-size:12px;font-weight:700}
-.cal .fc{font-size:12px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
-.cal .ac{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+.cal .fc{font-size:14px;font-weight:700;color:var(--ink);margin-top:4px;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.cal .fc small{font-size:10px;font-weight:500;color:var(--muted2);margin-right:2px}
+.cal .off .fc, .cal .off small{color:var(--muted2);font-weight:500}
+.cal .ac{font-size:14px;font-weight:700;color:var(--good);font-variant-numeric:tabular-nums}
 .cal .df{display:inline-block;font-size:10px;font-weight:700;border-radius:8px;padding:0 6px;margin-top:2px}
-.cal .df.up{background:var(--green-bg,#f3fbe7);color:var(--good)}
+.cal .df.up{background:var(--accent-bg);color:var(--good)}
 .cal .df.dn{background:var(--hol-bg);color:var(--crit)}
 .cal .tag{display:inline-block;font-size:9px;font-weight:700;color:#fff;background:var(--dark);border-radius:8px;padding:0 6px;margin-left:3px;vertical-align:1px}
+.cal .ibar{position:absolute;left:9px;right:9px;bottom:6px;height:4px;border-radius:2px;background:rgba(0,0,0,.05)}
+.cal .ibar i{display:block;height:100%;border-radius:2px;background:var(--accent-soft)}
+.cal .hol .ibar i{background:var(--hol)}
+
+/* 브랜드 표 — 합계 행 강조 */
+.sf-total td{background:var(--fill);font-weight:700;border-top:2px solid var(--dark)}
 .chartbox{position:relative;height:260px}
 </style>
 </head>
@@ -57,7 +101,7 @@
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:160px">조회 월<select id="brandMonth"></select></label>
       </div>
-      <div class="kpis" id="brandKpis"></div>
+      <div class="kpis sf" id="brandKpis"></div>
       <div class="card" style="margin-bottom:14px">
         <h3 style="margin:0 0 10px">일별 누적 — 예측 vs 실적</h3>
         <div class="chartbox"><canvas id="brandChart"></canvas></div>
@@ -77,10 +121,10 @@
         <label class="fld" style="min-width:150px">월<select id="dailyMonth"></select></label>
         <a id="toPlanBtn" class="btn btn-sm" style="display:inline-flex;align-items:center;text-decoration:none;align-self:flex-end">이 예측으로 TO 계획 →</a>
       </div>
-      <div class="kpis" id="dailyKpis"></div>
+      <div class="kpis sf" id="dailyKpis"></div>
       <div class="card">
         <div class="tblwrap"><div class="cal" id="calGrid"></div></div>
-        <p class="dnote">칸: 위 = 실적(굵게), 아래 = 예측. 빗금 = 휴점(정기 휴점·명절 당일). <span style="color:var(--hol)">빨간 날짜</span> = 공휴일. 오차 뱃지는 실적 있는 날만.</p>
+        <p class="dnote">칸: <span style="color:var(--good);font-weight:700">초록 굵은 숫자</span> = 실적, 검정 = 예측 · 하단 <span style="color:var(--good)">초록 바</span> = 그 달 최대일 대비 매출 크기 · <span style="background:#f8fcf1;border:1px solid #e4f0d2;border-radius:3px;padding:0 4px">주말</span> <span style="background:var(--hol-bg);border-radius:3px;padding:0 4px;color:var(--hol)">공휴일</span> 빗금 = 휴점 · 오차 뱃지는 실적 있는 날만.</p>
       </div>
     </section>
 
@@ -115,6 +159,6 @@
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
-<script src="../sales.js?v=202609071640"></script>
+<script src="../sales.js?v=202609071810"></script>
 </body>
 </html>

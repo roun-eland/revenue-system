@@ -298,36 +298,43 @@ function renderBrand() {
   $('brandSub').textContent = `${ymLabel(ym)} 확정 v${run.version} · 모델 ${run.model_version} · 컷오프 ${run.cutoff_date} · 발행 ${String(run.published_at).slice(0, 10)}` +
     (asOf ? ` · 실적 반영 ~${asOf.slice(5).replace('-', '/')}` : ' · 이 달 실적 미적재 (생산성 > 실적 입력에서 일별매출 업로드 시 자동 반영)');
 
+  const vsPct = fcT ? (landT / fcT - 1) * 100 : 0;
   $('brandKpis').innerHTML = `
-    <div><div class="k">월 예측 합계</div><div class="v">${eok(fcT)}</div><div class="s">18개 매장 · 확정 v${run.version}</div></div>
-    <div><div class="k">실적 누계${asOf ? ` (~${asOf.slice(8)}일)` : ''}</div><div class="v">${asOf ? eok(actT) : '—'}</div>
-      <div class="s">${asOf && paceT !== null ? `페이스 ${paceT.toFixed(1)}% (같은 기간 예측 ${eok(fcAsT)})` : '실적 업로드 대기'}</div></div>
-    <div><div class="k">착지 전망</div><div class="v">${eok(landT)}</div><div class="s">예측 대비 ${fcT ? ((landT / fcT - 1) * 100).toFixed(1) : '0.0'}%</div></div>
-    <div><div class="k">전년 동월 대비</div><div class="v">${yoyT === null ? '—' : (yoyT >= 0 ? '+' : '') + yoyT.toFixed(1) + '%'}</div>
+    <div class="k-dark"><div class="k">${ymLabel(ym)} 예측 합계</div><div class="v">${eok(fcT)}</div><div class="s">18개 매장 · 확정 v${run.version}</div></div>
+    <div class="k-bar${paceT === null ? '' : paceT >= 100 ? '' : paceT >= 90 ? ' amber' : ' red'}"><div class="k">실적 누계${asOf ? ` (~${asOf.slice(8)}일)` : ''}</div><div class="v">${asOf ? eok(actT) : '—'}</div>
+      <div class="s">${asOf && paceT !== null ? `페이스 <b style="color:${paceT >= 100 ? 'var(--good)' : paceT >= 90 ? 'var(--warn)' : 'var(--crit)'}">${paceT.toFixed(1)}%</b> (같은 기간 예측 ${eok(fcAsT)})` : '실적 업로드 대기'}</div></div>
+    <div class="k-bar${vsPct >= 0 ? '' : vsPct >= -3 ? ' amber' : ' red'}"><div class="k">착지 전망</div><div class="v">${eok(landT)}</div><div class="s">예측 대비 <b style="color:${vsPct >= 0 ? 'var(--good)' : vsPct >= -3 ? 'var(--warn)' : 'var(--crit)'}">${vsPct >= 0 ? '+' : ''}${vsPct.toFixed(1)}%</b></div></div>
+    <div class="k-bar${yoyT === null || yoyT >= 0 ? '' : ' red'}"><div class="k">전년 동월 대비</div><div class="v" style="color:${yoyT === null ? 'inherit' : yoyT >= 0 ? 'var(--good)' : 'var(--crit)'}">${yoyT === null ? '—' : (yoyT >= 0 ? '+' : '') + yoyT.toFixed(1) + '%'}</div>
       <div class="s">${pyT ? `${ymLabel(prevYearYm)} 실적 ${eok(pyT)}` : '전년 데이터 없음'}</div></div>`;
 
   const pace = r => r.fcToAsOf ? (r.act / r.fcToAsOf * 100) : null;
-  const badge = p => p === null ? '—' : `<b style="color:${p >= 100 ? 'var(--good)' : p >= 90 ? 'var(--warn)' : 'var(--crit)'}">${p.toFixed(1)}%</b>`;
+  const chip = (v, unit, up) => v === null ? '<span class="chip n">—</span>'
+    : `<span class="chip ${v >= up ? 'g' : v >= up - 10 ? 'w' : 'c'}">${v.toFixed(unit)}%</span>`;
+  const sgn = (v, unit) => v === null ? '<span class="chip n">—</span>'
+    : `<span class="chip ${v >= 0 ? 'g' : 'c'}">${v >= 0 ? '+' : ''}${v.toFixed(unit)}%</span>`;
+  const srcChip = src => src === '자체' ? '<span class="srcchip own">자체</span>'
+    : src === '모델군' ? '<span class="srcchip grp">모델군</span>'
+    : src === '전사' ? '<span class="srcchip co">전사</span>' : '<span class="srcchip new">신규</span>';
   $('brandTable').innerHTML = `
-    <table class="data-table" style="min-width:860px">
-      <colgroup><col style="width:190px"><col style="width:110px"><col style="width:110px"><col style="width:90px"><col style="width:110px"><col style="width:90px"><col style="width:90px"><col style="width:150px"></colgroup>
+    <table class="data-table" style="min-width:880px">
+      <colgroup><col style="width:190px"><col style="width:110px"><col style="width:110px"><col style="width:95px"><col style="width:110px"><col style="width:95px"><col style="width:95px"><col style="width:150px"></colgroup>
       <thead><tr><th>매장</th><th>예측 (월)</th><th>실적 누계</th><th>페이스</th><th>착지 전망</th><th>vs 예측</th><th>YoY</th><th>계수 (SR·T·출처)</th></tr></thead>
       <tbody>
       ${rows.map(r => `<tr data-code="${r.code}" style="cursor:pointer">
-        <td>${r.name} <span style="color:var(--muted2);font-size:11px">${r.code}</span></td>
+        <td><b>${r.name}</b> <span style="color:var(--muted2);font-size:11px">${r.code}</span></td>
         <td style="text-align:right">${eok(r.fc)}</td>
         <td style="text-align:right">${asOf ? eok(r.act) : '—'}</td>
-        <td style="text-align:right">${badge(pace(r))}</td>
+        <td style="text-align:right">${chip(pace(r), 1, 100)}</td>
         <td style="text-align:right"><b>${eok(r.landing)}</b></td>
-        <td style="text-align:right">${r.fc ? ((r.landing / r.fc - 1) * 100).toFixed(1) + '%' : '—'}</td>
-        <td style="text-align:right">${r.py ? ((r.landing / r.py - 1) * 100).toFixed(0) + '%' : '—'}</td>
-        <td style="font-size:11px;color:var(--muted2)">${r.sr !== null && r.sr !== undefined ? `SR ${r.sr.toFixed(2)} · T ${r.trend.toFixed(2)} · ${r.src}` : r.src}</td>
+        <td style="text-align:right">${sgn(r.fc ? (r.landing / r.fc - 1) * 100 : null, 1)}</td>
+        <td style="text-align:right">${sgn(r.py ? (r.landing / r.py - 1) * 100 : null, 0)}</td>
+        <td style="font-size:11px;color:var(--muted2)">${r.sr !== null && r.sr !== undefined ? `SR ${r.sr.toFixed(2)} · T ${r.trend.toFixed(2)} ` : ''}${srcChip(r.src)}</td>
       </tr>`).join('')}
-      <tr style="font-weight:700;border-top:2px solid var(--outline)">
+      <tr class="sf-total">
         <td>합계</td><td style="text-align:right">${eok(fcT)}</td><td style="text-align:right">${asOf ? eok(actT) : '—'}</td>
-        <td style="text-align:right">${badge(paceT)}</td><td style="text-align:right">${eok(landT)}</td>
-        <td style="text-align:right">${fcT ? ((landT / fcT - 1) * 100).toFixed(1) + '%' : '—'}</td>
-        <td style="text-align:right">${pyT ? ((landT / pyT - 1) * 100).toFixed(0) + '%' : '—'}</td><td></td>
+        <td style="text-align:right">${chip(paceT, 1, 100)}</td><td style="text-align:right">${eok(landT)}</td>
+        <td style="text-align:right">${sgn(fcT ? (landT / fcT - 1) * 100 : null, 1)}</td>
+        <td style="text-align:right">${sgn(pyT ? (landT / pyT - 1) * 100 : null, 0)}</td><td></td>
       </tr>
       </tbody>
     </table>`;
@@ -350,8 +357,8 @@ function renderBrand() {
     data: {
       labels: dates.map(d => +d.slice(8)),
       datasets: [
-        { label: '예측 누적(억)', data: fcCum, borderColor: cssVar('--muted2') || '#999', borderDash: [5, 4], pointRadius: 0, borderWidth: 2 },
-        { label: '실적 누적(억)', data: actCum, borderColor: cssVar('--good') || '#5a8f29', backgroundColor: 'transparent', pointRadius: 2, borderWidth: 2.5 },
+        { label: '예측 누적(억)', data: fcCum, borderColor: cssVar('--dark') || '#2f3030', borderDash: [6, 4], pointRadius: 0, borderWidth: 2 },
+        { label: '실적 누적(억)', data: actCum, borderColor: cssVar('--accent-soft') || '#82dc28', backgroundColor: 'rgba(130,220,40,.12)', fill: true, pointRadius: 2, pointBackgroundColor: cssVar('--good') || '#3f9e12', borderWidth: 3 },
       ],
     },
     options: {
@@ -381,33 +388,44 @@ function renderDaily() {
   }
   for (const d of monthDates(prevYearYm)) py += (m.get(d) || 0);
 
+  const yoyFc = py && f ? (fcT / py - 1) * 100 : null;
   $('dailyKpis').innerHTML = `
-    <div><div class="k">${ymLabel(ym)} 예측 합</div><div class="v">${f ? eok(fcT) : '—'}</div><div class="s">${f ? `영업 ${openDays}일 · ${f.src}` : '미발행'}</div></div>
-    <div><div class="k">실적 누계</div><div class="v">${actT ? eok(actT) : '—'}</div><div class="s">${actT && fcOnAct ? `같은 기간 예측 ${eok(fcOnAct)} (${(actT / fcOnAct * 100).toFixed(1)}%)` : '실적 업로드 대기'}</div></div>
-    <div><div class="k">일평균 오차 (MAPE)</div><div class="v">${apeN ? (apeSum / apeN * 100).toFixed(1) + '%' : '—'}</div><div class="s">${apeN ? `실적 있는 ${apeN}일 기준` : '실적 쌓이면 자동 계산'}</div></div>
-    <div><div class="k">전년 동월 실적</div><div class="v">${py ? eok(py) : '—'}</div><div class="s">${py && f ? `예측 YoY ${((fcT / py - 1) * 100).toFixed(0)}%` : ymLabel(prevYearYm)}</div></div>`;
+    <div class="k-dark"><div class="k">${ymLabel(ym)} 예측 합</div><div class="v">${f ? eok(fcT) : '—'}</div><div class="s">${f ? `영업 ${openDays}일 · 계수 ${f.src}` : '미발행'}</div></div>
+    <div class="k-bar"><div class="k">실적 누계</div><div class="v">${actT ? eok(actT) : '—'}</div><div class="s">${actT && fcOnAct ? `같은 기간 예측 ${eok(fcOnAct)} (<b style="color:${actT >= fcOnAct ? 'var(--good)' : 'var(--crit)'}">${(actT / fcOnAct * 100).toFixed(1)}%</b>)` : '실적 업로드 대기'}</div></div>
+    <div class="k-bar${apeN && apeSum / apeN > 0.1 ? ' amber' : ''}"><div class="k">일평균 오차 (MAPE)</div><div class="v">${apeN ? (apeSum / apeN * 100).toFixed(1) + '%' : '—'}</div><div class="s">${apeN ? `실적 있는 ${apeN}일 기준` : '실적 쌓이면 자동 계산'}</div></div>
+    <div class="k-bar${yoyFc !== null && yoyFc < 0 ? ' red' : ''}"><div class="k">전년 동월 실적</div><div class="v">${py ? eok(py) : '—'}</div><div class="s">${yoyFc !== null ? `예측 YoY <b style="color:${yoyFc >= 0 ? 'var(--good)' : 'var(--crit)'}">${yoyFc >= 0 ? '+' : ''}${yoyFc.toFixed(0)}%</b>` : ymLabel(prevYearYm)}</div></div>`;
 
-  let html = WD.map(w => `<div class="ch">${w}</div>`).join('');
+  const maxFc = f ? Math.max(...dates.map(d => f.daily[d] || 0), 1) : 1;
+  const todayStr = dStr(new Date());
+  let html = WD.map((w, i) => `<div class="ch${i >= 5 ? ' we' : ''}">${w}</div>`).join('');
   const lead = dowIdx(dates[0]);
   for (let i = 0; i < lead; i++) html += '<div></div>';
   for (const d of dates) {
     const fv = f ? (f.daily[d] || 0) : null, av = m.get(d);
     const closed = isClosed(code, d) || (fv === 0 && f && !av);
     const newNotOpen = NEW_OPEN[code] && d < NEW_OPEN[code];
-    const hol = isHol(d);
+    const hol = isHol(d), idx = dowIdx(d);
     let body;
-    if (newNotOpen) body = `<div class="fc" style="color:var(--muted2)">오픈 전</div>`;
-    else if (closed) body = `<div class="fc" style="color:var(--muted2)">휴점</div>`;
+    if (newNotOpen) body = `<div class="fc" style="color:var(--muted2);font-weight:500">오픈 전</div>`;
+    else if (closed) body = `<div class="fc">휴점</div>`;
     else {
       body = av > 0 ? `<div class="ac">${man(av)}</div>` : '';
-      body += fv !== null ? `<div class="fc">예 ${man(fv)}</div>` : '';
+      body += fv !== null ? `<div class="fc"><small>예</small>${man(fv)}</div>` : '';
       if (av > 0 && fv > 0) {
         const p = (av - fv) / fv * 100;
         body += `<span class="df ${p >= 0 ? 'up' : 'dn'}">${p >= 0 ? '+' : ''}${p.toFixed(0)}%</span>`;
       }
+      // 볼륨 바 — 그 달 최대 예측일 대비 크기를 한눈에
+      if (fv > 0) body += `<div class="ibar"><i style="width:${Math.max(4, fv / maxFc * 100).toFixed(0)}%"></i></div>`;
     }
-    const tag = NEW_OPEN[code] && d === NEW_OPEN[code] ? '<span class="tag">오픈</span>' : '';
-    html += `<div class="cd${closed || newNotOpen ? ' off' : ''}${hol ? ' hol' : ''}"><span class="dnum">${+d.slice(8)}</span>${tag}${body}</div>`;
+    const tag = NEW_OPEN[code] && d === NEW_OPEN[code] ? '<span class="tag">오픈</span>'
+      : d === todayStr ? '<span class="tag">오늘</span>' : '';
+    const cls = ['cd'];
+    if (closed || newNotOpen) cls.push('off');
+    else if (hol) cls.push('hol');
+    else if (idx >= 5) cls.push('we');
+    if (d === todayStr) cls.push('today');
+    html += `<div class="${cls.join(' ')}"><span class="dnum">${+d.slice(8)}</span>${tag}${body}</div>`;
   }
   $('calGrid').innerHTML = html;
 }
