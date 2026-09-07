@@ -517,20 +517,48 @@
     <!-- 그룹: 데이터 (시장데이터/자재사용량/매출·객수) -->
     <section id="tab-data-group" class="tab-panel">
       <div class="pivot-tabs">
-        <button class="pivot-tab-btn is-on" data-subtab="market" type="button">시장 데이터</button>
+        <button class="pivot-tab-btn is-on" data-subtab="upload" type="button">업로드</button>
+        <button class="pivot-tab-btn" data-subtab="market" type="button">시장 데이터</button>
         <button class="pivot-tab-btn" data-subtab="usage" type="button">자재 사용량</button>
         <button class="pivot-tab-btn" data-subtab="sales" type="button">매출/객수</button>
       </div>
 
-    <div id="subtab-usage" class="subtab-panel">
+    <!-- 업로드 통합 — 화요일 루틴의 세 파일을 한 화면에서 (조회·삭제는 각 탭) -->
+    <div id="subtab-upload" class="subtab-panel is-active">
       <div class="panel-head">
-        <h2>자재 사용량</h2>
-        <p class="panel-sub">매장별 자재 재고·실사용량 데이터를 시즌에 누적합니다.</p>
+        <h2>업로드</h2>
+        <p class="panel-sub">엑셀 원본을 그대로 올리면 파서가 정리해 저장합니다. 조회·수정·삭제는 옆의 시장 데이터·자재 사용량·매출/객수 탭에서.</p>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:14px;align-items:start">
+        <div class="card">
+          <div class="card-head">
+            <h3>① 시장 데이터</h3>
+            <span class="hint">가락·강서시장 단가 엑셀 (날짜/품목/품종/등급/거래단위/가격 순서)</span>
+          </div>
+          <div class="grid-actions">
+            <select id="marketNameSelect">
+              <option value="가락시장">가락시장</option>
+              <option value="강서시장">강서시장</option>
+            </select>
+            <input type="file" id="marketFileInput" accept=".xlsx,.xls">
+            <span id="marketUploadMsg" class="save-msg"></span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h3>③ 매출/객수</h3>
+            <span class="hint">EATS "시간대별매출조회-일자별" 원본 그대로. 시즌 범위 밖 날짜는 건너뛰고, 같은 매장×날짜는 새 값으로 교체됩니다.</span>
+          </div>
+          <div class="history-year-row">
+            <input type="file" id="storeSalesFileInput" accept=".xlsx,.xls">
+            <span id="salesSaveMsg" class="save-msg"></span>
+          </div>
+        </div>
       </div>
       <div class="card">
         <div class="card-head">
-          <h3>사용량 입력</h3>
-          <span class="hint">EATS "매장별-자재사용량조회" 엑셀 원본을 그대로 올리면 파서가 정리해 저장합니다. 비고·품목·과세여부는 자재코드 기준 자동. 같은 주차 재업로드는 겹치는 매장×자재만 교체됩니다.</span>
+          <h3>② 자재 사용량</h3>
+          <span class="hint">EATS "매장별-자재사용량조회" 원본 그대로. 주차를 확인하고 올려주세요 — 비고·품목·과세여부는 자재코드 기준 자동, 같은 주차 재업로드는 겹치는 매장×자재만 교체됩니다.</span>
         </div>
         <div class="history-year-row">
           <span class="hint">등록 연월</span>
@@ -561,6 +589,13 @@
           <button id="addUsageRowBtn" class="btn btn-ghost btn-sm" type="button">+ 행 추가</button>
         </div>
         </details>
+      </div>
+    </div>
+
+    <div id="subtab-usage" class="subtab-panel">
+      <div class="panel-head">
+        <h2>자재 사용량</h2>
+        <p class="panel-sub">저장된 자재 사용량을 조회·관리합니다. 입력은 업로드 탭에서.</p>
       </div>
 
       <div class="card">
@@ -606,24 +641,10 @@
       </div>
     </div>
 
-    <div id="subtab-market" class="subtab-panel is-active">
+    <div id="subtab-market" class="subtab-panel">
       <div class="panel-head">
         <h2>시장 데이터</h2>
-        <p class="panel-sub">가락시장 등 시장 단가 엑셀 파일을 업로드하면 자동으로 저장됩니다.</p>
-      </div>
-      <div class="card">
-        <div class="card-head">
-          <h3>엑셀 업로드</h3>
-          <span class="hint">날짜/품목/품종/등급/거래단위/최저가/최고가/평균가/전일대비등락/전일평균대비/전7일평균대비/전년동월동일평균대비 순서의 엑셀 파일</span>
-        </div>
-        <div class="grid-actions">
-          <select id="marketNameSelect">
-            <option value="가락시장">가락시장</option>
-            <option value="강서시장">강서시장</option>
-          </select>
-          <input type="file" id="marketFileInput" accept=".xlsx,.xls">
-          <span id="marketUploadMsg" class="save-msg"></span>
-        </div>
+        <p class="panel-sub">저장된 시장 단가를 조회·관리합니다. 업로드는 업로드 탭에서.</p>
       </div>
 
       <div class="card">
@@ -659,21 +680,14 @@
     <div id="subtab-sales" class="subtab-panel">
       <div class="panel-head">
         <h2>매출/객수</h2>
-        <p class="panel-sub">매장별 일자 매출·객수 데이터를 시즌에 누적합니다.</p>
+        <p class="panel-sub">저장된 매출·객수를 조회·관리합니다. 업로드는 업로드 탭에서.</p>
       </div>
       <div class="card">
-        <div class="card-head">
-          <h3>매출/객수 입력</h3>
-          <span class="hint">EATS "시간대별매출조회-일자별" 엑셀 원본을 그대로 올리면 파서가 정리해 저장합니다. 시즌 범위 밖 날짜는 건너뛰고, 같은 매장×날짜는 새 값으로 교체됩니다.</span>
-        </div>
-        <div class="history-year-row">
-          <input type="file" id="storeSalesFileInput" accept=".xlsx,.xls">
-          <span id="salesSaveMsg" class="save-msg"></span>
-        </div>
-        <details style="margin-top:6px">
+        <details>
           <summary class="hint" style="cursor:pointer">직접 붙여넣기 (백업 — 파일이 없을 때)</summary>
           <div class="history-year-row" style="margin-top:6px">
             <button id="saveSalesGridBtn" class="btn btn-primary btn-sm" type="button">붙여넣은 표 저장</button>
+            <span class="save-msg"></span>
           </div>
         <div class="table-scroll">
           <table class="data-table editable-grid" id="salesGrid">
