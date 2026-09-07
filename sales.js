@@ -107,7 +107,10 @@ function srTable(ym) {
       const tYm = shiftYm(ym, off), pYm = shiftYm(tYm, -1);
       if (P199.has(code) && pYm + '-01' < P199_FROM) continue;
       const a = monthDailyMean(code, tYm), b = monthDailyMean(code, pYm);
-      if (a.n >= 20 && b.n >= 20) pairs.push(a.mean / b.mean);
+      // 오픈 램프 가드: 쌍의 전전월도 정상 영업(≥20일)이어야 계절비로 인정
+      // (오픈 직후 특수 소멸을 계절성으로 오인하는 것 방지 — 예: 동탄 2025-08 오픈빨)
+      const pre = monthDailyMean(code, shiftYm(pYm, -1));
+      if (a.n >= 20 && b.n >= 20 && pre.n >= 20) pairs.push(a.mean / b.mean);
     }
     own[code] = pairs.length ? avg(pairs) : null;
   }
