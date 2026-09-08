@@ -70,14 +70,37 @@
       </div>
 
       <div class="pivot-tabs">
-        <button class="pivot-tab-btn is-on" data-pivot-tab="T" type="button">① 목표</button>
+        <button class="pivot-tab-btn is-on" data-pivot-tab="M" type="button">대시보드</button>
+        <button class="pivot-tab-btn" data-pivot-tab="T" type="button">① 목표</button>
         <button class="pivot-tab-btn" data-pivot-tab="A" type="button">② 모델별 비교</button>
         <button class="pivot-tab-btn" data-pivot-tab="B" type="button">③ 전 매장</button>
         <button class="pivot-tab-btn" data-pivot-tab="C" type="button">④ 시계열</button>
         <button class="pivot-tab-btn" data-pivot-tab="D" type="button">⑤ VE (AS-IS→TO-BE)</button>
       </div>
 
-      <div id="pivotPanelTarget">
+      <!-- M: 매장 대시보드 (매장 관리자용 요약 — 전부 실측, 모델 추정 미사용) -->
+      <div id="pivotPanelStoreDash">
+        <div class="pivot-ctl">
+          <label>연월:</label><input type="month" id="sdashMonthInput">
+          <span class="pivot-note" id="sdashHint">원가 주차(화~월) 기준 · 권장 원가율 등록 시 권장대비가 채워집니다</span>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h3>매장별 원가 주요지표</h3>
+            <span class="hint">주차별 원가율 → 월 누적 → 권장대비 · 축산 소비 지표 (돼지고기 비중은 높을수록 좋음)</span>
+          </div>
+          <div class="table-scroll"><table class="data-table" id="sdashTable"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h3 id="sdashFreshTitle">신선자재 재고일수</h3>
+            <span class="hint"><b>5일 이내 관리</b> — 재고일수 = 현재고 ÷ 일평균 사용량. <span style="background:rgba(46,160,67,.15);padding:0 6px;border-radius:3px">3일↓</span> <span style="background:rgba(255,200,0,.2);padding:0 6px;border-radius:3px">3~5일</span> <span style="background:rgba(248,81,73,.2);padding:0 6px;border-radius:3px">5일 초과</span> <span style="background:#3a3a3a;color:#fff;padding:0 6px;border-radius:3px">8일 초과</span></span>
+          </div>
+          <div class="table-scroll"><table class="data-table" id="sdashFreshTable"></table></div>
+        </div>
+      </div>
+
+      <div id="pivotPanelTarget" style="display:none">
         <div class="kpi-row" id="kpiRow"></div>
 
         <div class="card" id="feedbackCard">
@@ -750,6 +773,6 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../app.js?v=202609081510"></script>
+<script src="../app.js?v=202609081610"></script>
 </body>
 </html>

@@ -425,6 +425,7 @@ function setupSeasonControls() {
 }
 
 async function loadAllForCurrentSeason() {
+  loadStoreDash(); // 기본 탭(매장 대시보드) — 시즌 무관·실측 전용이라 병렬로 먼저 그린다
   await loadDashboard(); // loadTargetForm/renderTargetCostTab이 state.categorySummary를 읽으므로 먼저 끝나야 함
   renderTargetCostTab();
   await Promise.all([
@@ -4112,7 +4113,7 @@ function cleanPastedValue(raw, inputType) {
 // 배치 파이프라인이 아니라 우리 앱의 실시간 계산 엔진(computeMenuConsumption 등)을 재사용한다.
 // 1단계(뼈대): 안쪽 탭 전환 + 기간 컨트롤 기본값만 — 실제 표 렌더는 다음 단계에서 연결한다.
 // =====================================================================
-let pivotTab = 'T';
+let pivotTab = 'M';
 // 탭 전환/필터 변경마다 늘어나는 토큰 — 계산이 오래 걸리는 동안(①②③ 전부 수 초~수 분) 사용자가 다른 탭으로
 // 넘어가면, 나중에 끝난 이전 요청이 지금 보고 있는 탭의 결과를 덮어쓰는 경쟁 상태를 막기 위함.
 // 매 로드 시작 시 증가시키고, await 이후 값이 바뀌었으면(그 사이 다른 로드가 시작됐으면) 렌더링을 건너뛴다.
@@ -4120,14 +4121,16 @@ let pivotLoadToken = 0;
 function setPivotTab(t) {
   pivotTab = t;
   $$('.pivot-tab-btn[data-pivot-tab]').forEach(b => b.classList.toggle('is-on', b.dataset.pivotTab === t));
+  $('#pivotPanelStoreDash').style.display = t === 'M' ? '' : 'none';
   $('#pivotPanelTarget').style.display = t === 'T' ? '' : 'none';
-  $('#pivotPanelMain').style.display = t === 'T' ? 'none' : '';
+  $('#pivotPanelMain').style.display = (t === 'T' || t === 'M') ? 'none' : '';
   $('#pivotCtlAB').style.display = (t === 'A' || t === 'B') ? '' : 'none';
   $('#pivotCtlC').style.display = t === 'C' ? '' : 'none';
   $('#pivotCtlD').style.display = t === 'D' ? '' : 'none';
   $('#pivotVeSummary').style.display = t === 'D' ? '' : 'none';
   $('#pivotStoreSelectBox').style.display = t === 'A' ? '' : 'none';
   $('#pivotResetOrderBtn').style.display = t === 'B' ? '' : 'none';
+  if (t === 'M') loadStoreDash();
   if (t === 'T') loadDashboard();
   if (t === 'A' || t === 'B') loadPivotCompareView();
   if (t === 'C') loadPivotTimeSeriesView();
@@ -4136,6 +4139,164 @@ function setPivotTab(t) {
 $$('.pivot-tab-btn[data-pivot-tab]').forEach(btn => {
   btn.addEventListener('click', () => setPivotTab(btn.dataset.pivotTab));
 });
+
+// =====================================================================
+// M: 매장 대시보드 — 매장 관리자용 요약 (참고: Tabler·AdminLTE류의 신호등 히트맵 테이블 문법)
+// 전부 실측만 사용: 원가율 = 자재 실사용액 ÷ 순매출(주차·누적), 소비량 = Σ(수량×환산계수) ÷ 객수.
+// 메뉴 소비 모델(추정)은 쓰지 않는다 — 관리자 화면은 "그날 올린 데이터 그대로"가 원칙.
+// =====================================================================
+const PORK_RE = /모돈|돈육|돈:/; // 축산 자재명에서 돼지고기 식별 — "삼겹"은 우삼겹(Excel삼겹양지) 오인 위험이 있어 안 씀
+let sdashToken = 0;
+
+async function loadStoreDash() {
+  const my = ++sdashToken;
+  const inp = $('#sdashMonthInput');
+  if (!inp.value) inp.value = new Date().toISOString().slice(0, 7);
+  const [yy, mm] = inp.value.split('-').map(Number);
+  const weeks = computeWeekOptionsForMonth(yy, mm);
+  if (!weeks.length) return;
+  const from = weeks[0].periodStart, to = weeks[weeks.length - 1].periodEnd;
+  $('#sdashTable').innerHTML = '<tbody><tr><td style="padding:18px;color:var(--muted)">불러오는 중…</td></tr></tbody>';
+  $('#sdashFreshTable').innerHTML = '';
+
+  const [{ data: usage }, { data: sales }, { data: targets }] = await Promise.all([
+    fetchAllRows('material_usage', q => q.gte('period_end', weeks[0].periodEnd).lte('period_end', to),
+      'store_code,store_name,remark,material_name,conversion_factor,actual_usage_qty,actual_usage_amount,current_stock_qty,period_end'),
+    fetchAllRows('store_sales', q => q.gte('sales_date', from).lte('sales_date', to),
+      'store_code,store_name,sales_date,sales_total,customers_total'),
+    fetchAllRows('cost_targets', null),
+  ]);
+  if (my !== sdashToken) return;
+  if (!(usage || []).length) {
+    $('#sdashTable').innerHTML = `<tbody><tr><td style="padding:18px;color:var(--muted)">${inp.value} 자재 사용량 데이터가 없습니다 — 데이터 › 업로드에서 주차 자재를 올려주세요.</td></tr></tbody>`;
+    return;
+  }
+  const targetBy = new Map((targets || []).map(t => [t.store_code, Number(t.target_pct)]));
+  const weekIdxByEnd = new Map(weeks.map((w, i) => [w.periodEnd, i]));
+  const weekOfDate = d => weeks.findIndex(w => d >= w.periodStart && d <= w.periodEnd);
+
+  // ---- 매장별 집계 ----
+  const stores = new Map(); // code -> {name, wAmt[], wNet[], g, gMeat, amtMeat, gPork, cust}
+  const S = code => stores.get(code) || stores.set(code, {
+    name: '', wAmt: weeks.map(() => 0), wNet: weeks.map(() => 0),
+    g: 0, gMeat: 0, amtMeat: 0, gPork: 0, cust: 0,
+  }).get(code);
+  (usage || []).forEach(r => {
+    const s = S(r.store_code);
+    if (r.store_name) s.name = r.store_name;
+    const wi = weekIdxByEnd.get(r.period_end);
+    const amt = Number(r.actual_usage_amount) || 0;
+    if (wi != null) s.wAmt[wi] += amt;
+    const grams = (Number(r.actual_usage_qty) || 0) * (Number(r.conversion_factor) || 0);
+    s.g += grams;
+    if (r.remark === '축산') {
+      s.gMeat += grams; s.amtMeat += amt;
+      if (PORK_RE.test(r.material_name || '')) s.gPork += grams;
+    }
+  });
+  (sales || []).forEach(r => {
+    if (!stores.has(r.store_code)) return; // 자재 데이터 없는 매장은 표에서 제외
+    const s = stores.get(r.store_code);
+    const wi = weekOfDate(r.sales_date);
+    if (wi >= 0) s.wNet[wi] += (Number(r.sales_total) || 0) / 1.1;
+    s.cust += Number(r.customers_total) || 0;
+  });
+
+  const rows = [...stores.entries()].map(([code, s]) => {
+    const cumAmt = s.wAmt.reduce((a, b) => a + b, 0), cumNet = s.wNet.reduce((a, b) => a + b, 0);
+    return { code, ...s, cumAmt, cumNet,
+      cumPct: cumNet ? cumAmt / cumNet * 100 : null,
+      wPct: weeks.map((w, i) => (s.wNet[i] && s.wAmt[i]) ? s.wAmt[i] / s.wNet[i] * 100 : null) };
+  }).sort((a, b) => (a.code < b.code ? -1 : 1));
+  const brand = rows.reduce((t, r) => ({
+    wAmt: weeks.map((w, i) => t.wAmt[i] + r.wAmt[i]), wNet: weeks.map((w, i) => t.wNet[i] + r.wNet[i]),
+    g: t.g + r.g, gMeat: t.gMeat + r.gMeat, amtMeat: t.amtMeat + r.amtMeat, gPork: t.gPork + r.gPork, cust: t.cust + r.cust,
+  }), { wAmt: weeks.map(() => 0), wNet: weeks.map(() => 0), g: 0, gMeat: 0, amtMeat: 0, gPork: 0, cust: 0 });
+  brand.cumAmt = brand.wAmt.reduce((a, b) => a + b, 0); brand.cumNet = brand.wNet.reduce((a, b) => a + b, 0);
+  brand.cumPct = brand.cumNet ? brand.cumAmt / brand.cumNet * 100 : null;
+  brand.wPct = weeks.map((w, i) => (brand.wNet[i] && brand.wAmt[i]) ? brand.wAmt[i] / brand.wNet[i] * 100 : null);
+  const brandPork = brand.gMeat ? brand.gPork / brand.gMeat * 100 : 0;
+
+  // ---- 지표 표 렌더 (신호등: 권장 있으면 권장 대비, 없으면 브랜드 평균 대비) ----
+  const G = 'rgba(46,160,67,.14)', Y = 'rgba(255,193,7,.18)', R = 'rgba(248,81,73,.16)';
+  const pctTd = (pct, base) => {
+    if (pct == null) return '<td style="text-align:right;color:var(--muted)">—</td>';
+    let bg = '';
+    if (base != null) { const d = pct - base; bg = d <= 0 ? G : d <= 2 ? Y : R; }
+    return `<td style="text-align:right;background:${bg}">${pct.toFixed(1)}%</td>`;
+  };
+  const metric = (s) => {
+    const perCap = s.cust ? s.g / s.cust : null;
+    const meatCap = s.cust ? s.gMeat / s.cust : null;
+    const cpg = s.gMeat ? s.amtMeat / s.gMeat : null;
+    const pork = s.gMeat ? s.gPork / s.gMeat * 100 : null;
+    return `<td style="text-align:right">${perCap != null ? fmtNum(perCap, 0) : '—'}</td>` +
+      `<td style="text-align:right">${meatCap != null ? fmtNum(meatCap, 0) : '—'}</td>` +
+      `<td style="text-align:right">${cpg != null ? cpg.toFixed(1) : '—'}</td>` +
+      `<td style="text-align:right;background:${pork == null ? '' : pork >= brandPork ? G : pork < brandPork - 5 ? R : ''}"><b>${pork != null ? pork.toFixed(0) + '%' : '—'}</b></td>`;
+  };
+  let H = `<colgroup><col style="width:120px">${weeks.map(() => '<col style="width:64px">').join('')}<col style="width:70px"><col style="width:60px"><col style="width:76px"><col style="width:86px"><col style="width:86px"><col style="width:76px"><col style="width:80px"></colgroup>`;
+  H += `<thead><tr><th>매장명</th>${weeks.map((w, i) => `<th title="${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}">${i + 1}주차</th>`).join('')}<th>월 누적</th><th>권장</th><th>권장대비</th><th>인당소비량<br>g</th><th>축산 인당<br>g</th><th>축산<br>g당원가</th><th>돼지고기<br>비중</th></tr></thead><tbody>`;
+  const brandRow = `<tr style="font-weight:700;background:rgba(0,0,0,.03)"><td>브랜드 평균</td>` +
+    brand.wPct.map(p => pctTd(p, null)).join('') + pctTd(brand.cumPct, null) +
+    `<td style="text-align:right;color:var(--muted)">—</td><td style="text-align:right;color:var(--muted)">—</td>` + metric(brand) + '</tr>';
+  H += brandRow;
+  rows.forEach(r => {
+    const tgt = targetBy.get(r.code);
+    const base = tgt != null ? tgt : brand.cumPct;
+    const diff = (tgt != null && r.cumPct != null) ? r.cumPct - tgt : null;
+    H += `<tr><td title="${esc(r.code)}">${esc(pivotShortName(r.name || r.code))}</td>` +
+      r.wPct.map(p => pctTd(p, base)).join('') +
+      `<td style="text-align:right;font-weight:700;background:${r.cumPct == null ? '' : (base != null && r.cumPct - base <= 0) ? G : (base != null && r.cumPct - base > 2) ? R : Y}">${r.cumPct != null ? r.cumPct.toFixed(1) + '%' : '—'}</td>` +
+      `<td style="text-align:right;color:var(--muted)">${tgt != null ? tgt.toFixed(1) + '%' : '—'}</td>` +
+      `<td style="text-align:right;font-weight:700;color:${diff == null ? 'var(--muted)' : diff <= 0 ? '#2ea043' : '#d9534f'}">${diff != null ? (diff >= 0 ? '+' : '') + diff.toFixed(1) + '%p' : '—'}</td>` +
+      metric(r) + '</tr>';
+  });
+  H += '</tbody>';
+  $('#sdashTable').innerHTML = H;
+  $('#sdashHint').textContent = `주차: ${weeks.map((w, i) => `${i + 1}주차 ${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}`).join(' · ')}` +
+    (targetBy.size ? '' : ' · 권장 원가율 미등록 — 등록되면 권장대비·색상이 그 기준으로 바뀝니다(현재는 브랜드 평균 대비)');
+
+  // ---- 신선자재 재고일수 (그 달의 마지막 자재 등록 주차 기준) ----
+  const lastEnd = (usage || []).reduce((m2, r) => (r.period_end > m2 ? r.period_end : m2), '');
+  const fresh = (usage || []).filter(r => r.remark === '농산' && r.period_end === lastEnd);
+  $('#sdashFreshTitle').textContent = `신선자재 재고일수 (${lastEnd ? lastEnd.slice(5).replace('-', '/') + ' 실사 기준' : '데이터 없음'})`;
+  if (!fresh.length) { $('#sdashFreshTable').innerHTML = ''; return; }
+  const byMat = new Map();
+  fresh.forEach(r => {
+    const g = (Number(r.actual_usage_qty) || 0) * (Number(r.conversion_factor) || 0);
+    byMat.set(r.material_name, (byMat.get(r.material_name) || 0) + g);
+  });
+  const top10 = [...byMat.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([n]) => n);
+  const shortName = n => esc(String(n).replace(/^\([^)]*\)/, '').trim().split(/[\s_(]/)[0].slice(0, 6) || n.slice(0, 6));
+  const dayTd = d => {
+    if (d == null) return '<td style="text-align:right;color:var(--muted)">-</td>';
+    const bg = d > 8 ? '#3a3a3a' : d > 5 ? R : d > 3 ? Y : G;
+    const fg = d > 8 ? '#fff' : 'inherit';
+    return `<td style="text-align:right;background:${bg};color:${fg};font-weight:${d > 5 ? 700 : 400}">${d.toFixed(1)}</td>`;
+  };
+  const freshByStore = new Map();
+  fresh.forEach(r => {
+    const s = freshByStore.get(r.store_code) || freshByStore.set(r.store_code, { name: r.store_name, useG: 0, stockG: 0, mats: {} }).get(r.store_code);
+    const conv = Number(r.conversion_factor) || 0;
+    const useQ = Number(r.actual_usage_qty) || 0, stockQ = Number(r.current_stock_qty) || 0;
+    s.useG += useQ * conv; s.stockG += stockQ * conv;
+    if (top10.includes(r.material_name)) {
+      const prev = s.mats[r.material_name] || { u: 0, st: 0 };
+      s.mats[r.material_name] = { u: prev.u + useQ, st: prev.st + stockQ };
+    }
+  });
+  let FH = `<colgroup><col style="width:120px"><col style="width:74px">${top10.map(() => '<col style="width:64px">').join('')}</colgroup>`;
+  FH += `<thead><tr><th>매장명</th><th>신선 전체</th>${top10.map(n => `<th title="${esc(n)}">${shortName(n)}</th>`).join('')}</tr></thead><tbody>`;
+  [...freshByStore.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).forEach(([code, s]) => {
+    FH += `<tr><td title="${esc(code)}">${esc(pivotShortName(s.name || code))}</td>` +
+      dayTd(s.useG > 0 ? s.stockG / (s.useG / 7) : null) +
+      top10.map(n => { const m2 = s.mats[n]; return dayTd(m2 && m2.u > 0 ? m2.st / (m2.u / 7) : null); }).join('') + '</tr>';
+  });
+  FH += '</tbody>';
+  $('#sdashFreshTable').innerHTML = FH;
+}
+$('#sdashMonthInput').addEventListener('change', loadStoreDash);
 
 // 시즌설계·데이터 그룹처럼, 피벗과 같은 서브탭 디자인(.pivot-tabs/.pivot-tab-btn)을 재사용하되
 // 피벗 전용 로직(setPivotTab)과는 무관하게 그냥 보이기/숨기기만 하면 되는 탭들의 공용 처리.
