@@ -4126,6 +4126,8 @@ async function loadStoreDash() {
   const targetBy = new Map((targets || []).map(t => [t.store_code, Number(t.target_pct)]));
   const weekIdxByEnd = new Map(weeks.map((w, i) => [w.periodEnd, i]));
   const weekOfDate = d => weeks.findIndex(w => d >= w.periodStart && d <= w.periodEnd);
+  // 누적·우측 지표는 롤링 5주 전체가 아니라 "기준월에 속한 주차"만 합산 — 주차 표시는 롤링, 누적은 월 마감 개념 유지
+  const inMonth = weeks.map(w => +w.periodEnd.slice(5, 7) === mm);
 
   // ---- 매장별 집계 ----
   const stores = new Map(); // code -> {name, wAmt[], wNet[], g, gMeat, amtMeat, gPork, cust}
@@ -4139,6 +4141,7 @@ async function loadStoreDash() {
     const wi = weekIdxByEnd.get(r.period_end);
     const amt = Number(r.actual_usage_amount) || 0;
     if (wi != null) s.wAmt[wi] += amt;
+    if (wi == null || !inMonth[wi]) return; // 우측 지표(소비량·축산)는 기준월 주차만
     const grams = (Number(r.actual_usage_qty) || 0) * (Number(r.conversion_factor) || 0);
     s.g += grams;
     if (r.remark === '축산') {
@@ -4151,11 +4154,12 @@ async function loadStoreDash() {
     const s = stores.get(r.store_code);
     const wi = weekOfDate(r.sales_date);
     if (wi >= 0) s.wNet[wi] += (Number(r.sales_total) || 0) / 1.1;
-    s.cust += Number(r.customers_total) || 0;
+    if (wi >= 0 && inMonth[wi]) s.cust += Number(r.customers_total) || 0;
   });
 
+  const sumIn = arr => arr.reduce((a, v, i) => a + (inMonth[i] ? v : 0), 0);
   const rows = [...stores.entries()].map(([code, s]) => {
-    const cumAmt = s.wAmt.reduce((a, b) => a + b, 0), cumNet = s.wNet.reduce((a, b) => a + b, 0);
+    const cumAmt = sumIn(s.wAmt), cumNet = sumIn(s.wNet); // 기준월 누적
     return { code, ...s, cumAmt, cumNet,
       cumPct: cumNet ? cumAmt / cumNet * 100 : null,
       wPct: weeks.map((w, i) => (s.wNet[i] && s.wAmt[i]) ? s.wAmt[i] / s.wNet[i] * 100 : null) };
@@ -4164,7 +4168,7 @@ async function loadStoreDash() {
     wAmt: weeks.map((w, i) => t.wAmt[i] + r.wAmt[i]), wNet: weeks.map((w, i) => t.wNet[i] + r.wNet[i]),
     g: t.g + r.g, gMeat: t.gMeat + r.gMeat, amtMeat: t.amtMeat + r.amtMeat, gPork: t.gPork + r.gPork, cust: t.cust + r.cust,
   }), { wAmt: weeks.map(() => 0), wNet: weeks.map(() => 0), g: 0, gMeat: 0, amtMeat: 0, gPork: 0, cust: 0 });
-  brand.cumAmt = brand.wAmt.reduce((a, b) => a + b, 0); brand.cumNet = brand.wNet.reduce((a, b) => a + b, 0);
+  brand.cumAmt = sumIn(brand.wAmt); brand.cumNet = sumIn(brand.wNet);
   brand.cumPct = brand.cumNet ? brand.cumAmt / brand.cumNet * 100 : null;
   brand.wPct = weeks.map((w, i) => (brand.wNet[i] && brand.wAmt[i]) ? brand.wAmt[i] / brand.wNet[i] * 100 : null);
   const brandPork = brand.gMeat ? brand.gPork / brand.gMeat * 100 : 0;
@@ -4200,7 +4204,7 @@ async function loadStoreDash() {
       `<td style="text-align:center">${cpg != null ? cpg.toFixed(1) : '—'}</td>` + porkTd;
   };
   let H = `<colgroup><col style="width:120px">${weeks.map(() => '<col style="width:64px">').join('')}<col style="width:70px"><col style="width:60px"><col style="width:76px"><col style="width:86px"><col style="width:86px"><col style="width:76px"><col style="width:80px"></colgroup>`;
-  H += `<thead><tr><th>매장명</th>${weeks.map(w => `<th title="${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}">${w.mLabel.replace('월 ', '월<br>')}</th>`).join('')}<th>${weeks.length}주 누적</th><th>목표</th><th>목표대비</th><th>인당소비량<br>g</th><th>축산 인당<br>g</th><th>축산<br>g당원가</th><th>돼지고기<br>비중</th></tr></thead><tbody>`;
+  H += `<thead><tr><th>매장명</th>${weeks.map(w => `<th title="${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}">${w.mLabel.replace('월 ', '월<br>')}</th>`).join('')}<th>${mm}월 누적</th><th>목표</th><th>목표대비</th><th>인당소비량<br>g</th><th>축산 인당<br>g</th><th>축산<br>g당원가</th><th>돼지고기<br>비중</th></tr></thead><tbody>`;
   const brandRow = `<tr style="font-weight:700;background:rgba(0,0,0,.03)"><td>브랜드 평균</td>` +
     brand.wPct.map(p => pctTd(p, null)).join('') + pctTd(brand.cumPct, null) +
     `<td style="text-align:center;color:var(--muted)">—</td><td style="text-align:center;color:var(--muted)">—</td>` + metric(brand, true) + '</tr>';
