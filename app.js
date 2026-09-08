@@ -105,19 +105,6 @@ const fmtWithExclWater = (main, exclWater, digits = 0) => {
   return `${fmtNum(main, digits)}(${fmtNum(exclVal, digits)})`;
 };
 
-function median(arr) {
-  const nums = arr.filter(v => v != null && !Number.isNaN(v)).sort((a, b) => a - b);
-  if (!nums.length) return null;
-  const mid = Math.floor(nums.length / 2);
-  return nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
-}
-// 정렬된 배열에서 p(0~1) 백분위 값을 최근접-순위 방식으로 뽑는다 (긴급도 등급 산출용)
-function percentile(sortedNums, p) {
-  if (!sortedNums.length) return null;
-  const idx = Math.min(sortedNums.length - 1, Math.max(0, Math.ceil(p * sortedNums.length) - 1));
-  return sortedNums[idx];
-}
-
 // 원가율(%) = (g당원가 × 인당소비량) / (목표객단가 ÷ 1.1) — 부가세 제외 매출 기준
 function computeCostRatio(costPerGram, consumptionPerPerson, targetPrice) {
   if (costPerGram == null || costPerGram === '' || consumptionPerPerson == null || consumptionPerPerson === '' || !targetPrice) return null;
@@ -161,19 +148,7 @@ function toggleView(loggedIn) {
   $('#appView').hidden = false;
 }
 
-$('#loginForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const email = $('#loginEmail').value.trim();
-  const password = $('#loginPassword').value;
-  const errEl = $('#loginError');
-  errEl.hidden = true;
-  const { error } = await sb.auth.signInWithPassword({ email, password });
-  if (error) {
-    errEl.textContent = `로그인 실패: ${error.message} (status ${error.status ?? '-'})`;
-    errEl.hidden = false;
-    console.error('login error', error);
-  }
-});
+// 로그인 폼 없음 — 인증은 랜딩(../) 통합 로그인 전담, 세션 없으면 toggleView가 즉시 리다이렉트.
 
 $('#logoutBtn').addEventListener('click', async () => {
   await sb.auth.signOut();
@@ -218,23 +193,11 @@ function setupDatalist() {
 // ---------- Seasons ----------
 // 시즌의 실제 데이터 매칭은 season_id가 아니라 start_month~end_month 범위(일 단위)로 이루어진다.
 // (자재사용량/매출·객수는 실제 날짜가 이 범위 안에 들어오는 데이터를 가져와 연동한다)
-function nextMonthDate(dateStr) {
-  if (!dateStr) return null;
-  const [y, m] = dateStr.split('-').map(Number);
-  const d = new Date(y, m, 1); // m은 1-indexed이므로 그대로 넘기면 다음달 1일이 됨
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-}
 function nextDay(dateStr) {
   if (!dateStr) return null;
   const [y, m, day] = dateStr.split('-').map(Number);
   const d = new Date(y, m - 1, day);
   d.setDate(d.getDate() + 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-function lastDayOfMonth(dateStr) {
-  if (!dateStr) return null;
-  const [y, m] = dateStr.split('-').map(Number);
-  const d = new Date(y, m, 0); // day 0 of next month = last day of this month
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 function currentSeason() {
@@ -1153,7 +1116,7 @@ function renderSeasonPilotTable() {
   zones.forEach(zone => {
     const rows = byZone[zone];
     const zid = 'pilot|' + zone;
-    H += `<tr class="pivot-zone" onclick="seasonPilotToggle('${esc(zid)}')"><td>${seasonPilotCollapsed[zid] ? '▸' : '▾'} 【${esc(zone)}】</td><td>${fmtR(targetRatioForZone(zone))}</td><td>${fmtR(seasonPilotBrandRatio(rows, data))}</td>${tierCells(rows)}</tr>`;
+    H += `<tr class="pivot-zone" onclick="seasonPilotToggle('${jsEsc(zid)}')"><td>${seasonPilotCollapsed[zid] ? '▸' : '▾'} 【${esc(zone)}】</td><td>${fmtR(targetRatioForZone(zone))}</td><td>${fmtR(seasonPilotBrandRatio(rows, data))}</td>${tierCells(rows)}</tr>`;
     if (seasonPilotCollapsed[zid]) return;
     rows.slice().sort((a, b) => (seasonPilotBrandRatio([b], data) || 0) - (seasonPilotBrandRatio([a], data) || 0))
       .forEach(r => {
@@ -1597,22 +1560,12 @@ function renderMenuConsumptionView() {
 
 $('#menuConsumptionSortSelect').addEventListener('change', renderMenuConsumptionView);
 
-// =====================================================================
-// Tab: 메뉴 진단 (4분면 + 긴급도)
-// menuConsumptionRowsCache를 그대로 재사용 — 새 DB 조회 없음.
-// =====================================================================
-// cls는 KPI 타일(.kpi-tile.is-*)용, pillCls는 표 셀(.data-table td.pill-*)용 — 같은 색 의미를 두 군데 다른 클래스로 낸다.
-const QUADRANT_META = {
-  A: { label: '고단가·고취식', cls: 'is-crit', pillCls: 'pill-crit' },
-  B: { label: '저단가·고취식', cls: 'is-good', pillCls: 'pill-good' },
-  C: { label: '고단가·저취식', cls: 'is-warn', pillCls: 'pill-warn' },
-  D: { label: '저단가·저취식', cls: '', pillCls: '' },
-};
 // 이 조닝들은 대부분 자재 1개짜리 단독메뉴라 손댈 수 있는 방법이 g당단가(공급처 협상) 하나뿐이라
-// "메뉴 진단"(자재 조합을 바꿔볼 여지가 있는 메뉴 찾기)의 대상에서 뺀다.
+// VE 대상(자재 조합을 바꿔볼 여지가 있는 메뉴)에서 뺀다.
 const MENU_DIAGNOSIS_EXCLUDED_CATEGORIES = ['축산', '야채', '소스', '토핑', '육수'];
 
-// menuConsumptionRowsCache 행에서 원가율 계산과 동일한 "유효 g당원가"를 뽑아 4분면/긴급도용 행을 만든다.
+// VE 대상 후보 행: 유효 g당원가·인당소비량·객당가치가 모두 있고 제외 조닝이 아닌 메뉴.
+// (예전 "메뉴 진단" 탭의 4분면/중앙값 계산은 탭 삭제와 함께 정리 — 2026-09-08 PRD §8 G-2)
 function computeMenuDiagnosisQuadrants(rows) {
   const diagRows = rows
     .map(m => ({
@@ -1623,29 +1576,8 @@ function computeMenuDiagnosisQuadrants(rows) {
     }))
     .filter(r => r.costPerGram != null && r.consumption != null && r.value != null)
     .filter(r => !MENU_DIAGNOSIS_EXCLUDED_CATEGORIES.includes(r.category));
-
-  const medianCost = median(diagRows.map(r => r.costPerGram));
-  const medianConsumption = median(diagRows.map(r => r.consumption));
-
-  diagRows.forEach(r => {
-    const highCost = r.costPerGram >= medianCost;
-    const highConsumption = r.consumption >= medianConsumption;
-    r.quadrant = highCost && highConsumption ? 'A' : highConsumption ? 'B' : highCost ? 'C' : 'D';
-  });
-
-  const totalValue = diagRows.reduce((a, r) => a + r.value, 0);
-  const quadrantSummary = {};
-  Object.keys(QUADRANT_META).forEach(q => {
-    const inQ = diagRows.filter(r => r.quadrant === q);
-    const qValue = inQ.reduce((a, r) => a + r.value, 0);
-    quadrantSummary[q] = { count: inQ.length, totalValue: qValue, pct: totalValue > 0 ? qValue / totalValue * 100 : 0 };
-  });
-
-  return { diagRows, medianCost, medianConsumption, quadrantSummary };
+  return { diagRows };
 }
-
-// menuDiagnosisCache/렌더 함수는 "메뉴 진단" 탭 자체를 없애면서 같이 정리함 — computeMenuDiagnosisQuadrants(위)는
-// VE 탭이 그대로 재사용하므로 남겨둔다.
 // VE 탭 대상 기준: 존별 g당원가가 이 값 이상인 메뉴 (2026-08-31, 사장님 지정 — 예전엔 객당원가 상위 10%
 // "즉시" 긴급도로 자동 산출했는데, 존마다 절대 기준으로 직접 정하는 방식으로 변경).
 const VE_TARGET_MIN_COST_BY_ZONE = { '핫': 3.5, '콜': 3, '디저트': 5 };
@@ -1793,9 +1725,6 @@ function longestCommonSubstring(a, b) {
     prevRow = curRow;
   }
   return { len: maxLen, startA: endA - maxLen };
-}
-function longestCommonSubstringLength(a, b) {
-  return longestCommonSubstring(a, b).len;
 }
 // 대파/부추/두부처럼 2글자짜리 핵심 식자재명은 후보로 살리되, "감자+전분", "가지+소스",
 // "자몽+에이드베이스", "배추+김치"처럼 원자재명 뒤에 가공 표시어가 붙어 전혀 다른 가공품이 된
@@ -2105,9 +2034,12 @@ function findSeasonIdForDate(dateStr) {
   const hit = state.seasons.find(s => s.start_month && s.end_month && s.start_month <= dateStr && dateStr <= s.end_month);
   if (hit) return hit.id;
   // 그 기간을 정확히 포함하는 시즌이 없으면(신설 시즌 경계 밖 등) 시작월이 가장 늦은 시즌으로 대체한다.
+  // 대체 시즌의 레시피·설계원가로 계산되므로 조용히 넘어가면 안 됨 — 경고를 남긴다(PRD §8 BUG-3).
   const withRange = state.seasons.filter(s => s.start_month);
   if (!withRange.length) return state.currentSeasonId;
-  return withRange.reduce((a, b) => (a.start_month > b.start_month ? a : b)).id;
+  const fb = withRange.reduce((a, b) => (a.start_month > b.start_month ? a : b));
+  console.warn(`[시즌 매칭] ${dateStr}를 포함하는 시즌이 없어 "${fb.name}" 시즌으로 대체 계산합니다 — 시즌 범위를 확인하세요.`);
+  return fb.id;
 }
 // brandOnly=true면 매장별 IPF(가장 느린 부분, 17개 매장×반복계산)를 건너뛰고 전 매장 실사용량을 한 번에
 // 합쳐 브랜드 전체 그램만 계산한다 — 시계열 탭처럼 짧은 기간을 여러 번(주차별·월별) 반복 계산해야 할 때 씀.
@@ -2477,7 +2409,7 @@ async function buildMaterialPriceResolver(seasonId) {
     return null;
   }
 
-  return { priceForCode, find, realPricePerGram, extendedPricePerGram, fallbackPriceByCode, costMonth, rawCodePricePerGram, clusterMembers, aliasNameByCode };
+  return { priceForCode, find, costMonth, rawCodePricePerGram, clusterMembers, aliasNameByCode };
 }
 
 // 메뉴별 "실제 g당원가"를 계산한다. buildMaterialPriceResolver로 얻은 자재별 단가를 레시피 BOM에 곱해
@@ -3828,13 +3760,14 @@ $('#saveSalesGridBtn').addEventListener('click', async () => {
     });
     rows.push(rec);
   });
-  if (!rows.length) { flash($('#salesSaveMsg'), '입력된 행이 없습니다.', false); return; }
+  // 메시지는 이 그리드 옆의 #salesGridMsg로 — 예전엔 다른 탭(업로드)의 #salesSaveMsg에 출력돼 안 보였음(PRD §8 BUG-1)
+  if (!rows.length) { flash($('#salesGridMsg'), '입력된 행이 없습니다.', false); return; }
   try {
     const replaced = await saveStoreSalesRecords(rows);
     salesGridBody.innerHTML = '';
     for (let i = 0; i < 3; i++) addSalesRow();
-    flash($('#salesSaveMsg'), `${rows.length}개 행이 저장되었습니다.${replaced ? ` (겹치는 ${replaced}개 교체됨)` : ''}`);
-  } catch (e2) { flash($('#salesSaveMsg'), '저장 실패: ' + e2.message, false); }
+    flash($('#salesGridMsg'), `${rows.length}개 행이 저장되었습니다.${replaced ? ` (겹치는 ${replaced}개 교체됨)` : ''}`);
+  } catch (e2) { flash($('#salesGridMsg'), '저장 실패: ' + e2.message, false); }
 });
 
 // EATS "시간대별매출조회-일자별" 원본 업로드 — 11열이 그리드와 동일 순서.
@@ -4363,7 +4296,10 @@ $('#pivotSeasonSelect').addEventListener('change', loadPivotCompareView);
 
 // ---- ①비교 ②전매장 공용 엔진 ----
 // 매장군: storeType()의 value/regular/premium을 그대로 재사용.
-function esc(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+// 인라인 onclick="fn('…')" 안의 JS 문자열용 — HTML 엔티티는 속성 파싱 때 원문으로 복원되므로
+// 따옴표는 백슬래시로 이스케이프해야 한다 (아포스트로피 포함 메뉴명 대응, PRD §8 BUG-2)
+function jsEsc(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function pivotShortName(n) { return (n || '').replace('로운샤브 프리미엄 ', '[프] ').replace('로운 ', ''); }
 // ③전매장처럼 매장이 다닥다닥 나열될 때, 등급(프리미엄/일반/199-229) 라벨을 열 위에 따로 붙여주므로
 // 매장명 자체에서는 브랜드/체인 접두어를 다 떼고 "OO점"만 남긴다.
@@ -4735,7 +4671,7 @@ function renderPivotCompare() {
     const catRow = data.targetByCategory.get(zone);
 
     const zid = zone;
-    H += `<tr class="pivot-zone" onclick="pivotToggle('${esc(zid)}')"><td>${pivotCollapsed[zid] ? '▸' : '▾'} 【${esc(zone)}】` +
+    H += `<tr class="pivot-zone" onclick="pivotToggle('${jsEsc(zid)}')"><td>${pivotCollapsed[zid] ? '▸' : '▾'} 【${esc(zone)}】` +
       ` <span class="pivot-badge">평균 g당${avgCostPerGram != null ? fmtNum(avgCostPerGram, 1) : '-'}원</span></td>` +
       `<td class="pivot-target-col">${pivotTargetTxt(mode, catRow?.target_cost_per_gram, catRow?.target_consumption_per_person, data.targetPrice)}</td>`;
     columns.forEach(c => {
@@ -4761,7 +4697,7 @@ function renderPivotCompare() {
       const hasAliasExpand = aliasMembers && aliasMembers.length > 1;
       const hasParts = (ings.size > 1 && cookedWeight > 0) || hasAliasExpand;
       const mid = zone + '|' + menuName;
-      H += `<tr class="pivot-menu"${hasParts ? ` onclick="pivotToggleIng('${esc(mid)}')"` : ''}><td title="${esc(menuName)}">` +
+      H += `<tr class="pivot-menu"${hasParts ? ` onclick="pivotToggleIng('${jsEsc(mid)}')"` : ''}><td title="${esc(menuName)}">` +
         (hasParts ? (pivotOpenIng[mid] ? '▾ ' : '▸ ') : '　') + esc(menuName) +
         ` <span class="pivot-badge">g당${m.costPerGram != null ? fmtNum(m.costPerGram, 1) : '-'}원 · ${cookedWeight ? fmtNum(cookedWeight, 0) : '-'}g(레시피)</span>` +
         '</td><td class="pivot-na pivot-target-col">—</td>';
@@ -5145,7 +5081,7 @@ function renderPivotTimeSeries() {
     });
     CATEGORY_ORDER.filter(z => z !== '드랍').forEach(zone => {
       const zid = 'ts|' + zone;
-      H += `<tr class="pivot-zone" onclick="pivotTsToggle('${esc(zid)}')"><td>${pivotTsCollapsed[zid] ? '▸' : '▾'} 【${esc(zone)}】</td>`;
+      H += `<tr class="pivot-zone" onclick="pivotTsToggle('${jsEsc(zid)}')"><td>${pivotTsCollapsed[zid] ? '▸' : '▾'} 【${esc(zone)}】</td>`;
       data.periods.forEach(p => { H += `<td>${tsCellVal(p.zoneAmt?.[zone], p.zoneGrams?.[zone], p)}</td>`; });
       H += '</tr>';
       if (pivotTsCollapsed[zid]) return;

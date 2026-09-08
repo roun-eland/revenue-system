@@ -4,28 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>로운 원가설계판</title>
-<link rel="stylesheet" href="../style.css?v=202609071047">
+<link rel="stylesheet" href="../style.css?v=202609081940">
 </head>
 <body>
 
-<!-- 로그인 화면 -->
-<div id="loginView" class="login-view">
-  <div class="login-card">
-    <div class="login-mark">로운</div>
-    <h1>원가설계판</h1>
-    <p class="login-sub">시즌별 목표·설계 원가를 관리하는 내부 도구입니다.</p>
-    <form id="loginForm">
-      <label>이메일
-        <input type="email" id="loginEmail" required autocomplete="username">
-      </label>
-      <label>비밀번호
-        <input type="password" id="loginPassword" required autocomplete="current-password">
-      </label>
-      <button type="submit" class="btn btn-primary btn-block">로그인</button>
-      <p id="loginError" class="form-error" hidden></p>
-    </form>
-  </div>
-</div>
+<!-- 로그인은 랜딩(../) 통합 처리 — 세션 없으면 즉시 리다이렉트되므로 이 자리엔 빈 컨테이너만 남긴다 -->
+<div id="loginView" hidden></div>
 
 <!-- 앱 화면 -->
 <div id="appView" class="app-view" hidden>
@@ -713,7 +697,7 @@
           <summary class="hint" style="cursor:pointer">직접 붙여넣기 (백업 — 파일이 없을 때)</summary>
           <div class="history-year-row" style="margin-top:6px">
             <button id="saveSalesGridBtn" class="btn btn-primary btn-sm" type="button">붙여넣은 표 저장</button>
-            <span class="save-msg"></span>
+            <span id="salesGridMsg" class="save-msg"></span>
           </div>
         <div class="table-scroll">
           <table class="data-table editable-grid" id="salesGrid">
@@ -759,11 +743,6 @@
   </main>
 </div>
 
-<datalist id="taxStatusList">
-  <option value="과세">
-  <option value="비과세">
-</datalist>
-
 <datalist id="seasonNameList"></datalist>
 
 <datalist id="patternList">
@@ -773,6 +752,6 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../app.js?v=202609081855"></script>
+<script src="../app.js?v=202609081940"></script>
 </body>
 </html>
