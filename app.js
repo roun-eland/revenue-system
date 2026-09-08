@@ -4217,23 +4217,33 @@ async function loadStoreDash() {
   brand.wPct = weeks.map((w, i) => (brand.wNet[i] && brand.wAmt[i]) ? brand.wAmt[i] / brand.wNet[i] * 100 : null);
   const brandPork = brand.gMeat ? brand.gPork / brand.gMeat * 100 : 0;
 
-  // ---- 지표 표 렌더 (신호등: 권장 있으면 권장 대비, 없으면 브랜드 평균 대비) ----
+  // ---- 지표 표 렌더 ----
+  // 강조 체계(참고: 엑셀 조건부서식 데이터바·Tabler progress-in-table·Grafana bar gauge):
+  //  주차 셀 = 배경 없이 글자색만(기준 이하 초록/+2%p 초과 빨강) — 색 면적은 포인트 컬럼에 양보
+  //  월 누적 = 유일한 배경 신호등 / 권장대비 = 부호색 볼드 + 0기준 미니바(매출 대시보드 오차율과 같은 문법)
+  //  축산 인당 = 연파랑 데이터바(크기 비교) / 돼지고기 비중 = 초록 데이터바(높을수록 좋음)
   const G = 'rgba(46,160,67,.14)', Y = 'rgba(255,193,7,.18)', R = 'rgba(248,81,73,.16)';
   const pctTd = (pct, base) => {
     if (pct == null) return '<td style="text-align:right;color:var(--muted)">—</td>';
-    let bg = '';
-    if (base != null) { const d = pct - base; bg = d <= 0 ? G : d <= 2 ? Y : R; }
-    return `<td style="text-align:right;background:${bg}">${pct.toFixed(1)}%</td>`;
+    let st = '';
+    if (base != null) { const d = pct - base; st = d <= 0 ? 'color:#2ea043' : d > 2 ? 'color:#d9534f;font-weight:700' : ''; }
+    return `<td style="text-align:right;${st}">${pct.toFixed(1)}%</td>`;
   };
+  const meatCapOf = s => (s.cust ? s.gMeat / s.cust : null);
+  const porkOf = s => (s.gMeat ? s.gPork / s.gMeat * 100 : null);
+  const maxMeatCap = Math.max(...rows.map(r => meatCapOf(r) || 0), 1);
+  const maxPork = Math.max(...rows.map(r => porkOf(r) || 0), 1);
+  const dataBarTd = (val, max, color, text, extra) =>
+    `<td style="text-align:right;background:linear-gradient(90deg,${color} ${val != null ? Math.round(val / max * 100) : 0}%,transparent 0)">` +
+    `<b>${text}</b>${extra || ''}</td>`;
   const metric = (s) => {
     const perCap = s.cust ? s.g / s.cust : null;
-    const meatCap = s.cust ? s.gMeat / s.cust : null;
-    const cpg = s.gMeat ? s.amtMeat / s.gMeat : null;
-    const pork = s.gMeat ? s.gPork / s.gMeat * 100 : null;
+    const meatCap = meatCapOf(s), cpg = s.gMeat ? s.amtMeat / s.gMeat : null, pork = porkOf(s);
     return `<td style="text-align:right">${perCap != null ? fmtNum(perCap, 0) : '—'}</td>` +
-      `<td style="text-align:right">${meatCap != null ? fmtNum(meatCap, 0) : '—'}</td>` +
+      dataBarTd(meatCap, maxMeatCap, 'rgba(96,130,210,.16)', meatCap != null ? fmtNum(meatCap, 0) : '—') +
       `<td style="text-align:right">${cpg != null ? cpg.toFixed(1) : '—'}</td>` +
-      `<td style="text-align:right;background:${pork == null ? '' : pork >= brandPork ? G : pork < brandPork - 5 ? R : ''}"><b>${pork != null ? pork.toFixed(0) + '%' : '—'}</b></td>`;
+      dataBarTd(pork, maxPork, 'rgba(46,160,67,.20)',
+        pork != null ? `<span style="${pork < brandPork - 5 ? 'color:#d9534f' : ''}">${pork.toFixed(0)}%</span>` : '—');
   };
   let H = `<colgroup><col style="width:120px">${weeks.map(() => '<col style="width:64px">').join('')}<col style="width:70px"><col style="width:60px"><col style="width:76px"><col style="width:86px"><col style="width:86px"><col style="width:76px"><col style="width:80px"></colgroup>`;
   H += `<thead><tr><th>매장명</th>${weeks.map((w, i) => `<th title="${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}">${i + 1}주차</th>`).join('')}<th>월 누적</th><th>권장</th><th>권장대비</th><th>인당소비량<br>g</th><th>축산 인당<br>g</th><th>축산<br>g당원가</th><th>돼지고기<br>비중</th></tr></thead><tbody>`;
@@ -4241,15 +4251,21 @@ async function loadStoreDash() {
     brand.wPct.map(p => pctTd(p, null)).join('') + pctTd(brand.cumPct, null) +
     `<td style="text-align:right;color:var(--muted)">—</td><td style="text-align:right;color:var(--muted)">—</td>` + metric(brand) + '</tr>';
   H += brandRow;
+  const maxDiff = Math.max(...rows.map(r => {
+    const t = targetBy.get(r.code);
+    return (t != null && r.cumPct != null) ? Math.abs(r.cumPct - t) : 0;
+  }), 1);
   rows.forEach(r => {
     const tgt = targetBy.get(r.code);
     const base = tgt != null ? tgt : brand.cumPct;
     const diff = (tgt != null && r.cumPct != null) ? r.cumPct - tgt : null;
+    const diffBar = diff == null ? '' :
+      ` <span style="display:inline-block;height:8px;border-radius:2px;vertical-align:1px;width:${Math.max(3, Math.round(Math.abs(diff) / maxDiff * 44))}px;background:${diff <= 0 ? '#2ea043' : '#d9534f'}"></span>`;
     H += `<tr><td title="${esc(r.code)}">${esc(pivotShortName(r.name || r.code))}</td>` +
       r.wPct.map(p => pctTd(p, base)).join('') +
       `<td style="text-align:right;font-weight:700;background:${r.cumPct == null ? '' : (base != null && r.cumPct - base <= 0) ? G : (base != null && r.cumPct - base > 2) ? R : Y}">${r.cumPct != null ? r.cumPct.toFixed(1) + '%' : '—'}</td>` +
       `<td style="text-align:right;color:var(--muted)">${tgt != null ? tgt.toFixed(1) + '%' : '—'}</td>` +
-      `<td style="text-align:right;font-weight:700;color:${diff == null ? 'var(--muted)' : diff <= 0 ? '#2ea043' : '#d9534f'}">${diff != null ? (diff >= 0 ? '+' : '') + diff.toFixed(1) + '%p' : '—'}</td>` +
+      `<td style="text-align:right;font-weight:700;white-space:nowrap;color:${diff == null ? 'var(--muted)' : diff <= 0 ? '#2ea043' : '#d9534f'}">${diff != null ? (diff >= 0 ? '+' : '') + diff.toFixed(1) + '%p' : '—'}${diffBar}</td>` +
       metric(r) + '</tr>';
   });
   H += '</tbody>';
