@@ -4818,7 +4818,8 @@ async function loadPivotTimeSeriesData() {
       const closed = isSeasonClosed(season);
       // 캐시 확인은 가벼운 단건 조회라 먼저 해보고, 없을 때만 느린 계산을 나머지 조회들과 "같이"
       // 병렬로 돌린다 — 순서대로 돌리면 대기시간이 그냥 다 더해져서 훨씬 오래 걸린다.
-      const cachedRows = closed ? await fetchPivotSnapshot(seasonId, periodUnit, p.start, p.end) : null;
+      // 진행 중 시즌도 스냅샷이 있으면(주차 정확 계산 버튼으로 생성) 근사 대신 그 정확값을 쓴다.
+      const cachedRows = await fetchPivotSnapshot(seasonId, periodUnit, p.start, p.end);
 
       const costPromise = getActualCostPerGram(seasonId);
       const salesPromise = fetchAllRows('store_sales',
@@ -4868,7 +4869,21 @@ async function loadPivotTimeSeriesData() {
       out.push({ ...p, seasonName: season?.name, totalAmt, meatAmt, zoneAmt, zoneGrams, menuAmt, menuGrams, menuCategory,
         totalCustomers, netSales: totalSales / 1.1 });
     } else {
-      const [{ data: usage }, { data: sales }] = await Promise.all([
+      // 매장 대상: 합계·축산은 실측(자재·매출), 존·메뉴 분해는 스냅샷(매장×메뉴 그램)이 있는 기간만.
+      // 스냅샷은 종료 시즌은 자동 생성, 진행 중 시즌은 "주차 정확 계산" 버튼으로 생성한다.
+      if (!designsBySeasonId.has(seasonId)) {
+        const [{ data }, seasonFlat] = await Promise.all([
+          fetchAllRows('menu_designs', q => q.eq('season_id', seasonId)),
+          getFlatForSeason(seasonId),
+        ]);
+        const m = new Map();
+        (data || []).forEach(d => { if (d.menu_name) m.set(d.menu_name, d); });
+        designsBySeasonId.set(seasonId, unionDesignByMenu(m, seasonFlat?.categoryByMenu));
+      }
+      const designByMenu = designsBySeasonId.get(seasonId);
+      const [snapRows, costResult, { data: usage }, { data: sales }] = await Promise.all([
+        fetchPivotSnapshot(seasonId, periodUnit, p.start, p.end),
+        getActualCostPerGram(seasonId),
         fetchAllRows('material_usage', q => q.eq('store_code', targetCode).gte('period_end', p.start).lt('period_end', nextDay(p.end)), 'remark, actual_usage_amount'),
         fetchAllRows('store_sales', q => q.eq('store_code', targetCode).gte('sales_date', p.start).lt('sales_date', nextDay(p.end)), 'sales_total, customers_total'),
       ]);
@@ -4876,7 +4891,24 @@ async function loadPivotTimeSeriesData() {
       const meatAmt = (usage || []).filter(r => r.remark === '축산').reduce((a, r) => a + (Number(r.actual_usage_amount) || 0), 0);
       const totalCustomers = (sales || []).reduce((a, r) => a + (Number(r.customers_total) || 0), 0);
       const totalSales = (sales || []).reduce((a, r) => a + (Number(r.sales_total) || 0), 0);
-      out.push({ ...p, seasonName: season?.name, totalAmt, meatAmt, totalCustomers, netSales: totalSales / 1.1 });
+      const rec = { ...p, seasonName: season?.name, totalAmt, meatAmt, totalCustomers, netSales: totalSales / 1.1 };
+      const mine = (snapRows || []).filter(r => r.store_code === targetCode);
+      if (mine.length) {
+        const costByMenu = new Map((costResult.results || []).map(r => [r.menu_name, r.actual_cost_per_gram]));
+        const zoneAmt = {}, zoneGrams = {}, menuAmt = {}, menuGrams = {}, menuCategory = {};
+        mine.forEach(r => {
+          const d = designByMenu.get(r.menu_name);
+          if (!d?.category) return;
+          const grams = Number(r.grams) || 0;
+          // g당원가는 브랜드 공통(자재 시세 기준) — 매장별 차이는 그램 배분에 반영돼 있다
+          const amt = grams * ((costByMenu.get(r.menu_name) ?? d.cost_per_gram) || 0);
+          zoneAmt[d.category] = (zoneAmt[d.category] || 0) + amt;
+          zoneGrams[d.category] = (zoneGrams[d.category] || 0) + grams;
+          menuAmt[r.menu_name] = amt; menuGrams[r.menu_name] = grams; menuCategory[r.menu_name] = d.category;
+        });
+        Object.assign(rec, { zoneAmt, zoneGrams, menuAmt, menuGrams, menuCategory });
+      }
+      out.push(rec);
     }
   }
   return { periods: out, targetCode };
@@ -4923,8 +4955,10 @@ function renderPivotTimeSeries() {
     return p.totalCustomers ? fmtNum(amt / p.totalCustomers, 0) : '—';
   };
 
-  if (data.targetCode === 'brand') {
+  const hasSplit = data.periods.some(p => p.menuCategory && Object.keys(p.menuCategory).length);
+  if (hasSplit) {
     // 존별로 등장하는 모든 메뉴 이름을 기간 전체에서 모아, 존을 펼치면 그 메뉴들을 총액 큰 순으로 보여준다.
+    // 매장 대상도 스냅샷(매장×메뉴 그램)이 있는 기간은 동일하게 분해 — 없는 기간 셀은 '—'.
     const menusByZone = {};
     data.periods.forEach(p => {
       Object.entries(p.menuCategory || {}).forEach(([menu, cat]) => {
@@ -4948,8 +4982,12 @@ function renderPivotTimeSeries() {
       });
     });
   } else {
-    H += `<tr><td colspan="${data.periods.length + 1}" class="pivot-note" style="position:static">존별 분해는 "브랜드 전체" 대상에서만 제공됩니다(매장별 존 배분 근거 부족).</td></tr>`;
+    H += `<tr><td colspan="${data.periods.length + 1}" class="pivot-note" style="position:static">${data.targetCode === 'brand'
+      ? '존·메뉴 분해를 계산할 데이터가 없습니다.'
+      : '이 매장의 존·메뉴 분해는 계산된 주차(스냅샷)가 있어야 표시됩니다 — 종료 시즌은 자동, 진행 중 시즌은 위 "이 주차 정확 계산" 버튼으로 생성하세요.'}</td></tr>`;
   }
+  if (hasSplit && data.targetCode !== 'brand' && data.periods.some(p => !p.menuCategory))
+    H += `<tr><td colspan="${data.periods.length + 1}" class="pivot-note" style="position:static">'—' 기간은 아직 정확 계산(스냅샷)이 없는 주차입니다 — 위 "이 주차 정확 계산"으로 채울 수 있습니다.</td></tr>`;
   H += '</tbody>';
   tbl.innerHTML = H;
 }
@@ -4961,6 +4999,7 @@ async function loadPivotTimeSeriesView() {
   await ensurePivotTsStoreOptions();
   if (myToken !== pivotLoadToken) return;
   populatePivotTsFromSelect();
+  populatePivotTsSnapWeeks();
   const result = await loadPivotTimeSeriesData();
   if (myToken !== pivotLoadToken) return; // 그 사이 다른 탭/필터로 넘어감 — 이 결과는 버린다
   pivotTsCache = result;
@@ -4970,6 +5009,48 @@ $('#pivotTsTargetSelect').addEventListener('change', loadPivotTimeSeriesView);
 $('#pivotTsUnitSelect').addEventListener('change', loadPivotTimeSeriesView);
 $('#pivotTsFromSelect').addEventListener('change', loadPivotTimeSeriesView);
 $('#pivotTsModeSelect').addEventListener('change', renderPivotTimeSeries);
+
+// ---- 진행 중 시즌 주차 스냅샷 생성 ("이 주차 정확 계산") ----
+// 종료 시즌은 조회 시 자동으로 스냅샷이 만들어지지만, 진행 중 시즌은 5~6분짜리 정확 계산을 매번 돌릴 수
+// 없어 근사만 쓴다. 이 버튼이 선택한 완결 주차 하나를 정확 계산해 pivot_snapshot에 저장하면, 그 주차는
+// 브랜드는 정확값으로, 매장 대상은 존·메뉴 분해까지 보인다. (주차별 단위 전용 — periodUnit='week')
+function populatePivotTsSnapWeeks() {
+  const sel = $('#pivotTsSnapWeek');
+  if (!sel) return;
+  const range = pivotTsSeasonRange();
+  if (!range) { sel.innerHTML = ''; return; }
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const cur = sel.value;
+  const weeks = pivotAllWeekPeriods(range.from, range.to)
+    .filter(w => w.periodEnd < todayStr)
+    .filter(w => {
+      const s = state.seasons.find(x => x.id === findSeasonIdForDate(w.periodEnd));
+      return s && !isSeasonClosed(s);
+    });
+  sel.innerHTML = weeks.map(w => `<option value="${w.periodStart}|${w.periodEnd}">${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}</option>`).join('');
+  const last = weeks[weeks.length - 1];
+  sel.value = weeks.some(w => `${w.periodStart}|${w.periodEnd}` === cur) ? cur : (last ? `${last.periodStart}|${last.periodEnd}` : '');
+}
+$('#pivotTsSnapshotBtn').addEventListener('click', async () => {
+  const val = $('#pivotTsSnapWeek').value;
+  const msg = $('#pivotTsSnapMsg'), btn = $('#pivotTsSnapshotBtn');
+  if (!val) { msg.textContent = '계산할 완결 주차가 없습니다(진행 중 시즌 기준).'; return; }
+  const [start, end] = val.split('|');
+  const seasonId = findSeasonIdForDate(end);
+  btn.disabled = true;
+  msg.textContent = `${start.slice(5)}~${end.slice(5)} 정확 계산 중… (5~6분, 이 창을 그대로 두세요)`;
+  try {
+    const consumption = await computeMenuConsumption(null, { start, end });
+    if (consumption.error) { msg.textContent = '계산 실패: ' + consumption.error; return; }
+    await savePivotSnapshotFromResults(seasonId, 'week', start, end, consumption.results);
+    await loadPivotTimeSeriesView();
+    msg.textContent = `${start.slice(5)}~${end.slice(5)} 스냅샷 저장됨 — 자재를 재업로드했으면 다시 실행하세요.`;
+  } catch (e2) {
+    msg.textContent = '실패: ' + e2.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // ---------- ④ VE (AS-IS→TO-BE) ----------
 // 대상: VE_TARGET_MIN_COST_BY_ZONE에 정의된 존별 g당원가 기준 이상인 메뉴.

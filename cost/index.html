@@ -156,6 +156,9 @@
         <label>시작:</label><select id="pivotTsFromSelect"></select>
         <label>값:</label><select id="pivotTsModeSelect"><option value="pg">인당소비액</option><option value="g">인당소비량</option><option value="cpg">g당원가</option><option value="pp">원가율</option></select>
         <button id="pivotRefreshBtnC" class="pivot-btn" type="button" title="메뉴별 소비액에서 새로 계산한 값을 이 표에 다시 반영합니다">↻ 피벗 최신화</button>
+        <select id="pivotTsSnapWeek"></select>
+        <button id="pivotTsSnapshotBtn" class="pivot-btn" type="button" title="진행 중 시즌의 선택 주차를 정확 계산(5~6분)해 매장×메뉴 스냅샷으로 저장합니다 — 이후 그 주차는 매장 대상에서도 존·메뉴 분해가 보입니다 (주차별 단위 전용). 자재를 재업로드했으면 다시 실행하세요.">이 주차 정확 계산 (5~6분)</button>
+        <span class="pivot-d" id="pivotTsSnapMsg"></span>
       </div>
       <div class="pivot-ctl" id="pivotCtlD" style="display:none">
         <span class="pivot-note">대상: g당원가가 핫 3.5원·콜 3원·디저트 5원 이상인 메뉴 · TO-BE 칸을 수정하면 Δ원/객·Δ%p가 바로 재계산됩니다.</span>
@@ -747,6 +750,6 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../app.js?v=202609081420"></script>
+<script src="../app.js?v=202609081510"></script>
 </body>
 </html>
