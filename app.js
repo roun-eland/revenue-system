@@ -4265,7 +4265,7 @@ async function loadStoreDash() {
       ` <span style="display:inline-block;height:8px;border-radius:2px;vertical-align:1px;width:${Math.max(3, Math.round(Math.abs(diff) / maxDiff * 44))}px;background:${diff <= 0 ? '#2ea043' : '#d9534f'}"></span>`;
     H += `<tr><td title="${esc(r.code)}">${esc(pivotShortName(r.name || r.code))}</td>` +
       r.wPct.map(p => pctTd(p, base)).join('') +
-      `<td style="text-align:right;font-weight:700;background:${r.cumPct == null ? '' : (base != null && r.cumPct - base <= 0) ? G : (base != null && r.cumPct - base > 2) ? R : Y}">${r.cumPct != null ? r.cumPct.toFixed(1) + '%' : '—'}</td>` +
+      `<td style="text-align:right;font-weight:700;background:${r.cumPct == null ? '' : (base != null && r.cumPct - base <= 0) ? G : (base != null && r.cumPct - base >= 5) ? R : Y}">${r.cumPct != null ? r.cumPct.toFixed(1) + '%' : '—'}</td>` +
       `<td style="text-align:right;color:var(--muted)">${tgt != null ? tgt.toFixed(1) + '%' : '—'}</td>` +
       `<td style="text-align:right;font-weight:700;white-space:nowrap;color:${diff == null ? 'var(--muted)' : diff <= 0 ? '#2ea043' : '#d9534f'}">${diff != null ? (diff >= 0 ? '+' : '') + diff.toFixed(1) + '%p' : '—'}${diffBar}</td>` +
       metric(r) + '</tr>';
