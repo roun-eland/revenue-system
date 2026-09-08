@@ -247,7 +247,14 @@ async function loadSeasons() {
   const sel = $('#seasonSelect');
   sel.innerHTML = state.seasons.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
   if (!state.currentSeasonId && state.seasons.length) {
-    state.currentSeasonId = state.seasons[state.seasons.length - 1].id;
+    // 새로고침 기본 시즌 = 오늘이 범위(start_month~end_month)에 들어가는 시즌.
+    // 없으면(범위 미지정이거나 시즌 사이 공백) 오늘 이전에 시작한 가장 최근 시즌, 그것도 없으면 마지막 시즌.
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const desc = state.seasons.slice().reverse(); // 정렬이 연도·계절 오름차순이므로 뒤에서부터 = 최신부터
+    const byRange = desc.find(s => s.start_month && s.end_month && s.start_month <= today && today <= s.end_month);
+    const started = desc.find(s => s.start_month && s.start_month <= today);
+    state.currentSeasonId = (byRange || started || state.seasons[state.seasons.length - 1]).id;
   }
   if (state.currentSeasonId) sel.value = state.currentSeasonId;
   renderSeasonRangeInputs();
