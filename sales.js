@@ -237,6 +237,9 @@ function buildSelectors() {
   }
   const ss = $('dailyStore');
   if (!ss.options.length) {
+    const all = document.createElement('option');
+    all.value = '__ALL__'; all.textContent = '브랜드 전체 (합계)';
+    ss.appendChild(all); // 첫 옵션 = 기본 선택
     const codes = Object.keys(OT_DATA).sort(); // 매장코드 순
     for (const c of codes) {
       const o = document.createElement('option');
@@ -425,21 +428,27 @@ function renderBrand() {
 
 // ---------- V2 매장 일별 캘린더 ----------
 function renderDaily() {
-  const code = $('dailyStore').value || Object.keys(OT_DATA)[0];
+  const sel = $('dailyStore').value || '__ALL__';
+  const isBrand = sel === '__ALL__';
+  const code = isBrand ? null : sel;
   const ym = $('dailyMonth').value;
   const run = getRun(ym);
-  const f = run ? run.daily.stores[code] : null;
+  const codes = isBrand ? Object.keys(OT_DATA) : [code];
+  // 일별 접근자 — 브랜드 선택 시 전 매장 합계
+  const fDay = d => { if (!run) return 0; let t = 0; for (const c of codes) { const s = run.daily.stores[c]; if (s) t += (s.daily[d] || 0); } return t; };
+  const actDay = d => { let t = 0; for (const c of codes) { const mm = SALES[c]; if (mm) t += (mm.get(d) || 0); } return t; };
+  const f = run ? (isBrand ? { src: `${codes.length}개 매장 합계` } : run.daily.stores[code]) : null;
   const m = SALES[code] || new Map();
   const dates = monthDates(ym);
   const prevYearYm = shiftYm(ym, -12);
 
   let fcT = 0, actT = 0, fcOnAct = 0, py = 0, apeSum = 0, apeN = 0, openDays = 0;
   for (const d of dates) {
-    const fv = f ? (f.daily[d] || 0) : 0, av = m.get(d) || 0;
+    const fv = f ? fDay(d) : 0, av = actDay(d);
     fcT += fv; if (fv > 0) openDays++;
     if (av > 0) { actT += av; fcOnAct += fv; if (fv > 0) { apeSum += Math.abs(av - fv) / av; apeN++; } }
   }
-  for (const d of monthDates(prevYearYm)) py += (m.get(d) || 0);
+  for (const d of monthDates(prevYearYm)) py += actDay(d);
 
   $('dailyKpis').innerHTML = `
     <div><div class="k">${ymLabel(ym)} 예측 합</div><div class="v">${f ? eok(fcT) : '—'}</div><div class="s">${f ? `영업 ${openDays}일 · ${f.src}` : '미발행'}</div></div>
@@ -451,24 +460,38 @@ function renderDaily() {
   const lead = dowIdx(dates[0]);
   for (let i = 0; i < lead; i++) html += '<div></div>';
   for (const d of dates) {
-    const fv = f ? (f.daily[d] || 0) : null, av = m.get(d);
-    const closed = isClosed(code, d) || (fv === 0 && f && !av);
-    const newNotOpen = NEW_OPEN[code] && d < NEW_OPEN[code];
+    const fv = f ? fDay(d) : null, av = isBrand ? actDay(d) : m.get(d);
+    // 브랜드 합계는 명절 전점휴무만 휴점으로 표시 (매장별 정기휴점은 합계에 섞여 있음)
+    const closed = isBrand ? OT_CLOSED_DATES.has(d) : (isClosed(code, d) || (fv === 0 && f && !av));
+    const newNotOpen = !isBrand && NEW_OPEN[code] && d < NEW_OPEN[code];
     const hol = isHol(d);
     // 아래 줄은 예측이 아니라 전년 동일요일(-364일) 실적 — 뱃지 = 그날의 동일매장 성장율
-    const pv = m.get(addD(d, -364)) || 0;
+    const pd = addD(d, -364);
+    const pv = isBrand ? actDay(pd) : (m.get(pd) || 0);
+    let growth = null;
+    if (isBrand) {
+      // 동일매장 기준: 그날 실적과 전년 -364일 실적이 둘 다 있는 매장만 짝지어 계산
+      let a = 0, p = 0;
+      for (const c of codes) {
+        const mm = SALES[c]; if (!mm) continue;
+        const ac = mm.get(d) || 0, pc = mm.get(pd) || 0;
+        if (ac > 0 && pc > 0) { a += ac; p += pc; }
+      }
+      if (a > 0 && p > 0) growth = (a / p - 1) * 100;
+    } else if (av > 0 && pv > 0) {
+      growth = (av / pv - 1) * 100;
+    }
     let body;
     if (newNotOpen) body = `<div class="fc" style="color:var(--muted2)">오픈 전</div>`;
     else if (closed) body = `<div class="fc" style="color:var(--muted2)">휴점</div>`;
     else {
       body = av > 0 ? `<div class="ac">${man(av)}</div>` : '';
       body += pv > 0 ? `<div class="fc">전 ${man(pv)}</div>` : '';
-      if (av > 0 && pv > 0) {
-        const p = (av / pv - 1) * 100;
-        body += `<span class="df ${p >= 0 ? 'up' : 'dn'}">${p >= 0 ? '+' : ''}${p.toFixed(0)}%</span>`;
+      if (growth !== null && av > 0) {
+        body += `<span class="df ${growth >= 0 ? 'up' : 'dn'}">${growth >= 0 ? '+' : ''}${growth.toFixed(0)}%</span>`;
       }
     }
-    const tag = NEW_OPEN[code] && d === NEW_OPEN[code] ? '<span class="tag">오픈</span>' : '';
+    const tag = !isBrand && NEW_OPEN[code] && d === NEW_OPEN[code] ? '<span class="tag">오픈</span>' : '';
     html += `<div class="cd${closed || newNotOpen ? ' off' : ''}${hol ? ' hol' : ''}"><span class="dnum">${+d.slice(8)}</span>${tag}${body}</div>`;
   }
   $('calGrid').innerHTML = html;
