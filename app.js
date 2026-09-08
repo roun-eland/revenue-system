@@ -4164,7 +4164,8 @@ async function loadStoreDash() {
       'store_code,store_name,remark,material_name,conversion_factor,actual_usage_qty,actual_usage_amount,current_stock_qty,period_end'),
     fetchAllRows('store_sales', q => q.gte('sales_date', from).lte('sales_date', to),
       'store_code,store_name,sales_date,sales_total,customers_total'),
-    fetchAllRows('cost_targets', null),
+    // cost_targets는 PK가 store_code라 fetchAllRows(order by id)를 못 쓴다 — 17행이라 단건 조회로 충분
+    sb.from('cost_targets').select('store_code,target_pct'),
   ]);
   if (my !== sdashToken) return;
   if (!(usage || []).length) {
@@ -4231,25 +4232,25 @@ async function loadStoreDash() {
   };
   const meatCapOf = s => (s.cust ? s.gMeat / s.cust : null);
   const porkOf = s => (s.gMeat ? s.gPork / s.gMeat * 100 : null);
-  const maxMeatCap = Math.max(...rows.map(r => meatCapOf(r) || 0), 1);
+  const brandMeatCap = meatCapOf(brand);
   const maxPork = Math.max(...rows.map(r => porkOf(r) || 0), 1);
-  const dataBarTd = (val, max, color, text, extra) =>
-    `<td style="text-align:right;background:linear-gradient(90deg,${color} ${val != null ? Math.round(val / max * 100) : 0}%,transparent 0)">` +
-    `<b>${text}</b>${extra || ''}</td>`;
-  const metric = (s) => {
+  const metric = (s, isBrand) => {
     const perCap = s.cust ? s.g / s.cust : null;
     const meatCap = meatCapOf(s), cpg = s.gMeat ? s.amtMeat / s.gMeat : null, pork = porkOf(s);
-    return `<td style="text-align:right">${perCap != null ? fmtNum(perCap, 0) : '—'}</td>` +
-      dataBarTd(meatCap, maxMeatCap, 'rgba(96,130,210,.16)', meatCap != null ? fmtNum(meatCap, 0) : '—') +
-      `<td style="text-align:right">${cpg != null ? cpg.toFixed(1) : '—'}</td>` +
-      dataBarTd(pork, maxPork, 'rgba(46,160,67,.20)',
-        pork != null ? `<span style="${pork < brandPork - 5 ? 'color:#d9534f' : ''}">${pork.toFixed(0)}%</span>` : '—');
+    // 축산 인당: 바 대신 브랜드 평균 대비 델타 — 값 차이가 작아 바로는 구분이 안 돼 어색했음
+    const delta = (!isBrand && meatCap != null && brandMeatCap) ? Math.round(meatCap - brandMeatCap) : null;
+    const meatTd = `<td style="text-align:right;white-space:nowrap"><b>${meatCap != null ? fmtNum(meatCap, 0) : '—'}</b>` +
+      (delta != null ? ` <span style="font-size:11px;color:${delta >= 0 ? '#2ea043' : 'var(--muted)'}">${delta >= 0 ? '+' : ''}${delta}</span>` : '') + '</td>';
+    const porkTd = `<td style="text-align:right;background:linear-gradient(90deg,rgba(46,160,67,.20) ${pork != null ? Math.round(pork / maxPork * 100) : 0}%,transparent 0)">` +
+      `<b>${pork != null ? `<span style="${pork < brandPork - 5 ? 'color:#d9534f' : ''}">${pork.toFixed(0)}%</span>` : '—'}</b></td>`;
+    return `<td style="text-align:right">${perCap != null ? fmtNum(perCap, 0) : '—'}</td>` + meatTd +
+      `<td style="text-align:right">${cpg != null ? cpg.toFixed(1) : '—'}</td>` + porkTd;
   };
   let H = `<colgroup><col style="width:120px">${weeks.map(() => '<col style="width:64px">').join('')}<col style="width:70px"><col style="width:60px"><col style="width:76px"><col style="width:86px"><col style="width:86px"><col style="width:76px"><col style="width:80px"></colgroup>`;
   H += `<thead><tr><th>매장명</th>${weeks.map((w, i) => `<th title="${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}">${i + 1}주차</th>`).join('')}<th>월 누적</th><th>권장</th><th>권장대비</th><th>인당소비량<br>g</th><th>축산 인당<br>g</th><th>축산<br>g당원가</th><th>돼지고기<br>비중</th></tr></thead><tbody>`;
   const brandRow = `<tr style="font-weight:700;background:rgba(0,0,0,.03)"><td>브랜드 평균</td>` +
     brand.wPct.map(p => pctTd(p, null)).join('') + pctTd(brand.cumPct, null) +
-    `<td style="text-align:right;color:var(--muted)">—</td><td style="text-align:right;color:var(--muted)">—</td>` + metric(brand) + '</tr>';
+    `<td style="text-align:right;color:var(--muted)">—</td><td style="text-align:right;color:var(--muted)">—</td>` + metric(brand, true) + '</tr>';
   H += brandRow;
   const maxDiff = Math.max(...rows.map(r => {
     const t = targetBy.get(r.code);
@@ -4278,13 +4279,10 @@ async function loadStoreDash() {
   const fresh = (usage || []).filter(r => r.remark === '농산' && r.period_end === lastEnd);
   $('#sdashFreshTitle').textContent = `신선자재 재고일수 (${lastEnd ? lastEnd.slice(5).replace('-', '/') + ' 실사 기준' : '데이터 없음'})`;
   if (!fresh.length) { $('#sdashFreshTable').innerHTML = ''; return; }
-  const byMat = new Map();
-  fresh.forEach(r => {
-    const g = (Number(r.actual_usage_qty) || 0) * (Number(r.conversion_factor) || 0);
-    byMat.set(r.material_name, (byMat.get(r.material_name) || 0) + g);
-  });
-  const top10 = [...byMat.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([n]) => n);
-  const shortName = n => esc(String(n).replace(/^\([^)]*\)/, '').trim().split(/[\s_(]/)[0].slice(0, 6) || n.slice(0, 6));
+  // 핵심 10대 신선자재 — 기존 모니터링 시트와 동일 목록 고정 (얼갈이를 배추보다 먼저 매칭해 얼갈이배추 오분류 방지)
+  const FRESH_KEYS = ['숙주', '배추', '청경채', '팽이', '느타리', '양파', '대파', '얼갈이', '가지', '오이'];
+  const FRESH_MATCH = ['얼갈이', '숙주', '청경채', '팽이', '느타리', '양파', '대파', '배추', '가지', '오이'];
+  const keyOf = name => FRESH_MATCH.find(k => String(name || '').includes(k)) || null;
   const dayTd = d => {
     if (d == null) return '<td style="text-align:right;color:var(--muted)">-</td>';
     const bg = d > 8 ? '#3a3a3a' : d > 5 ? R : d > 3 ? Y : G;
@@ -4295,19 +4293,21 @@ async function loadStoreDash() {
   fresh.forEach(r => {
     const s = freshByStore.get(r.store_code) || freshByStore.set(r.store_code, { name: r.store_name, useG: 0, stockG: 0, mats: {} }).get(r.store_code);
     const conv = Number(r.conversion_factor) || 0;
-    const useQ = Number(r.actual_usage_qty) || 0, stockQ = Number(r.current_stock_qty) || 0;
-    s.useG += useQ * conv; s.stockG += stockQ * conv;
-    if (top10.includes(r.material_name)) {
-      const prev = s.mats[r.material_name] || { u: 0, st: 0 };
-      s.mats[r.material_name] = { u: prev.u + useQ, st: prev.st + stockQ };
+    // 자재별 재고일수는 그램 기준으로 합산 — 같은 품목(예: 배추)에 규격 다른 자재가 섞여도 안전
+    const useG = (Number(r.actual_usage_qty) || 0) * conv, stockG = (Number(r.current_stock_qty) || 0) * conv;
+    s.useG += useG; s.stockG += stockG;
+    const key = keyOf(r.material_name);
+    if (key) {
+      const prev = s.mats[key] || { u: 0, st: 0 };
+      s.mats[key] = { u: prev.u + useG, st: prev.st + stockG };
     }
   });
-  let FH = `<colgroup><col style="width:120px"><col style="width:74px">${top10.map(() => '<col style="width:64px">').join('')}</colgroup>`;
-  FH += `<thead><tr><th>매장명</th><th>신선 전체</th>${top10.map(n => `<th title="${esc(n)}">${shortName(n)}</th>`).join('')}</tr></thead><tbody>`;
+  let FH = `<colgroup><col style="width:120px"><col style="width:74px">${FRESH_KEYS.map(() => '<col style="width:64px">').join('')}</colgroup>`;
+  FH += `<thead><tr><th>매장명</th><th>신선 전체</th>${FRESH_KEYS.map(k => `<th>${k}</th>`).join('')}</tr></thead><tbody>`;
   [...freshByStore.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).forEach(([code, s]) => {
     FH += `<tr><td title="${esc(code)}">${esc(pivotShortName(s.name || code))}</td>` +
       dayTd(s.useG > 0 ? s.stockG / (s.useG / 7) : null) +
-      top10.map(n => { const m2 = s.mats[n]; return dayTd(m2 && m2.u > 0 ? m2.st / (m2.u / 7) : null); }).join('') + '</tr>';
+      FRESH_KEYS.map(k => { const m2 = s.mats[k]; return dayTd(m2 && m2.u > 0 ? m2.st / (m2.u / 7) : null); }).join('') + '</tr>';
   });
   FH += '</tbody>';
   $('#sdashFreshTable').innerHTML = FH;
