@@ -4175,10 +4175,11 @@ async function loadStoreDash() {
   //  월 누적 = 유일한 배경 신호등 / 목표대비 = 부호색 볼드 + 0기준 미니바(매출 대시보드 오차율과 같은 문법)
   //  축산 인당 = 연파랑 데이터바(크기 비교) / 돼지고기 비중 = 초록 데이터바(높을수록 좋음)
   const G = 'rgba(46,160,67,.14)', Y = 'rgba(255,193,7,.18)', R = 'rgba(248,81,73,.16)';
+  // 주차 셀 글자색: 목표 이하 = 선명한 초록 볼드 / 목표 +5%p 이상 = 빨강 볼드 / 그 사이 = 기본 흑색
   const pctTd = (pct, base) => {
     if (pct == null) return '<td style="text-align:center;color:var(--muted)">—</td>';
     let st = '';
-    if (base != null) { const d = pct - base; st = d <= 0 ? 'color:#2ea043' : d > 2 ? 'color:#d9534f;font-weight:700' : ''; }
+    if (base != null) { const d = pct - base; st = d <= 0 ? 'color:#2ea043;font-weight:700' : d >= 5 ? 'color:#d9534f;font-weight:700' : ''; }
     return `<td style="text-align:center;${st}">${pct.toFixed(1)}%</td>`;
   };
   const meatCapOf = s => (s.cust ? s.gMeat / s.cust : null);
