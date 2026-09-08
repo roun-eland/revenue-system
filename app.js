@@ -4918,6 +4918,7 @@ function renderPivotTimeSeries() {
   const tsCellVal = (amt, grams, p) => {
     if (amt == null) return '—';
     if (mode === 'g') return (grams != null && p.totalCustomers) ? fmtNum(grams / p.totalCustomers, 1) : '—';
+    if (mode === 'cpg') return grams > 0 ? fmtNum(amt / grams, 2) : '—'; // g당원가 = 소비액 ÷ 소비량 (원/g)
     if (mode === 'pp') return p.netSales ? (amt / p.netSales * 100).toFixed(1) + '%' : '—';
     return p.totalCustomers ? fmtNum(amt / p.totalCustomers, 0) : '—';
   };
