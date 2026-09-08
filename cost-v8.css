@@ -14,9 +14,9 @@
   --muted: #666666;
   --line: #ebebeb;
   --line-strong: #dddddd;
-  --accent: #2f3030;           /* 다크 마커 — 활성·주요 버튼 */
+  --accent: #2f3030;           /* 다크 마커 — 활성 탭·칩 (구조) */
   --accent-deep: #131518;
-  --accent-soft: #f3f4f2;      /* 중성 하이라이트 (hover·존 행·선택) */
+  --accent-soft: #f3fbe7;      /* 그린 틴트 하이라이트 (hover·존 행·선택) — 당근 paper-accent 어법 */
   --accent-contrast: #ffffff;
   --green: #82dc28;            /* 로운 그린 — 데이터 강조 전용 */
   --green-bg: #f3fbe7;
@@ -73,8 +73,9 @@ table { font-variant-numeric: tabular-nums; }
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 .btn:hover { border-color: var(--accent); }
-.btn-primary { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
-.btn-primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
+/* 프라이머리 = 쨍한 로운 그린 (생산성 btn-green과 동일) — 다크는 구조(탭·칩), 그린은 행동(저장·계산) */
+.btn-primary { background: var(--green); color: #1c3305; border-color: var(--green); }
+.btn-primary:hover { background: #74c822; border-color: #74c822; }
 .btn-ghost { background: var(--paper); color: var(--muted); }
 .btn-sm { padding: 4px 8px; font-size: 11px; }
 
@@ -114,7 +115,7 @@ table { font-variant-numeric: tabular-nums; }
 }
 .date-popup-day:hover:not(.is-disabled) { background: var(--accent-soft); }
 .date-popup-day.is-disabled { color: var(--line-strong); cursor: default; }
-.date-popup-day.is-selected { background: var(--accent); color: var(--accent-contrast); font-weight: 700; }
+.date-popup-day.is-selected { background: var(--green); color: #1c3305; font-weight: 700; }
 
 /* 상단 탭 — 생산성 ot-nav와 동일 문법: 활성 = 다크 마커 라운드 탑 */
 .tab-nav {
@@ -205,7 +206,7 @@ table { font-variant-numeric: tabular-nums; }
   position: sticky; top: 0;
   border-bottom: 2px solid var(--line-strong);
 }
-.data-table tbody tr:hover { background: #fafafa; }
+.data-table tbody tr:hover { background: #f8fdf1; }
 .data-table tr.row-brand { font-weight: 700; background: var(--green-bg); }
 .data-table tr.row-brand td:first-child { color: var(--ink); }
 .data-table tr.row-brand:hover { background: var(--green-bg); }
@@ -280,11 +281,12 @@ table { font-variant-numeric: tabular-nums; }
   border-radius: 4px 4px 0 0; background: var(--surface); color: var(--muted); cursor: pointer; white-space: nowrap;
 }
 .pivot-tab-btn:hover { color: var(--ink); }
-.pivot-tab-btn.is-on { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+/* 서브탭 활성 = 그린 틴트 + 그린 보더 (생산성 요일 선택칩과 동일 어법) — 상단 탭(다크)과 계층 구분 */
+.pivot-tab-btn.is-on { background: var(--green-bg); color: var(--ink); border-color: var(--green); border-bottom: 2px solid var(--green-bg); margin-bottom: -2px; }
 .pivot-ctl { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 10px 0; font-size: 12.5px; }
 .pivot-ctl label { color: var(--muted); }
 .pivot-ctl select, .pivot-ctl input {
-  font: 12.5px inherit; padding: 4px 8px; border: 1px solid var(--accent); border-radius: 4px;
+  font: 12.5px inherit; padding: 4px 8px; border: 1.5px solid var(--green); border-radius: 4px;
   background: var(--surface); color: var(--ink); font-weight: 700; cursor: pointer;
 }
 .pivot-btn {
@@ -326,7 +328,7 @@ table { font-variant-numeric: tabular-nums; }
 .pivot-table tr.pivot-menu td:first-child { padding-left: 22px; cursor: pointer; }
 .pivot-table tr.pivot-item td:first-child { padding-left: 22px; }
 .pivot-table tr.pivot-item td { color: var(--muted); }
-.pivot-table tr.pivot-menu:hover td { background: #fafafa; }
+.pivot-table tr.pivot-menu:hover td { background: #f8fdf1; }
 .pivot-table tr.pivot-met td { font-weight: 600; }
 .pivot-table tr.pivot-ing td { font-size: 11.5px; color: var(--muted); background: var(--paper); }
 .pivot-table tr.pivot-ing td:first-child { padding-left: 40px; }
