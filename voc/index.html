@@ -29,6 +29,22 @@
 .rv-act{display:flex;gap:8px;margin-top:8px;align-items:flex-start;flex-wrap:wrap}
 .rv-act textarea{flex:1;min-width:240px;min-height:44px;font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cfcfcf;border-radius:4px;resize:vertical}
 .rv-act select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cfcfcf;border-radius:4px}
+/* 주차별 리뷰 셀 */
+.wr-cell{cursor:pointer}
+.wr-cell:hover{background:var(--fill)}
+.wr-cell.on{outline:2px solid var(--dark);outline-offset:-2px}
+.wr-n{font-size:10px;color:var(--muted2);font-weight:400}
+/* 칭찬 사원 후보 카드 */
+.pr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px}
+.pr-card{border:1px solid #d8d8d8;border-radius:6px;background:var(--surface);padding:12px}
+.pr-card.top{border-color:var(--good)}
+.pr-who{font-size:14px;font-weight:700;margin-bottom:4px}
+.pr-cnt{font-size:12px;color:var(--muted);margin-bottom:6px}
+.pr-quote{font-size:12px;color:var(--muted);border-left:3px solid #e3e3e3;padding:2px 8px;margin-top:6px;line-height:1.5}
+.chip.role{background:#eef3fa;color:#3a5f8a}
+.chip.trait{background:var(--fill);color:var(--muted)}
+.chip.pname{background:var(--dark);color:#fff}
+.chip.medal{background:var(--green-bg,#f3fbe7);color:var(--good)}
 /* 파레토 표 미니바 */
 .pbar{display:inline-block;height:8px;background:var(--dark);border-radius:4px;vertical-align:middle}
 .rate-badge{display:inline-block;font-weight:700;font-variant-numeric:tabular-nums}
@@ -56,7 +72,9 @@
 
   <nav class="ot-nav" id="cxNav">
     <button data-view="brand" class="on">브랜드 대시보드</button>
+    <button data-view="wreview">주차별 리뷰</button>
     <button data-view="store">매장 요인 분석</button>
+    <button data-view="praise">칭찬 사원</button>
     <button data-view="red">레드플래그</button>
     <button data-view="reviews">리뷰·조치</button>
     <button data-view="upload">데이터 업로드</button>
@@ -87,16 +105,22 @@
         <label class="fld" style="min-width:150px">조회 월<select id="stMonth"></select></label>
       </div>
       <div class="kpis" id="stKpis"></div>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 10px">연령대 분포</h3>
+        <div class="tblwrap" id="stAge"></div>
+        <p class="dnote">연령대별 리뷰 수·평균 평점·불만 비중 — 특정 연령대에서만 불만이 몰리면 그 접점(메뉴·좌석·응대)을 점검합니다.</p>
+      </div>
       <div class="ref-grid" style="margin-bottom:14px">
+        <div class="card">
+          <h3 style="margin:0 0 10px">긍정 카테고리 파레토</h3>
+          <div class="chartbox" style="height:230px"><canvas id="stPosPareto"></canvas></div>
+          <div class="tblwrap" id="stPosParetoTbl" style="margin-top:10px"></div>
+          <p class="dnote">본문에서 자발적으로 언급한 칭찬만 집계 (요인 만족도 응답과 별개) — "무엇이 강점인가"의 답.</p>
+        </div>
         <div class="card">
           <h3 style="margin:0 0 10px">불만 카테고리 파레토</h3>
           <div class="chartbox" style="height:230px"><canvas id="stPareto"></canvas></div>
           <div class="tblwrap" id="stParetoTbl" style="margin-top:10px"></div>
-        </div>
-        <div class="card">
-          <h3 style="margin:0 0 10px">연령대 분포</h3>
-          <div class="tblwrap" id="stAge"></div>
-          <p class="dnote">연령대별 리뷰 수·평균 평점·불만 비중 — 특정 연령대에서만 불만이 몰리면 그 접점(메뉴·좌석·응대)을 점검합니다.</p>
         </div>
       </div>
       <div class="ref-grid" style="margin-bottom:14px">
@@ -113,6 +137,40 @@
         <h3 style="margin:0 0 8px">최근 불만 리뷰</h3>
         <div id="stRecent"></div>
         <p class="dnote">최근 10건 — 전체 목록과 조치 입력은 <b>리뷰·조치</b> 탭에서.</p>
+      </div>
+    </section>
+
+    <!-- V6 주차별 리뷰 -->
+    <section id="view-wreview" class="view" hidden>
+      <h2>주차별 리뷰</h2>
+      <p class="view-sub">매장×주차 평점으로 흐름을 보고, 칸을 클릭하면 그 매장·주차의 핵심 불만 요소와 리뷰가 아래에 열립니다. 주 = 월~일 (주차별 매출과 동일 기준).</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:150px">조회 월<select id="wrMonth"></select></label>
+      </div>
+      <div class="card" style="margin-bottom:14px">
+        <div class="tblwrap" id="wrTable"></div>
+        <p class="dnote">칸 = 평균 평점 (리뷰 수) · <span class="sig-good">4.5 이상 초록</span> / <span class="sig-crit">4.2 미만 빨강</span> · 맨 오른쪽 = 월 누적 · 칸 클릭 → 그 주의 불만 관리.</p>
+      </div>
+      <div class="card" id="wrDetailCard" hidden>
+        <h3 style="margin:0 0 8px" id="wrDetailTitle"></h3>
+        <div id="wrCats" style="margin-bottom:10px"></div>
+        <div id="wrList"></div>
+      </div>
+    </section>
+
+    <!-- V7 칭찬 사원 -->
+    <section id="view-praise" class="view" hidden>
+      <h2>칭찬 사원</h2>
+      <p class="view-sub">리뷰 본문에서 서비스 칭찬과 사람 특징(직책·성별·이름·외형)을 자동 추출해, 같은 특징이 반복 언급되는 후보를 "이달의 우수사원" 후보로 보여줍니다. 자동 특정은 참고용 — 원문 발췌를 확인하고 선정하세요.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:150px">조회 월<select id="prMonth"></select></label>
+        <label class="fld" style="min-width:200px">매장<select id="prStore"></select></label>
+      </div>
+      <div class="kpis" id="prKpis"></div>
+      <div id="prClusters"></div>
+      <div class="card" style="margin-top:14px">
+        <h3 style="margin:0 0 8px">칭찬 리뷰 전체</h3>
+        <div id="prList"></div>
       </div>
     </section>
 
@@ -184,6 +242,6 @@
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
-<script src="../voc.js?v=202609090010"></script>
+<script src="../voc.js?v=202609091300"></script>
 </body>
 </html>

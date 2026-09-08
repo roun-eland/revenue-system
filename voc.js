@@ -50,6 +50,44 @@ function cxClassify(body, rec, redFlags) {
 // 불만 리뷰 판정 (저장된 행 기준)
 const isNegRow = r => r.rating <= 3 || r.red_flag || (r.categories && r.categories.length > 0);
 
+// ---------- 긍정 카테고리 (본문 자발 언급만 — 요인 만족도 응답과 별개, 저장 안 하고 렌더 시 계산) ----------
+const CX_PCATS = ['맛·음식', '친절·응대', '청결', '가성비', '구성·다양성', '분위기·시설', '재방문 의사'];
+const CX_PCAT_KW = {
+  '맛·음식': ['맛있', '맛나', '신선', '고기가 좋', '고기 질', '퀄리티', '맛집', '고소', '부드럽'],
+  '친절·응대': ['친절', '상냥', '배려', '감동', '세심', '잘 웃', '미소', '챙겨주', '챙겨 주', '응대가 좋', '서비스가 좋', '서비스 좋', '덕분에'],
+  '청결': ['깨끗', '청결', '깔끔', '위생적'],
+  '가성비': ['가성비', '저렴', '합리적', '가격이 착'],
+  '구성·다양성': ['다양', '종류가 많', '구성이 좋', '푸짐', '먹을 게 많', '먹을게 많', '골라 먹', '무한'],
+  '분위기·시설': ['넓어', '넓고', '쾌적', '분위기 좋', '분위기가 좋', '자리가 좋', '좌석이 넓', '좌석 간격'],
+  '재방문 의사': ['또 오', '또 가', '재방문', '자주 오', '자주 가', '단골', '추천', '다음에 또', '또 올']
+};
+function cxPosCats(body) {
+  const b = String(body || ''), cats = [];
+  for (const c of CX_PCATS) {
+    for (const kw of CX_PCAT_KW[c]) if (b.includes(kw)) { cats.push(c); break; }
+  }
+  return cats;
+}
+
+// ---------- 날짜 헬퍼 (주차별 리뷰 — 주 = 월~일, 주차별 매출과 동일 기준) ----------
+const dObj = s => new Date(s + 'T00:00:00');
+const dStr = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const addD = (s, n) => { const d = dObj(s); d.setDate(d.getDate() + n); return dStr(d); };
+const dowIdx = s => (dObj(s).getDay() + 6) % 7; // 0=월 … 6=일
+const daysInYm = ym => { const [y, m] = ym.split('-').map(Number); return new Date(y, m, 0).getDate(); };
+const mdLabel = s => `${+s.slice(5, 7)}/${+s.slice(8)}`;
+// 해당 월에 걸치는 월~일 주 목록 (월 범위로 클립)
+function monthWeeksMs(ym) {
+  const first = ym + '-01', last = `${ym}-${String(daysInYm(ym)).padStart(2, '0')}`;
+  let s = addD(first, -dowIdx(first));
+  const weeks = [];
+  for (let n = 1; s <= last; n++, s = addD(s, 7)) {
+    const e = addD(s, 6);
+    weeks.push({ n, cs: s < first ? first : s, ce: e > last ? last : e });
+  }
+  return weeks;
+}
+
 // ---------- 데이터 ----------
 let REVIEWS = [];            // cx_reviews 전체
 let ACTIONS = new Map();     // review_id -> {action_text, status}
@@ -116,8 +154,10 @@ $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace
 
 function showView(v) {
   document.querySelectorAll('#cxNav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
-  for (const k of ['brand', 'store', 'red', 'reviews', 'upload']) $('view-' + k).hidden = (k !== v);
+  for (const k of ['brand', 'wreview', 'store', 'praise', 'red', 'reviews', 'upload']) $('view-' + k).hidden = (k !== v);
+  if (v === 'wreview') renderWReview();
   if (v === 'store') renderStore();
+  if (v === 'praise') renderPraise();
   if (v === 'red') renderRed();
   if (v === 'reviews') renderReviews(true);
   if (v === 'upload') renderUpload();
@@ -127,6 +167,16 @@ document.querySelectorAll('#cxNav button').forEach(b => { b.onclick = () => show
 // ---------- 셀렉터 ----------
 function buildSelectors() {
   const yms = [...new Set(REVIEWS.map(r => r.sale_date.slice(0, 7)))].sort().reverse();
+  for (const id of ['wrMonth', 'prMonth']) { // 월 필수 탭 (전체 기간 없음, 기본 = 최신 월)
+    const sel = $(id), keep = sel.value;
+    sel.innerHTML = '';
+    for (const ym of yms) {
+      const o = document.createElement('option');
+      o.value = ym; o.textContent = `${ym.slice(0, 4)}년 ${+ym.slice(5)}월`;
+      sel.appendChild(o);
+    }
+    if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+  }
   for (const id of ['brandMonth', 'stMonth']) {
     const sel = $(id), keep = sel.value;
     sel.innerHTML = '<option value="">전체 기간</option>';
@@ -138,7 +188,7 @@ function buildSelectors() {
     if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
   }
   const codes = [...new Set(REVIEWS.map(r => r.store_code))].sort();
-  for (const id of ['stStore', 'rvStore', 'redStore']) {
+  for (const id of ['stStore', 'rvStore', 'redStore', 'prStore']) {
     const sel = $(id), keep = sel.value;
     sel.innerHTML = id === 'stStore' ? '' : '<option value="">전체 매장</option>';
     if (id === 'stStore') { const o = document.createElement('option'); o.value = ''; o.textContent = '전체 매장'; sel.appendChild(o); }
@@ -155,6 +205,9 @@ function buildSelectors() {
 $('brandMonth').onchange = renderBrand;
 $('stStore').onchange = renderStore;
 $('stMonth').onchange = renderStore;
+$('wrMonth').onchange = () => { wrSel = null; renderWReview(); };
+$('prMonth').onchange = renderPraise;
+$('prStore').onchange = renderPraise;
 $('redStore').onchange = renderRed;
 $('redStatus').onchange = renderRed;
 for (const id of ['rvStore', 'rvCat', 'rvStatus', 'rvScope']) $(id).onchange = () => renderReviews(true);
@@ -208,7 +261,20 @@ function gotoStore(code) {
 }
 
 // ---------- V2 매장 요인 분석 ----------
-let paretoChart = null;
+let paretoChart = null, posParetoChart = null;
+
+// 파레토 표 공용 (카테고리·건수·비중·누적·미니바)
+function paretoTableHtml(cnt, ordered) {
+  if (!ordered.length) return '';
+  const total = ordered.reduce((t, c) => t + cnt[c], 0);
+  let cum = 0;
+  let h = '<table><colgroup><col style="width:120px"><col style="width:60px"><col style="width:60px"><col style="width:60px"><col></colgroup><thead><tr><th>카테고리</th><th>건수</th><th>비중</th><th>누적</th><th></th></tr></thead><tbody>';
+  for (const c of ordered) {
+    cum += cnt[c];
+    h += `<tr><td style="text-align:left">${c}</td><td>${cnt[c]}</td><td>${pct(cnt[c], total)}</td><td>${pct(cum, total)}</td><td style="text-align:left"><span class="pbar" style="width:${Math.round(cnt[c] / cnt[ordered[0]] * 100)}px"></span></td></tr>`;
+  }
+  return h + '</tbody></table>';
+}
 function renderStore() {
   const code = $('stStore').value;
   let rows = filterYm(REVIEWS, $('stMonth').value);
@@ -221,11 +287,10 @@ function renderStore() {
     <div><div class="k">불만 리뷰</div><div class="v">${neg.length}건</div><div class="s">비중 ${pct(neg.length, rows.length)}</div></div>
     <div><div class="k">🚨 레드플래그</div><div class="v" style="${red.length ? 'color:var(--crit)' : ''}">${red.length}건</div><div class="s">${red.length ? '레드플래그 탭에서 확인' : '감지 없음'}</div></div>`;
 
-  // 파레토: 불만 리뷰의 카테고리 건수 (한 리뷰가 여러 카테고리 가능)
+  // 불만 파레토: 불만 리뷰의 카테고리 건수 (한 리뷰가 여러 카테고리 가능)
   const cnt = {};
   for (const r of neg) for (const c of (r.categories || [])) cnt[c] = (cnt[c] || 0) + 1;
   const ordered = CX_CATS.filter(c => cnt[c]).sort((a, b) => cnt[b] - cnt[a]);
-  const total = ordered.reduce((t, c) => t + cnt[c], 0);
   if (paretoChart) { paretoChart.destroy(); paretoChart = null; }
   if (typeof Chart !== 'undefined' && ordered.length) {
     paretoChart = new Chart($('stPareto'), {
@@ -238,18 +303,29 @@ function renderStore() {
       }
     });
   }
-  let cum = 0;
-  let ph = '<table><colgroup><col style="width:120px"><col style="width:60px"><col style="width:60px"><col style="width:60px"><col></colgroup><thead><tr><th>카테고리</th><th>건수</th><th>비중</th><th>누적</th><th></th></tr></thead><tbody>';
-  for (const c of ordered) {
-    cum += cnt[c];
-    ph += `<tr><td style="text-align:left">${c}</td><td>${cnt[c]}</td><td>${pct(cnt[c], total)}</td><td>${pct(cum, total)}</td><td style="text-align:left"><span class="pbar" style="width:${Math.round(cnt[c] / cnt[ordered[0]] * 100)}px"></span></td></tr>`;
-  }
-  ph += ordered.length ? '</tbody></table>' : '<p class="dnote">불만 리뷰가 없습니다.</p>';
-  $('stParetoTbl').innerHTML = ph;
+  $('stParetoTbl').innerHTML = ordered.length ? paretoTableHtml(cnt, ordered) : '<p class="dnote">불만 리뷰가 없습니다.</p>';
 
-  // 연령대
+  // 긍정 파레토: 본문 자발 언급 기반 (렌더 시 계산, 저장 안 함)
+  const pcnt = {};
+  for (const r of rows) for (const c of cxPosCats(r.body)) pcnt[c] = (pcnt[c] || 0) + 1;
+  const pordered = CX_PCATS.filter(c => pcnt[c]).sort((a, b) => pcnt[b] - pcnt[a]);
+  if (posParetoChart) { posParetoChart.destroy(); posParetoChart = null; }
+  if (typeof Chart !== 'undefined' && pordered.length) {
+    posParetoChart = new Chart($('stPosPareto'), {
+      type: 'bar',
+      data: { labels: pordered, datasets: [{ data: pordered.map(c => pcnt[c]), backgroundColor: '#2ea043', borderRadius: 3 }] },
+      options: {
+        indexAxis: 'y', maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { ticks: { precision: 0 } } }
+      }
+    });
+  }
+  $('stPosParetoTbl').innerHTML = pordered.length ? paretoTableHtml(pcnt, pordered) : '<p class="dnote">긍정 언급이 없습니다.</p>';
+
+  // 연령대 (가로 풀폭 — 비율 폭)
   const ages = [...new Set(rows.map(r => r.age_group || '미상'))].sort();
-  let ah = '<table><colgroup><col style="width:80px"><col style="width:70px"><col style="width:70px"><col style="width:80px"><col style="width:80px"></colgroup><thead><tr><th>연령대</th><th>리뷰</th><th>비중</th><th>평균 평점</th><th>불만 비중</th></tr></thead><tbody>';
+  let ah = '<table style="width:100%"><colgroup><col style="width:16%"><col style="width:16%"><col style="width:16%"><col style="width:26%"><col style="width:26%"></colgroup><thead><tr><th>연령대</th><th>리뷰</th><th>비중</th><th>평균 평점</th><th>불만 비중</th></tr></thead><tbody>';
   for (const a of ages) {
     const ar = rows.filter(r => (r.age_group || '미상') === a);
     const an = ar.filter(isNegRow);
@@ -322,6 +398,146 @@ async function saveAction(id) {
   if (error) { msg.textContent = '실패: ' + error.message; return; }
   ACTIONS.set(id, { review_id: id, action_text: text, status });
   msg.textContent = '저장됨 ✓';
+}
+
+// ---------- V6 주차별 리뷰 (주 = 월~일) ----------
+let wrSel = null; // {code(''=브랜드), n} — 선택된 셀
+
+function renderWReview() {
+  const ym = $('wrMonth').value || [...new Set(REVIEWS.map(r => r.sale_date.slice(0, 7)))].sort().reverse()[0];
+  if (!ym) { $('wrTable').innerHTML = '<p class="dnote">적재된 리뷰가 없습니다.</p>'; return; }
+  const weeks = monthWeeksMs(ym);
+  const monthRows = REVIEWS.filter(r => r.sale_date.slice(0, 7) === ym);
+  const codes = [...new Set(monthRows.map(r => r.store_code))].sort();
+
+  const cellStat = rows => rows.length ? { n: rows.length, avg: rows.reduce((t, r) => t + r.rating, 0) / rows.length } : null;
+  const inWeek = (rows, w) => rows.filter(r => r.sale_date >= w.cs && r.sale_date <= w.ce);
+  const cellHtml = (st, code, n, on) => {
+    if (!st) return `<td>—</td>`;
+    const cls = st.avg >= 4.5 ? 'sig-good' : st.avg < 4.2 ? 'sig-crit' : '';
+    return `<td class="wr-cell${on ? ' on' : ''}" onclick="selectWr('${code}',${n})"><span class="${cls}"><b>${st.avg.toFixed(2)}</b></span> <span class="wr-n">(${st.n})</span></td>`;
+  };
+
+  let h = `<table style="width:100%"><colgroup><col style="width:160px">${'<col>'.repeat(weeks.length)}<col style="width:110px"></colgroup><thead><tr><th>매장</th>`;
+  for (const w of weeks) h += `<th>${w.n}주차<div class="wr-n">${mdLabel(w.cs)}~${mdLabel(w.ce)}</div></th>`;
+  h += '<th>월 누적</th></tr></thead><tbody>';
+
+  const rowHtml = (code, label, rows, boldRow) => {
+    let tr = `<tr${boldRow ? ' style="background:var(--fill);font-weight:700"' : ''}><td style="text-align:left">${label}</td>`;
+    for (const w of weeks) tr += cellHtml(cellStat(inWeek(rows, w)), code, w.n, wrSel && wrSel.code === code && wrSel.n === w.n);
+    tr += cellHtml(cellStat(rows), code, 0, wrSel && wrSel.code === code && wrSel.n === 0);
+    return tr + '</tr>';
+  };
+  h += rowHtml('', '브랜드 전체', monthRows, true);
+  for (const c of codes) h += rowHtml(c, `<b>${c}</b> ${esc(storeName(c))}`, monthRows.filter(r => r.store_code === c), false);
+  h += '</tbody></table>';
+  $('wrTable').innerHTML = h;
+
+  // 선택 셀 상세
+  const dc = $('wrDetailCard');
+  if (!wrSel) { dc.hidden = true; return; }
+  dc.hidden = false;
+  let rows = wrSel.code ? monthRows.filter(r => r.store_code === wrSel.code) : monthRows;
+  const w = weeks.find(x => x.n === wrSel.n);
+  if (w) rows = inWeek(rows, w);
+  const label = wrSel.code ? storeName(wrSel.code) : '브랜드 전체';
+  $('wrDetailTitle').textContent = `${label} — ${+ym.slice(5)}월 ${w ? `${wrSel.n}주차 (${mdLabel(w.cs)}~${mdLabel(w.ce)})` : '누적'} 핵심 불만`;
+  const neg = rows.filter(isNegRow);
+  const cnt = {};
+  for (const r of neg) for (const c of (r.categories || [])) cnt[c] = (cnt[c] || 0) + 1;
+  const ordered = CX_CATS.filter(c => cnt[c]).sort((a, b) => cnt[b] - cnt[a]);
+  $('wrCats').innerHTML = ordered.length
+    ? ordered.map(c => `<span class="chip cat" style="margin-right:4px">${c} ${cnt[c]}</span>`).join('') + ` <span class="chip">불만 ${neg.length}건 / 전체 ${rows.length}건</span>`
+    : `<span class="chip medal">불만 리뷰 없음 🎉 (전체 ${rows.length}건)</span>`;
+  $('wrList').innerHTML = [...neg].sort((a, b) => b.sale_date.localeCompare(a.sale_date)).map(r => reviewCard(r, true)).join('');
+}
+function selectWr(code, n) {
+  wrSel = { code, n };
+  renderWReview();
+  $('wrDetailCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ---------- V7 칭찬 사원 (본문에서 서비스 칭찬 + 사람 특징 자동 추출 — DB 저장 안 함) ----------
+const PRAISE_RE = /친절|친철|상냥|배려|세심|감동|미소|잘 웃|웃으|웃어|챙겨\s?주|서비스가? 좋|응대가? 좋|덕분에|기분 좋게|먼저 다가/;
+const PR_ROLES = [
+  ['점장', /점장/], ['매니저', /매니저/], ['사장', /사장/], ['이모', /이모/],
+  ['주방', /주방/], ['홀', /홀 ?직원|홀에/], ['카운터·입구', /카운터|입구|안내/], ['알바', /알바/], ['직원', /직원|스탭|스텝|서버/]
+];
+const PR_TRAITS = [
+  ['안경', /안경/], ['긴 머리', /긴 ?머리|장발/], ['짧은 머리·단발', /짧은 ?머리|숏컷|단발/], ['포니테일', /포니테일|묶은 ?머리/],
+  ['키 큰', /키가? ?크|키 큰/], ['젊은', /젊은|어려 ?보/], ['중년', /중년|나이가 ?있/]
+];
+const PR_NAME_BLACKLIST = new Set(['사장', '점장', '매니', '직원', '이모', '삼촌', '선생', '여러', '감사', '죄송', '고마', '수고', '어머', '아버', '부모', '손님', '고객', '저희', '우리', '가족', '아이', '엄마', '아빠', '언니', '오빠', '누나', '형님', '아주머', '아저씨']);
+
+function extractPraise(body) {
+  const b = String(body || '');
+  if (!PRAISE_RE.test(b)) return null;
+  const roles = PR_ROLES.filter(([, re]) => re.test(b)).map(([n]) => n);
+  const traits = PR_TRAITS.filter(([, re]) => re.test(b)).map(([n]) => n);
+  let gender = null;
+  if (/여자 ?분|여성 ?분|여직원|여자 ?직원|여자 ?점장|여성 ?매니저|여자 ?매니저/.test(b)) gender = '여성';
+  else if (/남자 ?분|남성 ?분|남직원|남자 ?직원|남자 ?점장|남자 ?매니저/.test(b)) gender = '남성';
+  const names = [];
+  for (const m of b.matchAll(/([가-힣]{2,3})\s?님/g)) {
+    if (!PR_NAME_BLACKLIST.has(m[1]) && !PR_NAME_BLACKLIST.has(m[1].slice(0, 2))) names.push(m[1]);
+  }
+  return { roles, traits, gender, names: [...new Set(names)] };
+}
+
+function renderPraise() {
+  const ym = $('prMonth').value || [...new Set(REVIEWS.map(r => r.sale_date.slice(0, 7)))].sort().reverse()[0];
+  const codeFilter = $('prStore').value;
+  let rows = REVIEWS.filter(r => r.sale_date.slice(0, 7) === (ym || ''));
+  if (codeFilter) rows = rows.filter(r => r.store_code === codeFilter);
+
+  const praised = [];
+  for (const r of rows) {
+    const p = extractPraise(r.body);
+    if (p) praised.push({ r, p });
+  }
+
+  // 후보 클러스터: 매장 × (이름 > 대표 직책) — 한 매장에 점장·매니저는 보통 소수라 반복 언급 = 같은 사람일 확률 높음
+  const clusters = new Map();
+  for (const { r, p } of praised) {
+    const primary = p.names[0] ? '이름:' + p.names[0] : (p.roles.find(x => x !== '직원') || p.roles[0] || null);
+    if (!primary) continue; // 사람 단서가 전혀 없는 일반 칭찬은 후보 집계에서 제외 (아래 전체 목록에는 표시)
+    const key = r.store_code + '|' + primary;
+    const c = clusters.get(key) || { store: r.store_code, primary, count: 0, roles: new Set(), traits: new Set(), genders: new Set(), names: new Set(), reviews: [] };
+    c.count++;
+    p.roles.forEach(x => c.roles.add(x)); p.traits.forEach(x => c.traits.add(x));
+    if (p.gender) c.genders.add(p.gender); p.names.forEach(x => c.names.add(x));
+    c.reviews.push(r);
+    clusters.set(key, c);
+  }
+  const list = [...clusters.values()].sort((a, b) => b.count - a.count || a.store.localeCompare(b.store));
+  const repeated = list.filter(c => c.count >= 2);
+
+  $('prKpis').innerHTML = `
+    <div><div class="k">칭찬 리뷰</div><div class="v">${praised.length}건</div><div class="s">전체 ${rows.length}건 중 (${pct(praised.length, rows.length)})</div></div>
+    <div><div class="k">사람 특정 가능</div><div class="v">${list.reduce((t, c) => t + c.count, 0)}건</div><div class="s">직책·이름 등 단서 있는 칭찬</div></div>
+    <div><div class="k">🏅 반복 언급 후보</div><div class="v" style="color:var(--good)">${repeated.length}명</div><div class="s">같은 특징 2회 이상 — 우수사원 후보</div></div>
+    <div><div class="k">매장 수</div><div class="v">${new Set(praised.map(x => x.r.store_code)).size}곳</div><div class="s">칭찬 리뷰 있는 매장</div></div>`;
+
+  const chipset = c => [
+    ...[...c.names].map(n => `<span class="chip pname">${esc(n)}님</span>`),
+    ...[...c.roles].map(n => `<span class="chip role">${n}</span>`),
+    ...[...c.genders].map(n => `<span class="chip trait">${n}</span>`),
+    ...[...c.traits].map(n => `<span class="chip trait">${n}</span>`)
+  ].join(' ');
+  $('prClusters').innerHTML = list.length ? '<div class="pr-grid">' + list.map(c => `
+    <div class="pr-card${c.count >= 2 ? ' top' : ''}">
+      <div class="pr-who">${esc(storeName(c.store))} · ${c.primary.startsWith('이름:') ? esc(c.primary.slice(3)) + '님' : c.primary}${c.count >= 2 ? ' <span class="chip medal">🏅 ' + c.count + '회 언급</span>' : ''}</div>
+      <div class="pr-cnt">${c.count}건 · ${chipset(c)}</div>
+      ${c.reviews.slice(0, 3).map(r => `<div class="pr-quote">${r.sale_date.slice(5)} · ★${r.rating} — ${esc(String(r.body).replace(/\s+/g, ' ').slice(0, 90))}…</div>`).join('')}
+    </div>`).join('') + '</div>'
+    : '<p class="dnote">이 달에는 사람을 특정할 단서(직책·이름)가 있는 칭찬 리뷰가 없습니다.</p>';
+
+  const prRows = praised.sort((a, b) => b.r.sale_date.localeCompare(a.r.sale_date));
+  $('prList').innerHTML = prRows.length ? prRows.map(({ r, p }) => {
+    const chips = [...p.names.map(n => `<span class="chip pname">${esc(n)}님</span>`), ...p.roles.map(n => `<span class="chip role">${n}</span>`),
+      ...(p.gender ? [`<span class="chip trait">${p.gender}</span>`] : []), ...p.traits.map(n => `<span class="chip trait">${n}</span>`)].join(' ');
+    return `<div class="rv"><div class="rv-head"><b>${esc(storeName(r.store_code))}</b><span>${r.sale_date}</span><span class="rate-badge">★${r.rating}</span>${chips}</div><div class="rv-body">${esc(r.body)}</div></div>`;
+  }).join('') : '<p class="dnote">칭찬 리뷰가 없습니다.</p>';
 }
 
 // ---------- V3 레드플래그 ----------
