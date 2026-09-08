@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로운 고객</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="../ot.css?v=202609041415">
+<style>
+/* 고객(VOC) 전용 — v8 체계 위 보완 스타일 */
+.kpis>div,.card{border-color:#cfcfcf}
+.sig-good{color:var(--good);font-weight:700}
+.sig-crit{color:var(--crit);font-weight:700}
+.chartbox{position:relative;height:260px}
+/* 리뷰 카드 (V3·V4) */
+.rv{border:1px solid #d8d8d8;border-radius:6px;background:var(--surface);padding:10px 12px;margin-bottom:10px}
+.rv.red{border-left:4px solid var(--crit)}
+.rv-head{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--muted);margin-bottom:6px}
+.rv-head b{color:var(--ink);font-size:13px}
+.rv-body{font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.rv-menus{font-size:12px;color:var(--muted);margin-top:6px}
+.chip{display:inline-block;font-size:11px;font-weight:700;border-radius:9px;padding:1px 8px;background:var(--fill);color:var(--muted)}
+.chip.cat{background:#eef3fa;color:#3a5f8a}
+.chip.neg{background:var(--hol-bg);color:var(--crit)}
+.chip.redkw{background:var(--crit);color:#fff}
+.chip.st-none{background:var(--hol-bg);color:var(--crit)}
+.chip.st-ing{background:#fff6e0;color:#a05a00}
+.chip.st-done{background:var(--green-bg,#f3fbe7);color:var(--good)}
+.rv-act{display:flex;gap:8px;margin-top:8px;align-items:flex-start;flex-wrap:wrap}
+.rv-act textarea{flex:1;min-width:240px;min-height:44px;font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cfcfcf;border-radius:4px;resize:vertical}
+.rv-act select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cfcfcf;border-radius:4px}
+/* 파레토 표 미니바 */
+.pbar{display:inline-block;height:8px;background:var(--dark);border-radius:4px;vertical-align:middle}
+.rate-badge{display:inline-block;font-weight:700;font-variant-numeric:tabular-nums}
+.rate-badge.lo{color:var(--crit)}
+</style>
+</head>
+<body>
+
+<div id="loginView" class="ot-login" hidden></div>
+
+<div id="appView" hidden>
+  <div class="gnav">
+    <span class="gnav-brand">로운</span>
+    <a class="gnav-item" href="../sales/">매출</a>
+    <a class="gnav-item" href="../labor/">생산성</a>
+    <a class="gnav-item" href="../cost/">원가</a>
+    <span class="gnav-item on">고객</span>
+  </div>
+  <header class="ot-header">
+    <div class="ot-brand"><span class="mark">고객</span><span class="name">VOC — 불만 우선순위와 조치</span></div>
+    <div class="spacer"></div>
+    <span class="who"><span id="whoEmail"></span> <span class="role-chip" id="roleChip">기획자</span></span>
+    <button id="logoutBtn" class="btn btn-sm" type="button">로그아웃</button>
+  </header>
+
+  <nav class="ot-nav" id="cxNav">
+    <button data-view="brand" class="on">브랜드 대시보드</button>
+    <button data-view="store">매장 요인 분석</button>
+    <button data-view="red">레드플래그</button>
+    <button data-view="reviews">리뷰·조치</button>
+    <button data-view="upload">데이터 업로드</button>
+  </nav>
+
+  <main class="ot-main">
+
+    <!-- V1 브랜드 대시보드 -->
+    <section id="view-brand" class="view">
+      <h2>브랜드 대시보드</h2>
+      <p class="view-sub">매장별 고객 만족 현황 한눈에 — 요인 4종(맛·서비스·청결·가격)의 긍정 응답률을 브랜드 평균과 비교합니다. 행 클릭 → 매장 요인 분석.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:160px">조회 월<select id="brandMonth"></select></label>
+      </div>
+      <div class="kpis" id="brandKpis"></div>
+      <div class="card">
+        <div class="tblwrap" id="brandTable"></div>
+        <p class="dnote">긍정률: 맛=맛있어요 · 서비스=친절해요 · 청결=깨끗해요 · 가격=가성비 좋아요 응답 비율 (보통·적정은 중립). <span class="sig-good">초록</span> = 브랜드 평균 이상, <span class="sig-crit">빨강</span> = 평균 −10%p 미만. 불만 리뷰 = 평점 3점 이하 또는 부정 요인 응답 또는 레드플래그.</p>
+      </div>
+    </section>
+
+    <!-- V2 매장 요인 분석 -->
+    <section id="view-store" class="view" hidden>
+      <h2>매장 요인 분석</h2>
+      <p class="view-sub">"무엇부터 고칠까"의 답 — 불만 카테고리별 비중(파레토)으로 해결 우선순위를 정합니다.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:200px">매장<select id="stStore"></select></label>
+        <label class="fld" style="min-width:150px">조회 월<select id="stMonth"></select></label>
+      </div>
+      <div class="kpis" id="stKpis"></div>
+      <div class="ref-grid" style="margin-bottom:14px">
+        <div class="card">
+          <h3 style="margin:0 0 10px">불만 카테고리 파레토</h3>
+          <div class="chartbox" style="height:230px"><canvas id="stPareto"></canvas></div>
+          <div class="tblwrap" id="stParetoTbl" style="margin-top:10px"></div>
+        </div>
+        <div class="card">
+          <h3 style="margin:0 0 10px">연령대 분포</h3>
+          <div class="tblwrap" id="stAge"></div>
+          <p class="dnote">연령대별 리뷰 수·평균 평점·불만 비중 — 특정 연령대에서만 불만이 몰리면 그 접점(메뉴·좌석·응대)을 점검합니다.</p>
+        </div>
+      </div>
+      <div class="ref-grid" style="margin-bottom:14px">
+        <div class="card">
+          <h3 style="margin:0 0 10px">아쉬운 메뉴 TOP 10</h3>
+          <div class="tblwrap" id="stWorst"></div>
+        </div>
+        <div class="card">
+          <h3 style="margin:0 0 10px">다시 먹고 싶은 메뉴 TOP 10</h3>
+          <div class="tblwrap" id="stBest"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin:0 0 8px">최근 불만 리뷰</h3>
+        <div id="stRecent"></div>
+        <p class="dnote">최근 10건 — 전체 목록과 조치 입력은 <b>리뷰·조치</b> 탭에서.</p>
+      </div>
+    </section>
+
+    <!-- V3 레드플래그 -->
+    <section id="view-red" class="view" hidden>
+      <h2>레드플래그</h2>
+      <p class="view-sub">절대 일어나서는 안 되는 일 — 사전(위생·운영·응대 치명 키워드)에 걸린 리뷰 전건입니다. 미조치 건을 먼저 처리하세요.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:200px">매장<select id="redStore"></select></label>
+        <label class="fld" style="min-width:120px">조치 상태<select id="redStatus"><option value="">전체</option><option value="open">미조치만</option></select></label>
+      </div>
+      <div class="kpis" id="redKpis"></div>
+      <div class="card"><div id="redList"></div></div>
+    </section>
+
+    <!-- V4 리뷰·조치 -->
+    <section id="view-reviews" class="view" hidden>
+      <h2>리뷰·조치</h2>
+      <p class="view-sub">부정 리뷰마다 해결방법을 남기고 상태를 관리합니다. 매장 관리자 계정도 입력할 수 있습니다.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:180px">매장<select id="rvStore"></select></label>
+        <label class="fld" style="min-width:150px">카테고리<select id="rvCat"></select></label>
+        <label class="fld" style="min-width:130px">조치 상태<select id="rvStatus">
+          <option value="">전체</option><option value="none">미조치</option>
+          <option value="미처리">미처리</option><option value="처리중">처리중</option><option value="완료">완료</option>
+        </select></label>
+        <label class="fld" style="min-width:130px">범위<select id="rvScope">
+          <option value="neg">불만 리뷰만</option><option value="all">전체 리뷰</option>
+        </select></label>
+      </div>
+      <div id="rvList"></div>
+      <div class="plan-actions"><button id="rvMore" class="btn btn-sm" type="button" hidden>더 보기</button><span class="plan-msg" id="rvCount"></span></div>
+    </section>
+
+    <!-- V5 데이터 업로드 (planner) -->
+    <section id="view-upload" class="view narrow" hidden>
+      <h2>데이터 업로드</h2>
+      <p class="view-sub">리뷰 원문 파일을 올리면 자동 분류(카테고리·레드플래그) 후 저장됩니다. 같은 영수증의 리뷰는 덮어씁니다(중복 없음).</p>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 8px">리뷰 원문 업로드</h3>
+        <div class="plan-actions">
+          <input type="file" id="rvFile" accept=".xlsx,.xls">
+          <span class="plan-msg" id="rvFileMsg"></span>
+        </div>
+        <p class="dnote">고객리뷰_YYYY-MM-DD.xlsx — 열: 작성일·매장코드·매장명·POS·영수증·판매일자·판매시간·연령대·WEBID·평점·요인 4종·메뉴·내용. <b>WEBID 등 개인 식별 정보는 읽는 즉시 폐기하며 DB에 저장하지 않습니다.</b></p>
+      </div>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 8px">적재 현황</h3>
+        <div class="tblwrap" id="loadStat"></div>
+      </div>
+      <div class="card">
+        <h3 style="margin:0 0 8px">레드플래그 사전</h3>
+        <div class="tblwrap" id="rfTable"></div>
+        <div class="plan-actions" style="margin:10px 0 0">
+          <label class="fld" style="min-width:180px">키워드<input id="rfKw" type="text" placeholder="예: 상했"></label>
+          <label class="fld" style="min-width:110px">등급<select id="rfGrade"><option>위생</option><option>운영</option><option>응대</option></select></label>
+          <button id="rfAdd" class="btn btn-sm" type="button" style="align-self:flex-end">추가</button>
+          <button id="rfRescan" class="btn btn-sm" type="button" style="align-self:flex-end">기존 리뷰 재스캔</button>
+          <span class="plan-msg" id="rfMsg" style="align-self:flex-end"></span>
+        </div>
+        <p class="dnote">사전을 바꾸면 이후 업로드부터 적용됩니다 — 이미 저장된 리뷰에 새 키워드를 소급하려면 <b>기존 리뷰 재스캔</b>을 누르세요.</p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="../vendor/supabase.min.js"></script>
+<script src="../vendor/xlsx.full.min.js"></script>
+<script src="../vendor/chart.umd.min.js"></script>
+<script src="../ot-seed.js?v=202609071640"></script>
+<script src="../voc.js?v=202609090010"></script>
+</body>
+</html>
