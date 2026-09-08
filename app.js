@@ -4081,12 +4081,30 @@ $$('.pivot-tab-btn[data-pivot-tab]').forEach(btn => {
 const PORK_RE = /모돈|돈육|돈:/; // 축산 자재명에서 돼지고기 식별 — "삼겹"은 우삼겹(Excel삼겹양지) 오인 위험이 있어 안 씀
 let sdashToken = 0;
 
+// 기준 월의 마지막 완결 주차를 끝으로 하는 "최근 N개 주차" (월 경계 무관 롤링 창).
+// 라벨은 각 주차가 속한 달 기준 "M월 n주차" — 예: 오늘이 9/8이면 8월 2주차 ~ 9월 1주차.
+function rollingWeeksFor(yy, mm, count = 5) {
+  const all = [];
+  for (let off = 2; off >= 0; off--) {
+    let y2 = yy, m2 = mm - off;
+    while (m2 < 1) { m2 += 12; y2--; }
+    computeWeekOptionsForMonth(y2, m2).forEach((w, i) => all.push({ ...w, mLabel: `${m2}월 ${i + 1}주차` }));
+  }
+  const now3 = new Date();
+  const todayStr = `${now3.getFullYear()}-${String(now3.getMonth() + 1).padStart(2, '0')}-${String(now3.getDate()).padStart(2, '0')}`;
+  const monthEnd = `${yy}-${String(mm).padStart(2, '0')}-${new Date(yy, mm, 0).getDate()}`;
+  // 완결 주차(실사 끝난 주)만 — 진행 중 주는 반쪽 데이터라 제외. 미래 월 선택 등 완결이 없으면 월 기준으로만 자름.
+  const done = all.filter(w => w.periodEnd <= monthEnd && w.periodEnd < todayStr);
+  const base = done.length ? done : all.filter(w => w.periodEnd <= monthEnd);
+  return base.slice(-count);
+}
+
 async function loadStoreDash() {
   const my = ++sdashToken;
   const inp = $('#sdashMonthInput');
   if (!inp.value) inp.value = new Date().toISOString().slice(0, 7);
   const [yy, mm] = inp.value.split('-').map(Number);
-  const weeks = computeWeekOptionsForMonth(yy, mm);
+  const weeks = rollingWeeksFor(yy, mm, 5);
   if (!weeks.length) return;
   const from = weeks[0].periodStart, to = weeks[weeks.length - 1].periodEnd;
   $('#sdashTable').innerHTML = '<tbody><tr><td style="padding:18px;color:var(--muted)">불러오는 중…</td></tr></tbody>';
@@ -4181,7 +4199,7 @@ async function loadStoreDash() {
       `<td style="text-align:center">${cpg != null ? cpg.toFixed(1) : '—'}</td>` + porkTd;
   };
   let H = `<colgroup><col style="width:120px">${weeks.map(() => '<col style="width:64px">').join('')}<col style="width:70px"><col style="width:60px"><col style="width:76px"><col style="width:86px"><col style="width:86px"><col style="width:76px"><col style="width:80px"></colgroup>`;
-  H += `<thead><tr><th>매장명</th>${weeks.map((w, i) => `<th title="${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}">${i + 1}주차</th>`).join('')}<th>월 누적</th><th>목표</th><th>목표대비</th><th>인당소비량<br>g</th><th>축산 인당<br>g</th><th>축산<br>g당원가</th><th>돼지고기<br>비중</th></tr></thead><tbody>`;
+  H += `<thead><tr><th>매장명</th>${weeks.map(w => `<th title="${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}">${w.mLabel.replace('월 ', '월<br>')}</th>`).join('')}<th>${weeks.length}주 누적</th><th>목표</th><th>목표대비</th><th>인당소비량<br>g</th><th>축산 인당<br>g</th><th>축산<br>g당원가</th><th>돼지고기<br>비중</th></tr></thead><tbody>`;
   const brandRow = `<tr style="font-weight:700;background:rgba(0,0,0,.03)"><td>브랜드 평균</td>` +
     brand.wPct.map(p => pctTd(p, null)).join('') + pctTd(brand.cumPct, null) +
     `<td style="text-align:center;color:var(--muted)">—</td><td style="text-align:center;color:var(--muted)">—</td>` + metric(brand, true) + '</tr>';
@@ -4205,7 +4223,7 @@ async function loadStoreDash() {
   });
   H += '</tbody>';
   $('#sdashTable').innerHTML = H;
-  $('#sdashHint').textContent = `주차: ${weeks.map((w, i) => `${i + 1}주차 ${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}`).join(' · ')}` +
+  $('#sdashHint').textContent = `최근 ${weeks.length}개 완결 주차 (화~월): ${weeks.map(w => `${w.mLabel} ${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}`).join(' · ')}` +
     (targetBy.size ? '' : ' · 목표 원가율 미등록 — 등록되면 목표대비·색상이 그 기준으로 바뀝니다(현재는 브랜드 평균 대비)');
 
   // ---- 신선자재 재고일수 (그 달의 마지막 자재 등록 주차 기준) ----

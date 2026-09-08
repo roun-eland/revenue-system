@@ -67,13 +67,13 @@
       <!-- M: 매장 대시보드 (매장 관리자용 요약 — 전부 실측, 모델 추정 미사용) -->
       <div id="pivotPanelStoreDash">
         <div class="pivot-ctl">
-          <label>연월:</label><input type="month" id="sdashMonthInput">
+          <label>기준 월:</label><input type="month" id="sdashMonthInput">
           <span class="pivot-note" id="sdashHint">원가 주차(화~월) 기준 · 목표 원가율(기획자 등록) 기준으로 색이 표시됩니다</span>
         </div>
         <div class="card">
           <div class="card-head">
             <h3>매장별 원가 주요지표</h3>
-            <span class="hint">주차별 원가율 → 월 누적 → 목표대비 · 축산 소비 지표 (돼지고기 비중은 높을수록 좋음)</span>
+            <span class="hint">최근 5주 주차별 원가율 → 누적 → 목표대비 · 축산 소비 지표 (돼지고기 비중은 높을수록 좋음)</span>
           </div>
           <div class="table-scroll"><table class="data-table" id="sdashTable"></table></div>
         </div>
@@ -754,6 +754,6 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../app.js?v=202609081940"></script>
+<script src="../app.js?v=202609082150"></script>
 </body>
 </html>
