@@ -4221,7 +4221,7 @@ async function loadStoreDash() {
   // ---- 지표 표 렌더 ----
   // 강조 체계(참고: 엑셀 조건부서식 데이터바·Tabler progress-in-table·Grafana bar gauge):
   //  주차 셀 = 배경 없이 글자색만(기준 이하 초록/+2%p 초과 빨강) — 색 면적은 포인트 컬럼에 양보
-  //  월 누적 = 유일한 배경 신호등 / 권장대비 = 부호색 볼드 + 0기준 미니바(매출 대시보드 오차율과 같은 문법)
+  //  월 누적 = 유일한 배경 신호등 / 목표대비 = 부호색 볼드 + 0기준 미니바(매출 대시보드 오차율과 같은 문법)
   //  축산 인당 = 연파랑 데이터바(크기 비교) / 돼지고기 비중 = 초록 데이터바(높을수록 좋음)
   const G = 'rgba(46,160,67,.14)', Y = 'rgba(255,193,7,.18)', R = 'rgba(248,81,73,.16)';
   const pctTd = (pct, base) => {
@@ -4239,15 +4239,16 @@ async function loadStoreDash() {
     const meatCap = meatCapOf(s), cpg = s.gMeat ? s.amtMeat / s.gMeat : null, pork = porkOf(s);
     // 축산 인당: 바 대신 브랜드 평균 대비 델타 — 값 차이가 작아 바로는 구분이 안 돼 어색했음
     const delta = (!isBrand && meatCap != null && brandMeatCap) ? Math.round(meatCap - brandMeatCap) : null;
+    // 축산 인당은 높을수록 원가 부담 — 평균 초과(+)만 진한 빨강으로 경고, 이하는 현상 유지(무채색)
     const meatTd = `<td style="text-align:right;white-space:nowrap"><b>${meatCap != null ? fmtNum(meatCap, 0) : '—'}</b>` +
-      (delta != null ? ` <span style="font-size:11px;color:${delta >= 0 ? '#2ea043' : 'var(--muted)'}">${delta >= 0 ? '+' : ''}${delta}</span>` : '') + '</td>';
+      (delta != null ? ` <span style="font-size:11px;${delta > 0 ? 'color:#c62828;font-weight:700' : 'color:var(--muted)'}">${delta >= 0 ? '+' : ''}${delta}</span>` : '') + '</td>';
     const porkTd = `<td style="text-align:right;background:linear-gradient(90deg,rgba(46,160,67,.20) ${pork != null ? Math.round(pork / maxPork * 100) : 0}%,transparent 0)">` +
       `<b>${pork != null ? `<span style="${pork < brandPork - 5 ? 'color:#d9534f' : ''}">${pork.toFixed(0)}%</span>` : '—'}</b></td>`;
     return `<td style="text-align:right">${perCap != null ? fmtNum(perCap, 0) : '—'}</td>` + meatTd +
       `<td style="text-align:right">${cpg != null ? cpg.toFixed(1) : '—'}</td>` + porkTd;
   };
   let H = `<colgroup><col style="width:120px">${weeks.map(() => '<col style="width:64px">').join('')}<col style="width:70px"><col style="width:60px"><col style="width:76px"><col style="width:86px"><col style="width:86px"><col style="width:76px"><col style="width:80px"></colgroup>`;
-  H += `<thead><tr><th>매장명</th>${weeks.map((w, i) => `<th title="${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}">${i + 1}주차</th>`).join('')}<th>월 누적</th><th>권장</th><th>권장대비</th><th>인당소비량<br>g</th><th>축산 인당<br>g</th><th>축산<br>g당원가</th><th>돼지고기<br>비중</th></tr></thead><tbody>`;
+  H += `<thead><tr><th>매장명</th>${weeks.map((w, i) => `<th title="${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}">${i + 1}주차</th>`).join('')}<th>월 누적</th><th>목표</th><th>목표대비</th><th>인당소비량<br>g</th><th>축산 인당<br>g</th><th>축산<br>g당원가</th><th>돼지고기<br>비중</th></tr></thead><tbody>`;
   const brandRow = `<tr style="font-weight:700;background:rgba(0,0,0,.03)"><td>브랜드 평균</td>` +
     brand.wPct.map(p => pctTd(p, null)).join('') + pctTd(brand.cumPct, null) +
     `<td style="text-align:right;color:var(--muted)">—</td><td style="text-align:right;color:var(--muted)">—</td>` + metric(brand, true) + '</tr>';
@@ -4272,7 +4273,7 @@ async function loadStoreDash() {
   H += '</tbody>';
   $('#sdashTable').innerHTML = H;
   $('#sdashHint').textContent = `주차: ${weeks.map((w, i) => `${i + 1}주차 ${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}`).join(' · ')}` +
-    (targetBy.size ? '' : ' · 권장 원가율 미등록 — 등록되면 권장대비·색상이 그 기준으로 바뀝니다(현재는 브랜드 평균 대비)');
+    (targetBy.size ? '' : ' · 목표 원가율 미등록 — 등록되면 목표대비·색상이 그 기준으로 바뀝니다(현재는 브랜드 평균 대비)');
 
   // ---- 신선자재 재고일수 (그 달의 마지막 자재 등록 주차 기준) ----
   const lastEnd = (usage || []).reduce((m2, r) => (r.period_end > m2 ? r.period_end : m2), '');
