@@ -455,14 +455,16 @@ function renderDaily() {
     const closed = isClosed(code, d) || (fv === 0 && f && !av);
     const newNotOpen = NEW_OPEN[code] && d < NEW_OPEN[code];
     const hol = isHol(d);
+    // 아래 줄은 예측이 아니라 전년 동일요일(-364일) 실적 — 뱃지 = 그날의 동일매장 성장율
+    const pv = m.get(addD(d, -364)) || 0;
     let body;
     if (newNotOpen) body = `<div class="fc" style="color:var(--muted2)">오픈 전</div>`;
     else if (closed) body = `<div class="fc" style="color:var(--muted2)">휴점</div>`;
     else {
       body = av > 0 ? `<div class="ac">${man(av)}</div>` : '';
-      body += fv !== null ? `<div class="fc">예 ${man(fv)}</div>` : '';
-      if (av > 0 && fv > 0) {
-        const p = (av - fv) / fv * 100;
+      body += pv > 0 ? `<div class="fc">전 ${man(pv)}</div>` : '';
+      if (av > 0 && pv > 0) {
+        const p = (av / pv - 1) * 100;
         body += `<span class="df ${p >= 0 ? 'up' : 'dn'}">${p >= 0 ? '+' : ''}${p.toFixed(0)}%</span>`;
       }
     }
