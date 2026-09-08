@@ -69,21 +69,24 @@ function cxPosCats(body) {
   return cats;
 }
 
-// ---------- 날짜 헬퍼 (주차별 리뷰 — 주 = 월~일, 주차별 매출과 동일 기준) ----------
-const dObj = s => new Date(s + 'T00:00:00');
+// ---------- 날짜 헬퍼 ----------
 const dStr = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const addD = (s, n) => { const d = dObj(s); d.setDate(d.getDate() + n); return dStr(d); };
-const dowIdx = s => (dObj(s).getDay() + 6) % 7; // 0=월 … 6=일
-const daysInYm = ym => { const [y, m] = ym.split('-').map(Number); return new Date(y, m, 0).getDate(); };
 const mdLabel = s => `${+s.slice(5, 7)}/${+s.slice(8)}`;
-// 해당 월에 걸치는 월~일 주 목록 (월 범위로 클립)
+// 해당 월의 주차 목록 — 원가·생산성 주차와 동일 규칙(마감일 = 매주 월요일 + 매달 말일, 주차 = 직전 마감 다음날~마감일)
+// ⚠ app.js computeWeekOptionsForMonth ↔ ot-actuals.js weekOptionsForMonth 복제본 — 규칙 변경 시 세 곳 동시 수정
 function monthWeeksMs(ym) {
-  const first = ym + '-01', last = `${ym}-${String(daysInYm(ym)).padStart(2, '0')}`;
-  let s = addD(first, -dowIdx(first));
+  const [year, month] = ym.split('-').map(Number);
+  const isCutoffDay = d => d.getDay() === 1 || d.getDate() === new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const scanStart = new Date(year, month - 2, 1);
+  const scanEnd = new Date(year, month - 1, new Date(year, month, 0).getDate());
+  const cutoffs = [];
+  for (let d = new Date(scanStart); d <= scanEnd; d.setDate(d.getDate() + 1)) if (isCutoffDay(d)) cutoffs.push(new Date(d));
   const weeks = [];
-  for (let n = 1; s <= last; n++, s = addD(s, 7)) {
-    const e = addD(s, 6);
-    weeks.push({ n, cs: s < first ? first : s, ce: e > last ? last : e });
+  for (let i = 1; i < cutoffs.length; i++) {
+    const end = cutoffs[i];
+    if (end.getFullYear() !== year || end.getMonth() + 1 !== month) continue;
+    const start = new Date(cutoffs[i - 1]); start.setDate(start.getDate() + 1);
+    weeks.push({ n: weeks.length + 1, cs: dStr(start), ce: dStr(end) });
   }
   return weeks;
 }
@@ -407,8 +410,11 @@ function renderWReview() {
   const ym = $('wrMonth').value || [...new Set(REVIEWS.map(r => r.sale_date.slice(0, 7)))].sort().reverse()[0];
   if (!ym) { $('wrTable').innerHTML = '<p class="dnote">적재된 리뷰가 없습니다.</p>'; return; }
   const weeks = monthWeeksMs(ym);
+  // 1주차는 전월 말(화~)에서 시작할 수 있음 — 주차 셀은 주차 범위 전체, 월 누적은 달력 월 기준
+  const span = weeks.length ? [weeks[0].cs, weeks[weeks.length - 1].ce] : [ym + '-01', ym + '-31'];
+  const spanRows = REVIEWS.filter(r => r.sale_date >= span[0] && r.sale_date <= span[1]);
   const monthRows = REVIEWS.filter(r => r.sale_date.slice(0, 7) === ym);
-  const codes = [...new Set(monthRows.map(r => r.store_code))].sort();
+  const codes = [...new Set(spanRows.concat(monthRows).map(r => r.store_code))].sort();
 
   const cellStat = rows => rows.length ? { n: rows.length, avg: rows.reduce((t, r) => t + r.rating, 0) / rows.length } : null;
   const inWeek = (rows, w) => rows.filter(r => r.sale_date >= w.cs && r.sale_date <= w.ce);
@@ -422,14 +428,16 @@ function renderWReview() {
   for (const w of weeks) h += `<th>${w.n}주차<div class="wr-n">${mdLabel(w.cs)}~${mdLabel(w.ce)}</div></th>`;
   h += '<th>월 누적</th></tr></thead><tbody>';
 
-  const rowHtml = (code, label, rows, boldRow) => {
+  const rowHtml = (code, label, boldRow) => {
+    const wrows = code ? spanRows.filter(r => r.store_code === code) : spanRows;
+    const mrows = code ? monthRows.filter(r => r.store_code === code) : monthRows;
     let tr = `<tr${boldRow ? ' style="background:var(--fill);font-weight:700"' : ''}><td style="text-align:left">${label}</td>`;
-    for (const w of weeks) tr += cellHtml(cellStat(inWeek(rows, w)), code, w.n, wrSel && wrSel.code === code && wrSel.n === w.n);
-    tr += cellHtml(cellStat(rows), code, 0, wrSel && wrSel.code === code && wrSel.n === 0);
+    for (const w of weeks) tr += cellHtml(cellStat(inWeek(wrows, w)), code, w.n, wrSel && wrSel.code === code && wrSel.n === w.n);
+    tr += cellHtml(cellStat(mrows), code, 0, wrSel && wrSel.code === code && wrSel.n === 0);
     return tr + '</tr>';
   };
-  h += rowHtml('', '브랜드 전체', monthRows, true);
-  for (const c of codes) h += rowHtml(c, `<b>${c}</b> ${esc(storeName(c))}`, monthRows.filter(r => r.store_code === c), false);
+  h += rowHtml('', '브랜드 전체', true);
+  for (const c of codes) h += rowHtml(c, `<b>${c}</b> ${esc(storeName(c))}`, false);
   h += '</tbody></table>';
   $('wrTable').innerHTML = h;
 
@@ -437,8 +445,9 @@ function renderWReview() {
   const dc = $('wrDetailCard');
   if (!wrSel) { dc.hidden = true; return; }
   dc.hidden = false;
-  let rows = wrSel.code ? monthRows.filter(r => r.store_code === wrSel.code) : monthRows;
   const w = weeks.find(x => x.n === wrSel.n);
+  let rows = w ? spanRows : monthRows;
+  if (wrSel.code) rows = rows.filter(r => r.store_code === wrSel.code);
   if (w) rows = inWeek(rows, w);
   const label = wrSel.code ? storeName(wrSel.code) : '브랜드 전체';
   $('wrDetailTitle').textContent = `${label} — ${+ym.slice(5)}월 ${w ? `${wrSel.n}주차 (${mdLabel(w.cs)}~${mdLabel(w.ce)})` : '누적'} 핵심 불만`;

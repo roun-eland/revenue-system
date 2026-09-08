@@ -143,13 +143,13 @@
     <!-- V6 주차별 리뷰 -->
     <section id="view-wreview" class="view" hidden>
       <h2>주차별 리뷰</h2>
-      <p class="view-sub">매장×주차 평점으로 흐름을 보고, 칸을 클릭하면 그 매장·주차의 핵심 불만 요소와 리뷰가 아래에 열립니다. 주 = 월~일 (주차별 매출과 동일 기준).</p>
+      <p class="view-sub">매장×주차 평점으로 흐름을 보고, 칸을 클릭하면 그 매장·주차의 핵심 불만 요소와 리뷰가 아래에 열립니다. 주차 = <b>원가·생산성과 동일 기준</b>(마감 매주 월요일·매달 말일, 보통 화~월).</p>
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:150px">조회 월<select id="wrMonth"></select></label>
       </div>
       <div class="card" style="margin-bottom:14px">
         <div class="tblwrap" id="wrTable"></div>
-        <p class="dnote">칸 = 평균 평점 (리뷰 수) · <span class="sig-good">4.5 이상 초록</span> / <span class="sig-crit">4.2 미만 빨강</span> · 맨 오른쪽 = 월 누적 · 칸 클릭 → 그 주의 불만 관리.</p>
+        <p class="dnote">칸 = 평균 평점 (리뷰 수) · <span class="sig-good">4.5 이상 초록</span> / <span class="sig-crit">4.2 미만 빨강</span> · 맨 오른쪽 = 월 누적(달력 월 기준 — 1주차가 전월 말에서 시작하면 주차 합과 다를 수 있음) · 칸 클릭 → 그 주의 불만 관리.</p>
       </div>
       <div class="card" id="wrDetailCard" hidden>
         <h3 style="margin:0 0 8px" id="wrDetailTitle"></h3>
@@ -242,6 +242,6 @@
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
-<script src="../voc.js?v=202609091300"></script>
+<script src="../voc.js?v=202609091340"></script>
 </body>
 </html>
