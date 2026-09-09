@@ -326,11 +326,13 @@ function renderStore() {
   }
   $('stPosParetoTbl').innerHTML = pordered.length ? paretoTableHtml(pcnt, pordered) : '<p class="dnote">긍정 언급이 없습니다.</p>';
 
-  // 연령대 (가로 풀폭 — 비율 폭)
-  const ages = [...new Set(rows.map(r => r.age_group || '미상'))].sort();
+  // 연령대 (가로 풀폭 — 20대 이하/70대 이상 통합으로 행 수 축소)
+  const ageBucket = a => { const n = parseInt(a); if (isNaN(n)) return '미상'; if (n <= 20) return '20대 이하'; if (n >= 70) return '70대 이상'; return n + '대'; };
+  const AGE_ORDER = ['20대 이하', '30대', '40대', '50대', '60대', '70대 이상', '미상'];
+  const ages = AGE_ORDER.filter(a => rows.some(r => ageBucket(r.age_group || '') === a));
   let ah = '<table style="width:100%"><colgroup><col style="width:16%"><col style="width:16%"><col style="width:16%"><col style="width:26%"><col style="width:26%"></colgroup><thead><tr><th>연령대</th><th>리뷰</th><th>비중</th><th>평균 평점</th><th>불만 비중</th></tr></thead><tbody>';
   for (const a of ages) {
-    const ar = rows.filter(r => (r.age_group || '미상') === a);
+    const ar = rows.filter(r => ageBucket(r.age_group || '') === a);
     const an = ar.filter(isNegRow);
     ah += `<tr><td>${esc(a)}</td><td>${ar.length}</td><td>${pct(ar.length, rows.length)}</td><td>${avgRating(ar).toFixed(2)}</td><td${an.length / ar.length >= 0.3 ? ' class="sig-crit"' : ''}>${pct(an.length, ar.length)}</td></tr>`;
   }
@@ -468,6 +470,8 @@ function selectWr(code, n) {
 
 // ---------- V7 칭찬 사원 (본문에서 서비스 칭찬 + 사람 특징 자동 추출 — DB 저장 안 함) ----------
 const PRAISE_RE = /친절|친철|상냥|배려|세심|감동|미소|잘 웃|웃으|웃어|챙겨\s?주|서비스가? 좋|응대가? 좋|덕분에|기분 좋게|먼저 다가/;
+// 부정 문맥 가드 — "친절하지 않아서" 같은 리뷰가 칭찬으로 잡히는 것 방지 (정밀도 우선, 과필터 허용)
+const PRAISE_NEG_RE = /친절하지\s?(않|못)|친절하진\s?않|친절하지는\s?않|불친절|친절(이|은|도)\s?(없|아니)|상냥하지\s?않|배려가?\s?(없|부족)|서비스(가|는|도)?\s?(별로|아쉽|엉망|나쁘|최악|부족)|응대(가|는|도)?\s?(별로|아쉽|미흡|나쁘|엉망)|웃지\s?않|무뚝뚝/;
 const PR_ROLES = [
   ['점장', /점장/], ['매니저', /매니저/], ['사장', /사장/], ['이모', /이모/],
   ['주방', /주방/], ['홀', /홀 ?직원|홀에/], ['카운터·입구', /카운터|입구|안내/], ['알바', /알바/], ['직원', /직원|스탭|스텝|서버/]
@@ -484,8 +488,8 @@ function extractPraise(body) {
   const roles = PR_ROLES.filter(([, re]) => re.test(b)).map(([n]) => n);
   const traits = PR_TRAITS.filter(([, re]) => re.test(b)).map(([n]) => n);
   let gender = null;
-  if (/여자 ?분|여성 ?분|여직원|여자 ?직원|여자 ?점장|여성 ?매니저|여자 ?매니저/.test(b)) gender = '여성';
-  else if (/남자 ?분|남성 ?분|남직원|남자 ?직원|남자 ?점장|남자 ?매니저/.test(b)) gender = '남성';
+  if (/여자 ?분|여성 ?분|여직원|여자 ?직원|여자 ?점장|여점장|여사장|여성 ?매니저|여자 ?매니저|여매니저/.test(b)) gender = '여성';
+  else if (/남자 ?분|남성 ?분|남직원|남자 ?직원|남자 ?점장|남점장|남사장|남자 ?매니저|남매니저/.test(b)) gender = '남성';
   const names = [];
   for (const m of b.matchAll(/([가-힣]{2,3})\s?님/g)) {
     if (!PR_NAME_BLACKLIST.has(m[1]) && !PR_NAME_BLACKLIST.has(m[1].slice(0, 2))) names.push(m[1]);
@@ -502,14 +506,20 @@ function renderPraise() {
   const praised = [];
   for (const r of rows) {
     const p = extractPraise(r.body);
-    if (p) praised.push({ r, p });
+    if (!p) continue;
+    // 부정 문맥·저평점 필터: "친절하지 않아서" / 불만 리뷰 속 칭찬 키워드 오탐 방지
+    if (PRAISE_NEG_RE.test(r.body)) continue;
+    if (!(r.rating >= 4 || r.service === '친절해요')) continue;
+    praised.push({ r, p });
   }
 
-  // 후보 클러스터: 매장 × (이름 > 대표 직책) — 한 매장에 점장·매니저는 보통 소수라 반복 언급 = 같은 사람일 확률 높음
+  // 후보 클러스터: 매장 × (이름 > 특정 직책) — 확실히 특정되는 단서만 (점장·매니저·사장·이모).
+  // '직원'·'홀'·'주방' 같은 집단 호칭은 여러 사람이 섞여 특정이 안 되므로 후보에서 제외 (전체 목록에는 표시)
+  const PR_SPECIFIC = ['점장', '매니저', '사장', '이모'];
   const clusters = new Map();
   for (const { r, p } of praised) {
-    const primary = p.names[0] ? '이름:' + p.names[0] : (p.roles.find(x => x !== '직원') || p.roles[0] || null);
-    if (!primary) continue; // 사람 단서가 전혀 없는 일반 칭찬은 후보 집계에서 제외 (아래 전체 목록에는 표시)
+    const primary = p.names[0] ? '이름:' + p.names[0] : (PR_SPECIFIC.find(x => p.roles.includes(x)) || null);
+    if (!primary) continue;
     const key = r.store_code + '|' + primary;
     const c = clusters.get(key) || { store: r.store_code, primary, count: 0, roles: new Set(), traits: new Set(), genders: new Set(), names: new Set(), reviews: [] };
     c.count++;
