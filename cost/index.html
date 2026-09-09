@@ -188,7 +188,7 @@
         <!-- 설계원가 탭 제거(2026-09-09): 설계 입력은 시즌 파일럿으로 일원화 — 파일럿 저장 시
              menu_designs가 자동 동기화됨(syncMenuDesignsFromPilot). 패널·JS는 남겨둬 롤백은 이 버튼 한 줄 복원.
         <button class="pivot-tab-btn" data-subtab="input" type="button">설계원가</button> -->
-        <button class="pivot-tab-btn" data-subtab="season-pilot" type="button">시즌 파일럿</button>
+        <button class="pivot-tab-btn" data-subtab="season-pilot" type="button">시즌 설계</button>
         <button class="pivot-tab-btn" data-subtab="bom" type="button">레시피 등록</button>
         <button class="pivot-tab-btn" data-subtab="menu-consumption" type="button">메뉴별 소비액</button>
       </div>
@@ -299,8 +299,8 @@
 
     <div id="subtab-season-pilot" class="subtab-panel">
       <div class="panel-head">
-        <h2>시즌 파일럿</h2>
-        <p class="panel-sub">시즌·조닝·메뉴별로 g당원가와 매장형태별(199-229/일반/프리미엄) 인당소비량을 입력하면, 매장군별 예상 원가율과 브랜드 전체 예상 원가율(매장 매출 비중 가중)을 계산합니다. 실제 매출/자재 데이터와 무관한 가상 시나리오 계산입니다.</p>
+        <h2>시즌 설계</h2>
+        <p class="panel-sub">시즌·조닝·메뉴별로 g당원가와 매장형태별(199-229/일반/프리미엄) 인당소비량을 입력하면, 매장군별 예상 원가율과 브랜드 전체 예상 원가율(매장 매출 비중 가중)을 계산합니다. 실제 매출/자재 데이터와 무관한 가상 시나리오 계산이며, 저장하면 설계원가(menu_designs)에 자동 반영됩니다.</p>
       </div>
 
       <div class="card">
@@ -758,6 +758,6 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../app.js?v=202609092110"></script>
+<script src="../app.js?v=202609092150"></script>
 </body>
 </html>

@@ -1296,10 +1296,10 @@ function seasonPilotExportXlsx() {
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsInput, '입력란');
-  XLSX.utils.book_append_sheet(wb, ws, '시즌 파일럿');
+  XLSX.utils.book_append_sheet(wb, ws, '시즌 설계');
   const now = new Date();
   const d = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  XLSX.writeFile(wb, `시즌파일럿_${(season?.name || '시즌').replace(/\s+/g, '')}_${d}.xlsx`);
+  XLSX.writeFile(wb, `시즌설계_${(season?.name || '시즌').replace(/\s+/g, '')}_${d}.xlsx`);
 }
 $('#seasonPilotExportBtn')?.addEventListener('click', seasonPilotExportXlsx);
 
