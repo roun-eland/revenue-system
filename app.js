@@ -1689,6 +1689,19 @@ function getActualCostPerGramByStore(seasonId) {
   costByStoreCache.set(seasonId, { ts: Date.now(), promise: p });
   return p;
 }
+// 기간(주차/월) 한정 실단가 — 시계열 피벗 전용. 시즌 전체 가중평균 대신 그 기간의 실구매만으로
+// 단가를 계산해, 월 결산으로 단가가 바뀌면 자재/메뉴 g당원가도 기간별로 움직이게 한다.
+// 기간에 구매가 없는 자재·메뉴는 호출부에서 시즌 전체 단가로 폴백한다.
+const costRangeCache = new Map(); // `${seasonId}|${start}|${end}` -> { ts, promise }
+function getActualCostPerGramForRange(seasonId, start, end) {
+  const key = `${seasonId}|${start}|${end}`;
+  const entry = costRangeCache.get(key);
+  const season = state.seasons.find(s => s.id === seasonId);
+  if (entry && ((season && isSeasonClosed(season)) || Date.now() - entry.ts <= SEASON_CALC_TTL_MS)) return entry.promise;
+  const p = computeActualCostPerGram(seasonId, { start, end });
+  costRangeCache.set(key, { ts: Date.now(), promise: p });
+  return p;
+}
 // 레시피(BOM)나 자재 별칭을 저장하면 위 캐시가 낡은 값을 들고 있게 되므로, 저장 시점에 통째로 비운다
 // (어느 시즌이 영향받는지 매번 정확히 추적하는 것보다, 전체를 비우고 다음 조회에서 다시 계산하는
 // 편이 훨씬 단순하고 안전 — 비용도 탭 하나 다시 여는 정도라 무시할만함).
@@ -1704,6 +1717,7 @@ function invalidateSeasonCalcCaches() {
   flatCache.clear();
   costCache.clear();
   costByStoreCache.clear();
+  costRangeCache.clear();
   return sb.from('pivot_snapshot').delete().gt('id', 0).then(({ error }) => { if (error) console.error('pivot_snapshot 캐시 삭제 실패:', error); });
 }
 
@@ -2292,10 +2306,12 @@ async function computeMenuConsumption(onProgress, dateRange, brandOnly) {
 // 달의 브랜드 전체 가중평균 단가(실사용금액 ÷ 실사용량)를 우선 쓰고, 그 달에 실사용 근거가 없는 자재는
 // 레시피 등록 단가(최초 1회성 수기입력, 원/kg -> 원/g 환산)로 대체한다. computeActualCostPerGram과
 // 메뉴 진단 탭(자재별 원가 기여도 분석)이 이 로직을 공유한다.
-async function buildMaterialPriceResolver(seasonId) {
+async function buildMaterialPriceResolver(seasonId, rangeOverride) {
   const season = state.seasons.find(s => s.id === seasonId);
   if (!season?.start_month || !season?.end_month) return { error: '시즌 기간 정보가 없습니다.' };
-  const rangeStart = season.start_month, rangeEnd = nextDay(season.end_month);
+  // rangeOverride(주차/월 등 기간 한정 단가 — 시계열 피벗용)가 있으면 그 범위의 실구매만 가중평균한다.
+  const rangeStart = rangeOverride ? rangeOverride.start : season.start_month;
+  const rangeEnd = nextDay(rangeOverride ? rangeOverride.end : season.end_month);
 
   // 특정 한 달(예: 가장 최근 달)만 보면 그 달에만 가격이 급등/급락했을 때 시즌 전체 실단가가 왜곡된다
   // (예: 5월에 폭등했다가 7월에 폭락하면, 마지막 달만 볼 땐 폭락한 가격만 반영되고 5월의 높은 단가는
@@ -2421,12 +2437,12 @@ async function buildMaterialPriceResolver(seasonId) {
 
 // 메뉴별 "실제 g당원가"를 계산한다. buildMaterialPriceResolver로 얻은 자재별 단가를 레시피 BOM에 곱해
 // 메뉴 단위로 합산한다.
-async function computeActualCostPerGram(seasonId) {
+async function computeActualCostPerGram(seasonId, rangeOverride) {
   const flat = await getFlatForSeason(seasonId);
   if (!flat) return { error: '레시피 데이터를 불러오지 못했습니다.' };
   const { flatByMenu, cookedWeightByMenu, finalMenus } = flat;
 
-  const pricing = await buildMaterialPriceResolver(seasonId);
+  const pricing = await buildMaterialPriceResolver(seasonId, rangeOverride);
   if (pricing.error) return pricing;
   const { priceForCode, costMonth, rawCodePricePerGram, clusterMembers, aliasNameByCode, find } = pricing;
 
@@ -4966,6 +4982,8 @@ async function loadPivotTimeSeriesData() {
       const cachedRows = await fetchPivotSnapshot(seasonId, periodUnit, p.start, p.end);
 
       const costPromise = getActualCostPerGram(seasonId);
+      // 기간 한정 실단가 — 그 주차/월 실구매 기준. 구매 없는 메뉴는 시즌 전체 단가로 폴백.
+      const costPeriodPromise = getActualCostPerGramForRange(seasonId, p.start, p.end).catch(() => null);
       const salesPromise = fetchAllRows('store_sales',
         q => q.gte('sales_date', p.start).lt('sales_date', nextDay(p.end)), 'sales_total, customers_total');
       // 종료된 시즌은 저장된 정확 계산 결과가 있으면 그대로 읽고(재계산 안 함), 없으면 정확 계산 후 저장해둔다
@@ -4975,8 +4993,10 @@ async function loadPivotTimeSeriesData() {
         : closed ? computeMenuConsumption(null, { start: p.start, end: p.end })
         : computeMenuConsumption(null, { start: p.start, end: p.end }, true);
 
-      const [costResult, salesRes, consumption] = await Promise.all([costPromise, salesPromise, consumptionPromise]);
+      const [costResult, costPeriod, salesRes, consumption] = await Promise.all([costPromise, costPeriodPromise, salesPromise, consumptionPromise]);
       const costByMenu = new Map((costResult.results || []).map(r => [r.menu_name, r.actual_cost_per_gram]));
+      // 기간 단가가 있으면 우선 적용 (null인 메뉴는 시즌 단가 유지)
+      ((costPeriod && costPeriod.results) || []).forEach(r => { if (r.actual_cost_per_gram != null) costByMenu.set(r.menu_name, r.actual_cost_per_gram); });
       const periodSales = salesRes.data;
       const totalCustomers = (periodSales || []).reduce((a, r) => a + (Number(r.customers_total) || 0), 0);
       const totalSales = (periodSales || []).reduce((a, r) => a + (Number(r.sales_total) || 0), 0);
@@ -5025,9 +5045,10 @@ async function loadPivotTimeSeriesData() {
         designsBySeasonId.set(seasonId, unionDesignByMenu(m, seasonFlat?.categoryByMenu));
       }
       const designByMenu = designsBySeasonId.get(seasonId);
-      const [snapRows, costResult, { data: usage }, { data: sales }] = await Promise.all([
+      const [snapRows, costResult, costPeriod, { data: usage }, { data: sales }] = await Promise.all([
         fetchPivotSnapshot(seasonId, periodUnit, p.start, p.end),
         getActualCostPerGram(seasonId),
+        getActualCostPerGramForRange(seasonId, p.start, p.end).catch(() => null),
         fetchAllRows('material_usage', q => q.eq('store_code', targetCode).gte('period_end', p.start).lt('period_end', nextDay(p.end)), 'remark, actual_usage_amount'),
         fetchAllRows('store_sales', q => q.eq('store_code', targetCode).gte('sales_date', p.start).lt('sales_date', nextDay(p.end)), 'sales_total, customers_total'),
       ]);
@@ -5039,6 +5060,8 @@ async function loadPivotTimeSeriesData() {
       const mine = (snapRows || []).filter(r => r.store_code === targetCode);
       if (mine.length) {
         const costByMenu = new Map((costResult.results || []).map(r => [r.menu_name, r.actual_cost_per_gram]));
+        // 기간 단가 우선 적용 (그 기간 구매 없는 메뉴는 시즌 전체 단가 폴백)
+        ((costPeriod && costPeriod.results) || []).forEach(r => { if (r.actual_cost_per_gram != null) costByMenu.set(r.menu_name, r.actual_cost_per_gram); });
         const zoneAmt = {}, zoneGrams = {}, menuAmt = {}, menuGrams = {}, menuCategory = {};
         mine.forEach(r => {
           const d = designByMenu.get(r.menu_name);
