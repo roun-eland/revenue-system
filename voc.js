@@ -534,7 +534,7 @@ function renderPraise() {
   $('prKpis').innerHTML = `
     <div><div class="k">칭찬 리뷰</div><div class="v">${praised.length}건</div><div class="s">전체 ${rows.length}건 중 (${pct(praised.length, rows.length)})</div></div>
     <div><div class="k">사람 특정 가능</div><div class="v">${list.reduce((t, c) => t + c.count, 0)}건</div><div class="s">직책·이름 등 단서 있는 칭찬</div></div>
-    <div><div class="k">🏅 반복 언급 후보</div><div class="v" style="color:var(--good)">${repeated.length}명</div><div class="s">같은 특징 2회 이상 — 우수사원 후보</div></div>
+    <div><div class="k">🏅 칭찬 반복 언급</div><div class="v" style="color:var(--good)">${repeated.length}명</div><div class="s">같은 특징 2회 이상 칭찬</div></div>
     <div><div class="k">매장 수</div><div class="v">${new Set(praised.map(x => x.r.store_code)).size}곳</div><div class="s">칭찬 리뷰 있는 매장</div></div>`;
 
   const chipset = c => [
