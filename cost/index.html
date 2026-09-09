@@ -185,7 +185,9 @@
     <section id="tab-season-design" class="tab-panel">
       <div class="pivot-tabs">
         <button class="pivot-tab-btn is-on" data-subtab="target-cost" type="button">목표원가</button>
-        <button class="pivot-tab-btn" data-subtab="input" type="button">설계원가</button>
+        <!-- 설계원가 탭 제거(2026-09-09): 설계 입력은 시즌 파일럿으로 일원화 — 파일럿 저장 시
+             menu_designs가 자동 동기화됨(syncMenuDesignsFromPilot). 패널·JS는 남겨둬 롤백은 이 버튼 한 줄 복원.
+        <button class="pivot-tab-btn" data-subtab="input" type="button">설계원가</button> -->
         <button class="pivot-tab-btn" data-subtab="season-pilot" type="button">시즌 파일럿</button>
         <button class="pivot-tab-btn" data-subtab="bom" type="button">레시피 등록</button>
         <button class="pivot-tab-btn" data-subtab="menu-consumption" type="button">메뉴별 소비액</button>
@@ -755,6 +757,6 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../app.js?v=202609091830"></script>
+<script src="../app.js?v=202609091920"></script>
 </body>
 </html>

@@ -940,9 +940,12 @@ $('#saveSeasonPilotBtn').addEventListener('click', async () => {
   const { error } = await sb.from('season_pilot_menu').upsert(finalRows, { onConflict: 'season_id,menu_name' });
   if (error) { flash($('#saveSeasonPilotMsg'), '저장 실패: ' + error.message, false); return; }
 
+  // 파일럿이 설계의 단일 소스 — 저장된 시즌들의 menu_designs를 파일럿 내용으로 동기화
+  for (const sid of new Set(finalRows.map(r => r.season_id))) await syncMenuDesignsFromPilot(sid);
+
   seasonPilotGridBody.innerHTML = '';
   for (let i = 0; i < 5; i++) addSeasonPilotRow();
-  flash($('#saveSeasonPilotMsg'), `${finalRows.length}개 메뉴가 저장되었습니다.`);
+  flash($('#saveSeasonPilotMsg'), `${finalRows.length}개 메뉴가 저장되었습니다 (설계원가에 자동 반영).`);
   await loadSeasonPilotView();
 });
 
@@ -1170,6 +1173,50 @@ function seasonPilotEditConsumption(el) {
 async function seasonPilotSaveField(rowId, field, value) {
   const { error } = await sb.from('season_pilot_menu').update({ [field]: value }).eq('id', rowId);
   if (error) console.error('시즌 파일럿 결과표 수정 저장 실패:', error);
+  else schedulePilotDesignSync(state.currentSeasonId); // 인라인 수정도 설계(menu_designs)에 반영 (디바운스)
+}
+
+// ---------- 파일럿 → 설계원가(menu_designs) 자동 동기화 ----------
+// 설계 입력을 시즌 파일럿으로 일원화하면서(설계원가 탭 제거, 2026-09-09) 파일럿을 저장/수정할 때마다
+// 그 시즌의 menu_designs를 파일럿 내용으로 전량 교체한다. 파일럿이 비어있는 시즌(과거 시즌)은 기존
+// 설계 데이터를 그대로 보존. menu_designs 테이블 자체는 피벗·시계열의 존 매핑, 실단가 없는 메뉴의
+// g당원가 폴백, 대시보드 '설계' 컬럼, IPF 안전망이 계속 읽으므로 유지한다.
+// 인당소비량(단일 컬럼) = 매장형태별 파일럿 값을 최근 3개월 매장군 매출 비중으로 가중평균,
+// 운영패턴 = 파일럿 빈칸(미운영) → 'X', 값 있음 → 'O' (기존 데이터 표기와 동일).
+async function syncMenuDesignsFromPilot(seasonId) {
+  try {
+    const [{ data: pilotRows, error }, priceInfo, targetPrice] = await Promise.all([
+      sb.from('season_pilot_menu').select('*').eq('season_id', seasonId),
+      getRecentMonthPriceByType(),
+      getTargetPrice(seasonId),
+    ]);
+    if (error || !pilotRows || !pilotRows.length) return;
+    const w = priceInfo?.salesByTypeRecent || {};
+    const rows = pilotRows.map(r => {
+      const parts = SEASON_PILOT_TIERS.map(t => ({ key: t.key, v: r[t.consumptionField] })).filter(p => p.v != null && p.v !== '');
+      const wSum = parts.reduce((a, p) => a + (Number(w[p.key]) || 0), 0);
+      const cons = !parts.length ? null
+        : wSum > 0 ? parts.reduce((a, p) => a + Number(p.v) * (Number(w[p.key]) || 0), 0) / wSum
+        : parts.reduce((a, p) => a + Number(p.v), 0) / parts.length;
+      const av = key => { const t = SEASON_PILOT_TIERS.find(x => x.key === key); return r[t.consumptionField] != null && r[t.consumptionField] !== '' ? 'O' : 'X'; };
+      return {
+        season_id: seasonId, category: r.category, menu_name: r.menu_name,
+        cost_per_gram: r.cost_per_gram ?? null, consumption_per_person: cons,
+        cost_ratio: computeCostRatio(r.cost_per_gram, cons, targetPrice),
+        availability_pattern_value: av('value'), availability_pattern_regular: av('regular'), availability_pattern_premium: av('premium'),
+      };
+    });
+    const { error: delErr } = await sb.from('menu_designs').delete().eq('season_id', seasonId);
+    if (delErr) { console.error('설계 동기화(기존 삭제) 실패:', delErr); return; }
+    const { error: insErr } = await sb.from('menu_designs').insert(rows);
+    if (insErr) { console.error('설계 동기화(입력) 실패:', insErr); return; }
+    await rebuildCategoryDesignRollup(seasonId);
+  } catch (e) { console.error('설계 동기화 실패:', e); }
+}
+let pilotSyncTimer = null;
+function schedulePilotDesignSync(seasonId) {
+  clearTimeout(pilotSyncTimer);
+  pilotSyncTimer = setTimeout(() => syncMenuDesignsFromPilot(seasonId), 3000);
 }
 // "뒤로가기" — 누를 때마다 스택에서 바로 직전 수정 한 건씩 꺼내 되돌린다(여러 번 누르면 그만큼 더 과거로).
 function seasonPilotUndo() {
