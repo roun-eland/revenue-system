@@ -1006,7 +1006,11 @@ async function getRecentMonthPriceByType() {
     if (v) { totalSales += v.sales; totalCustomers += v.customers; }
   });
   const brandPrice = totalCustomers > 0 ? (totalSales / 1.1) / totalCustomers : null;
-  return { priceByType, brandPrice, month: latestMonth, monthByType };
+  // 최근 3개월 창의 매장군별 매출 합 — 시즌 파일럿 브랜드 가중치 폴백용
+  // (설계 대상 시즌은 보통 미래라 그 시즌 매출이 아직 없음 → 이 비중으로 대신 가중)
+  const salesByTypeRecent = { premium: 0, regular: 0, value: 0 };
+  (rows || []).forEach(r => { salesByTypeRecent[storeType(r.store_code, r.store_name)] += Number(r.sales_total) || 0; });
+  return { priceByType, brandPrice, month: latestMonth, monthByType, salesByTypeRecent };
 }
 async function loadSeasonPilotView() {
   const tbl = $('#seasonPilotTable');
@@ -1030,12 +1034,20 @@ async function loadSeasonPilotView() {
   // 브랜드 값의 가중치 = 이 시즌 실제 매장군별 매출 비중(매장당이 아니라 매장군 전체 합산 매출 기준 —
   // ①비교 피벗의 "브랜드" 열과 같은 방식). 객단가(분모)는 위에서 구한 최근월 실제값을 쓰고, 이 매출
   // 비중(가중치)만 "지금 계획 중인 시즌"의 매장군별 매출 비중을 그대로 쓴다 — 둘은 서로 다른 목적.
-  const salesByType = { premium: 0, regular: 0, value: 0 };
+  let salesByType = { premium: 0, regular: 0, value: 0 };
   (salesRes.data || []).forEach(r => {
     const t = storeType(r.store_code, r.store_name);
     salesByType[t] = (salesByType[t] || 0) + (Number(r.sales_total) || 0);
   });
-  const totalSales = salesByType.premium + salesByType.regular + salesByType.value;
+  let totalSales = salesByType.premium + salesByType.regular + salesByType.value;
+  // 설계 대상 시즌은 보통 미래라 그 시즌 매출이 아직 없음 — 그대로 두면 브랜드 열이 전부 '—'가 된다.
+  // 최근 3개월 실측 매출 비중으로 폴백해 가중한다 (객단가와 같은 창).
+  let weightSource = '이 시즌 실측 매출 비중';
+  if (!totalSales && priceInfo?.salesByTypeRecent) {
+    const rec = priceInfo.salesByTypeRecent;
+    const recTotal = rec.premium + rec.regular + rec.value;
+    if (recTotal > 0) { salesByType = rec; totalSales = recTotal; weightSource = '최근 3개월 실측 매출 비중 (이 시즌 매출 없음)'; }
+  }
 
   // "목표" 열 — "시즌설계 › 목표원가"에 입력해둔 조닝별 목표 원가율(category_summary)을 그대로 가져와
   // 보여준다. 매장형태별로는 목표를 따로 안 두므로(시즌 하나에 목표는 하나) 이 열은 항상 단일 값.
@@ -1048,7 +1060,7 @@ async function loadSeasonPilotView() {
   seasonPilotCache = {
     pilotRows: pilotRows || [], priceByType: priceInfo?.priceByType || {}, brandPrice: priceInfo?.brandPrice ?? null,
     priceMonth: priceInfo?.month ?? null, monthByType: priceInfo?.monthByType || {}, salesByType, totalSales,
-    targetByCategory, targetPrice,
+    targetByCategory, targetPrice, weightSource,
   };
   seasonPilotUndoStack = [];
   renderSeasonPilotTable();
@@ -1088,7 +1100,7 @@ function renderSeasonPilotTable() {
       return m && m !== data.priceMonth ? `${fmtNum(p, 0)}원(${m})` : `${fmtNum(p, 0)}원`;
     };
     priceHint.textContent = data.priceMonth
-      ? `기준 객단가(VAT 제외, 매장형태별 최근 실측월 기준): 프리미엄 ${fmtP('premium')} · 일반 ${fmtP('regular')} · 199-229 ${fmtP('value')}`
+      ? `기준 객단가(VAT 제외, 매장형태별 최근 실측월 기준): 프리미엄 ${fmtP('premium')} · 일반 ${fmtP('regular')} · 199-229 ${fmtP('value')} · 브랜드 가중치: ${data.weightSource || '이 시즌 실측 매출 비중'}`
       : '기준 객단가를 계산할 매출 데이터가 없습니다.';
   }
   const undoBtn = $('#seasonPilotUndoBtn');
