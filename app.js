@@ -220,14 +220,15 @@ function applyDateFilterForSeason(query, dateField, seasonId) {
 
 // 시즌명을 "26년 여름" 형태로 넣으면 연도 오름차순 -> 봄/여름/가을/겨울 순으로 정렬한다.
 // 패턴에 안 맞는 이름은 만든 순서대로 맨 뒤에 배치.
-const SEASON_ORDER_MAP = { '봄': 0, '여름': 1, '가을': 2, '겨울': 3 };
+const SEASON_ORDER_MAP = { '봄': 0, '초여름': 1, '여름': 2, '가을': 3, '겨울': 4 };
 function seasonSortKey(name) {
   const yearMatch = (name || '').match(/(\d{2,4})\s*년/);
   if (!yearMatch) return null;
   let year = Number(yearMatch[1]);
   if (year < 100) year += 2000;
-  const seasonMatch = (name || '').match(/(봄|여름|가을|겨울)/);
-  const seasonIdx = seasonMatch ? SEASON_ORDER_MAP[seasonMatch[1]] : 4;
+  // '초여름'이 '여름'보다 먼저 매칭돼야 함 (그냥 /여름/은 초여름도 잡아버려 같은 순서가 됨)
+  const seasonMatch = (name || '').match(/(초여름|봄|여름|가을|겨울)/);
+  const seasonIdx = seasonMatch ? SEASON_ORDER_MAP[seasonMatch[1]] : 5;
   return year * 10 + seasonIdx;
 }
 function sortSeasons(list) {
