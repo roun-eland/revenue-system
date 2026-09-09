@@ -4313,7 +4313,11 @@ function renderPivotWeekOptions() {
   const [y, m] = monthValue.split('-').map(Number);
   const weeks = computeWeekOptionsForMonth(y, m);
   sel.innerHTML = weeks.map(w => `<option value="${w.periodStart}|${w.periodEnd}">${w.label}</option>`).join('');
-  if (weeks.length) sel.value = `${weeks[weeks.length - 1].periodStart}|${weeks[weeks.length - 1].periodEnd}`;
+  // 기본값 = 오늘이 속한 주차 (다른 달을 보고 있으면 그 달 마지막 주차)
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const cur = weeks.find(w => w.periodStart <= today && today <= w.periodEnd) || weeks[weeks.length - 1];
+  if (cur) sel.value = `${cur.periodStart}|${cur.periodEnd}`;
 }
 function renderPivotSeasonOptions() {
   const sel = $('#pivotSeasonSelect');
