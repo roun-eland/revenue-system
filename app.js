@@ -1231,6 +1231,51 @@ function seasonPilotUndo() {
 }
 $('#seasonPilotUndoBtn')?.addEventListener('click', seasonPilotUndo);
 
+// 시즌 파일럿 결과표 → 엑셀 내보내기 (화면과 같은 구조: 전체/존/메뉴 × 목표·브랜드·매장형태별 소비량·원가율)
+function seasonPilotExportXlsx() {
+  const data = seasonPilotCache;
+  if (!data || !data.pilotRows.length) { alert('내보낼 파일럿 데이터가 없습니다. 결과표를 먼저 불러와주세요.'); return; }
+  if (typeof XLSX === 'undefined') { alert('엑셀 라이브러리가 로드되지 않았습니다.'); return; }
+  const season = state.seasons.find(s => s.id === state.currentSeasonId);
+  const r1 = v => v != null ? Math.round(v * 10) / 10 : null;
+  const targetRatioForZone = zone => computeCostRatio(data.targetByCategory.get(zone)?.target_cost_per_gram, data.targetByCategory.get(zone)?.target_consumption_per_person, data.targetPrice);
+  const brandTarget = weightedTotals([...data.targetByCategory.values()], 'target');
+
+  const rowFor = (label, rows, targetRatio, cpg) => {
+    const out = [label, cpg != null ? r1(Number(cpg)) : null, r1(targetRatio), r1(seasonPilotBrandRatio(rows, data))];
+    SEASON_PILOT_TIERS.forEach(t => {
+      // 메뉴 행 = 그 메뉴의 인당소비량, 존/전체 행 = 메뉴 합 (빈칸=미운영은 0으로 치지 않고 제외)
+      const vals = rows.map(r => r[t.consumptionField]).filter(v => v != null && v !== '');
+      const cons = vals.length ? vals.reduce((a, v) => a + Number(v), 0) : null;
+      out.push(cons != null ? r1(cons) : null, r1(seasonPilotTierRatio(rows, t.key, data.priceByType)));
+    });
+    return out;
+  };
+
+  const aoa = [['존/메뉴', 'g당원가', '목표 원가율(%)', '브랜드 원가율(%)',
+    '프리미엄 인당소비량(g)', '프리미엄 원가율(%)', '일반 인당소비량(g)', '일반 원가율(%)', '199-229 인당소비량(g)', '199-229 원가율(%)']];
+  aoa.push(rowFor('【전체】', data.pilotRows, computeCostRatio(brandTarget.costPerGram, brandTarget.consumption, data.targetPrice), null));
+  const byZone = {};
+  data.pilotRows.forEach(r => { (byZone[r.category] = byZone[r.category] || []).push(r); });
+  Object.keys(byZone).sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)).forEach(zone => {
+    aoa.push(rowFor(`【${zone}】`, byZone[zone], targetRatioForZone(zone), null));
+    byZone[zone].slice().sort((a, b) => (seasonPilotBrandRatio([b], data) || 0) - (seasonPilotBrandRatio([a], data) || 0))
+      .forEach(r => aoa.push(rowFor('  ' + r.menu_name, [r], null, r.cost_per_gram)));
+  });
+  aoa.push([]);
+  const fmtP = k => data.priceByType[k] != null ? fmtNum(data.priceByType[k], 0) + '원' : '—';
+  aoa.push([`기준 객단가(VAT 제외, 매장형태별 최근 실측월): 프리미엄 ${fmtP('premium')} · 일반 ${fmtP('regular')} · 199-229 ${fmtP('value')} · 브랜드 가중치: ${data.weightSource || '이 시즌 실측 매출 비중'}`]);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 24 }, { wch: 9 }, { wch: 13 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 18 }, { wch: 15 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '시즌 파일럿');
+  const now = new Date();
+  const d = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  XLSX.writeFile(wb, `시즌파일럿_${(season?.name || '시즌').replace(/\s+/g, '')}_${d}.xlsx`);
+}
+$('#seasonPilotExportBtn')?.addEventListener('click', seasonPilotExportXlsx);
+
 async function rebuildCategoryDesignRollup(seasonId) {
   const { data: menus, error } = await sb.from('menu_designs').select('*').eq('season_id', seasonId);
   if (error || !menus) return;
