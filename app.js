@@ -1257,10 +1257,12 @@ function seasonPilotExportXlsx() {
   aoa.push(rowFor('【전체】', data.pilotRows, computeCostRatio(brandTarget.costPerGram, brandTarget.consumption, data.targetPrice), null));
   const byZone = {};
   data.pilotRows.forEach(r => { (byZone[r.category] = byZone[r.category] || []).push(r); });
-  Object.keys(byZone).sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)).forEach(zone => {
+  const zoneOrder = Object.keys(byZone).sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b));
+  const menuOrderByZone = {};
+  zoneOrder.forEach(zone => {
+    menuOrderByZone[zone] = byZone[zone].slice().sort((a, b) => (seasonPilotBrandRatio([b], data) || 0) - (seasonPilotBrandRatio([a], data) || 0));
     aoa.push(rowFor(`【${zone}】`, byZone[zone], targetRatioForZone(zone), null));
-    byZone[zone].slice().sort((a, b) => (seasonPilotBrandRatio([b], data) || 0) - (seasonPilotBrandRatio([a], data) || 0))
-      .forEach(r => aoa.push(rowFor('  ' + r.menu_name, [r], null, r.cost_per_gram)));
+    menuOrderByZone[zone].forEach(r => aoa.push(rowFor('  ' + r.menu_name, [r], null, r.cost_per_gram)));
   });
   aoa.push([]);
   const fmtP = k => data.priceByType[k] != null ? fmtNum(data.priceByType[k], 0) + '원' : '—';
@@ -1268,7 +1270,31 @@ function seasonPilotExportXlsx() {
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{ wch: 24 }, { wch: 9 }, { wch: 13 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 18 }, { wch: 15 }];
+  // 숫자 서식: 원가율 = 00.0% (셀 값은 비율로 저장), 인당소비량 = 0,000(정수 반올림 표시), g당원가는 그대로
+  const PCT_COLS = [2, 3, 5, 7, 9], CONS_COLS = [4, 6, 8];
+  for (let R = 1; R < aoa.length; R++) {
+    for (const C of PCT_COLS) {
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      if (cell && typeof cell.v === 'number') { cell.v = cell.v / 100; cell.z = '0.0%'; }
+    }
+    for (const C of CONS_COLS) {
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      if (cell && typeof cell.v === 'number') cell.z = '#,##0';
+    }
+  }
+
+  // 시트1 "입력란" — 파일럿 입력 그리드와 같은 7열. 수정해서 그대로 그리드에 붙여넣을 수 있는 형식.
+  const inputAoa = [['시즌', '조닝', '메뉴명', 'g당원가', '인당소비량(199-229)', '인당소비량(일반)', '인당소비량(프리미엄)']];
+  zoneOrder.forEach(zone => menuOrderByZone[zone].forEach(r => inputAoa.push([
+    season?.name || '', r.category || '', r.menu_name || '',
+    r.cost_per_gram ?? null,
+    r.consumption_per_person_value ?? null, r.consumption_per_person_regular ?? null, r.consumption_per_person_premium ?? null,
+  ])));
+  const wsInput = XLSX.utils.aoa_to_sheet(inputAoa);
+  wsInput['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 24 }, { wch: 9 }, { wch: 18 }, { wch: 16 }, { wch: 20 }];
+
   const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsInput, '입력란');
   XLSX.utils.book_append_sheet(wb, ws, '시즌 파일럿');
   const now = new Date();
   const d = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
