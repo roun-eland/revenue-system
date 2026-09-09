@@ -13,14 +13,27 @@ const pct = (n, d) => d ? Math.round(n / d * 100) + '%' : '—';
 
 // [CX-CLASSIFY-BEGIN] 분류 사전 — 과거분 적재 스크립트(node)가 이 구간을 그대로 재사용하므로 마커를 지우지 말 것
 const CX_CATS = ['위생·이물질', '고객응대', '음식품질', '샐러드바 구성', '운영·대기', '가격', '시설·환경', '기타'];
-const CX_CAT_KW = {
-  '위생·이물질': ['머리카락', '벌레', '바퀴', '이물', '곰팡이', '상한', '상했', '쉰', '비린', '위생', '지저분', '더럽', '더러워', '식중독', '배탈', '설사', '유통기한', '안 씻', '얼룩'],
-  '고객응대': ['불친절', '태도', '무시', '반말', '퉁명', '불쾌', '응대', '째려', '싸가지', '건성', '눈치 보', '직원분이 화'],
-  '음식품질': ['맛없', '맛이 없', '싱겁', '너무 짜', '짜요', '짰', '식었', '차갑', '퍽퍽', '질기', '질겨', '눅눅', '딱딱', '신선하지', '맛이 별로', '맛이 예전', '육수가', '고기가 얇', '고기 질'],
-  '샐러드바 구성': ['샐러드바', '리필', '채워', '보충', '소진', '품절', '떨어져', '안 나오', '안나오', '종류가 적', '메뉴가 적', '다양하지', '구성이 아쉬', '가짓수'],
-  '운영·대기': ['웨이팅', '대기', '기다', '줄 서', '일찍 닫', '일찍 마감', '문을 안', '문이 잠', '영업시간', '예약', '늦게 열', '오래 걸'],
-  '가격': ['비싸', '비쌈', '가격이', '가격 대비', '가성비가 떨어', '인상', '가격은 좀'],
-  '시설·환경': ['좁', '시끄', '더워', '덥고', '추워', '춥고', '에어컨', '주차', '화장실', '의자', '테이블이', '자리가 불편', '냄새가 배', '환기']
+// v2 (2026-09-09): 사전을 둘로 분리 — "샐러드바 맛있어요", "친절하게 응대해주셔서" 같은
+// 긍정 문장이 주제어('샐러드바','응대','육수가')에 걸려 불만으로 오분류되던 문제 수정.
+// ① 그 자체로 불만인 표현 — 문맥 없이도 카테고리+불만 처리
+const CX_CAT_KW_NEG = {
+  '위생·이물질': ['머리카락', '벌레', '바퀴', '이물', '곰팡이', '상한', '상했', '쉰', '비린', '지저분', '더럽', '더러워', '식중독', '배탈', '설사', '유통기한', '안 씻', '얼룩'],
+  '고객응대': ['불친절', '무시당', '반말', '퉁명', '불쾌', '째려', '싸가지', '건성', '직원분이 화', '응대가 별로', '응대가 아쉬'],
+  '음식품질': ['맛없', '맛이 없', '싱겁', '너무 짜', '짜요', '짰', '식었', '퍽퍽', '질기', '질겨', '눅눅', '신선하지', '맛이 별로', '맛이 예전'],
+  '샐러드바 구성': ['소진', '품절', '안 나오', '안나오', '종류가 적', '메뉴가 적', '다양하지 않', '구성이 아쉬', '텅 비', '비어 있', '비어있'],
+  '운영·대기': ['일찍 닫', '일찍 마감', '문을 안', '문이 잠', '늦게 열', '오래 걸'],
+  '가격': ['비싸', '비쌈', '가성비가 떨어', '가격이 오르', '인상'],
+  '시설·환경': ['시끄', '더워', '덥고', '추워', '춥고', '자리가 불편', '냄새가 배']
+};
+// ② 주제어 — 리뷰에 부정 신호(평점≤3, 부정 요인응답, ①·레드플래그 히트)가 있을 때만 카테고리 부여
+const CX_CAT_KW_TOPIC = {
+  '위생·이물질': ['위생', '청결', '닦'],
+  '고객응대': ['태도', '응대', '직원', '눈치'],
+  '음식품질': ['육수', '고기 질', '고기가', '간이', '딱딱', '차갑'],
+  '샐러드바 구성': ['샐러드바', '리필', '채워', '보충', '가짓수', '구성', '떨어져'],
+  '운영·대기': ['웨이팅', '대기', '기다', '줄 서', '영업시간', '예약'],
+  '가격': ['가격', '가성비'],
+  '시설·환경': ['좁', '에어컨', '주차', '화장실', '의자', '테이블', '환기']
 };
 const CX_FACTOR_CAT = { taste: '음식품질', service: '고객응대', clean: '위생·이물질', price: '가격' };
 const CX_NEG = { taste: '아쉬워요', service: '불친절해요', clean: '지저분해요', price: '비싸요' };
@@ -28,7 +41,7 @@ const CX_POS = { taste: '맛있어요', service: '친절해요', clean: '깨끗�
 const CX_FKEYS = ['taste', 'service', 'clean', 'price'];
 const CX_FLABEL = { taste: '맛', service: '서비스', clean: '청결', price: '가격' };
 
-// 리뷰 1건 분류: 본문 키워드 + 부정 요인 응답 → 카테고리, 레드플래그 사전 매칭
+// 리뷰 1건 분류: 자체불만 키워드 → (부정 신호가 있을 때만) 주제어 → 부정 요인 응답. 레드플래그 사전 매칭.
 function cxClassify(body, rec, redFlags) {
   const b = String(body || '');
   let red = null;
@@ -37,13 +50,14 @@ function cxClassify(body, rec, redFlags) {
     if (b.includes(rf.keyword)) { red = rf.keyword; break; }
   }
   const cats = new Set();
-  for (const cat of Object.keys(CX_CAT_KW)) {
-    for (const kw of CX_CAT_KW[cat]) if (b.includes(kw)) { cats.add(cat); break; }
-  }
+  const scan = dict => { for (const cat of Object.keys(dict)) { for (const kw of dict[cat]) if (b.includes(kw)) { cats.add(cat); break; } } };
+  scan(CX_CAT_KW_NEG);
+  const negFactor = CX_FKEYS.some(k => rec[k] === CX_NEG[k]);
+  const isNeg = (rec.rating != null && rec.rating <= 3) || !!red || negFactor || cats.size > 0;
+  if (isNeg) scan(CX_CAT_KW_TOPIC);
   for (const k of CX_FKEYS) if (rec[k] === CX_NEG[k]) cats.add(CX_FACTOR_CAT[k]);
-  const isNeg = (rec.rating != null && rec.rating <= 3) || !!red || CX_FKEYS.some(k => rec[k] === CX_NEG[k]);
   if (isNeg && !cats.size) cats.add('기타');
-  return { categories: CX_CATS.filter(c => cats.has(c)), red_flag: !!red, red_keyword: red };
+  return { categories: isNeg ? CX_CATS.filter(c => cats.has(c)) : [], red_flag: !!red, red_keyword: red };
 }
 // [CX-CLASSIFY-END]
 
@@ -480,7 +494,9 @@ const PR_TRAITS = [
   ['안경', /안경/], ['긴 머리', /긴 ?머리|장발/], ['짧은 머리·단발', /짧은 ?머리|숏컷|단발/], ['포니테일', /포니테일|묶은 ?머리/],
   ['키 큰', /키가? ?크|키 큰/], ['젊은', /젊은|어려 ?보/], ['중년', /중년|나이가 ?있/]
 ];
-const PR_NAME_BLACKLIST = new Set(['사장', '점장', '매니', '직원', '이모', '삼촌', '선생', '여러', '감사', '죄송', '고마', '수고', '어머', '아버', '부모', '손님', '고객', '저희', '우리', '가족', '아이', '엄마', '아빠', '언니', '오빠', '누나', '형님', '아주머', '아저씨']);
+const PR_NAME_BLACKLIST = new Set(['사장', '점장', '매니', '직원', '이모', '삼촌', '선생', '여러', '감사', '죄송', '고마', '수고', '어머', '아버', '부모', '손님', '고객', '저희', '우리', '가족', '아이', '엄마', '아빠', '언니', '오빠', '누나', '형님', '아주머', '아저씨',
+  // 손님 가족 호칭 — 직원이 아님 (장모님이 만족하셨다 등)
+  '장모', '장인', '할머', '할아', '어르신', '사위', '며느', '손녀', '손자', '고모', '외숙', '시어머', '친정']);
 
 function extractPraise(body) {
   const b = String(body || '');
@@ -492,9 +508,14 @@ function extractPraise(body) {
   else if (/남자 ?분|남성 ?분|남직원|남자 ?직원|남자 ?점장|남점장|남사장|남자 ?매니저|남매니저/.test(b)) gender = '남성';
   const names = [];
   for (const m of b.matchAll(/([가-힣]{2,3})\s?님/g)) {
-    if (!PR_NAME_BLACKLIST.has(m[1]) && !PR_NAME_BLACKLIST.has(m[1].slice(0, 2))) names.push(m[1]);
+    const n = m[1];
+    // "윤점장님"·"화점장님"·"여점장님"처럼 직책으로 끝나면 이름이 아니라 그 직책으로 통일
+    // (점장은 매장당 1명이라 이름 표기가 달라도 같은 사람 — 클러스터가 갈라지는 것 방지)
+    const roleSuffix = n.match(/(점장|매니저|사장|이모)$/);
+    if (roleSuffix) { roles.push(roleSuffix[1]); continue; }
+    if (!PR_NAME_BLACKLIST.has(n) && !PR_NAME_BLACKLIST.has(n.slice(0, 2))) names.push(n);
   }
-  return { roles, traits, gender, names: [...new Set(names)] };
+  return { roles: [...new Set(roles)], traits, gender, names: [...new Set(names)] };
 }
 
 function renderPraise() {
