@@ -2012,6 +2012,21 @@ function ipfSolveCluster(menuNames, materialUsers, residualByMaterial, initialWe
   menuNames.forEach(m => { x[m] = initialWeights[m] > 0 ? initialWeights[m] : 1; });
   const materials = [...materialUsers.keys()];
 
+  // 메뉴×자재 BOM 가중치: 그 자재가 메뉴 레시피(공유자재 한정)에서 차지하는 그램 비중.
+  // 자재의 잔여배분 견인력을 factor^w로 감쇠한다 — 레시피상 1%짜리 자재의 잔여(예: 튀김유는
+  // 튀김 메뉴들의 배치 소모라 레시피 합보다 훨씬 많이 남는다)가 주자재 근거(예: 단호박 288kg
+  // 구매 = 샐러드 생산량)를 눌러 x를 발산시키는 것을 막는다. 1단계 전용자재를 자재사용량
+  // 크기로 가중평균하는 것(도지마롤 사례)과 동일한 철학의 2단계 버전.
+  const bomWeight = new Map(); // menu -> Map(mat -> w)
+  menuNames.forEach(m => {
+    let sum = 0;
+    materials.forEach(mat => { const a = materialUsers.get(mat).get(m); if (a > 0) sum += a; });
+    const w = new Map();
+    materials.forEach(mat => { const a = materialUsers.get(mat).get(m); if (a > 0 && sum > 0) w.set(mat, a / sum); });
+    bomWeight.set(m, w);
+  });
+  const powW = (m, mat, factor) => Math.pow(factor, bomWeight.get(m)?.get(mat) ?? 1);
+
   for (let iter = 0; iter < 80; iter++) {
     materials.forEach(mat => {
       const users = materialUsers.get(mat);
@@ -2020,9 +2035,9 @@ function ipfSolveCluster(menuNames, materialUsers, residualByMaterial, initialWe
       users.forEach((aRatio, m) => { predicted += aRatio * x[m]; });
       if (predicted > 1e-9 && target > 0) {
         const factor = target / predicted;
-        users.forEach((_, m) => { x[m] *= factor; });
+        users.forEach((_, m) => { x[m] *= powW(m, mat, factor); });
       } else if (target <= 0) {
-        users.forEach((_, m) => { x[m] *= 0.7; }); // 근거가 없으면 서서히 0에 수렴
+        users.forEach((_, m) => { x[m] *= powW(m, mat, 0.7); }); // 근거가 없으면 서서히 0에 수렴
       }
     });
   }
@@ -2090,6 +2105,10 @@ function estimateGramsProduced({ flatByMenu, cookedWeightByMenu, finalMenus, fin
   unknownMenus.forEach(m => menuNeighbors.set(m, new Set()));
   unknownMenus.forEach(menu => {
     (flatByMenu.get(menu) || new Map()).forEach((grams, code) => {
+      // 물(음용수·정제수)은 구매내역이 없어 target이 항상 0인데도 거의 모든 메뉴가 쓰는 자재라,
+      // 무관한 메뉴들(흰쌀밥·사이다·육수 등)을 물 하나로 한 클러스터에 묶고 "predicted 수백만g vs
+      // target 0" 오차로 신뢰도를 0으로 만든다 — 클러스터 연결에서도, IPF 자재에서도 제외한다.
+      if (WATER_CODES.includes(code)) return;
       const users = materialToMenus.get(find(code));
       if (!users || users.size < 2) return;
       [...users].filter(u => menuNeighbors.has(u)).forEach(u => {
@@ -2119,7 +2138,7 @@ function estimateGramsProduced({ flatByMenu, cookedWeightByMenu, finalMenus, fin
       const flatBOM = flatByMenu.get(menu) || new Map();
       const cookedWeight = cookedWeightByMenu.get(menu);
       if (!cookedWeight) return;
-      const keysSeen = new Set([...flatBOM.keys()].map(find));
+      const keysSeen = new Set([...flatBOM.keys()].filter(c => !WATER_CODES.includes(c)).map(find));
       keysSeen.forEach(key => {
         const users = materialToMenus.get(key);
         if (!users || users.size < 2) return;
@@ -2152,23 +2171,55 @@ function estimateGramsProduced({ flatByMenu, cookedWeightByMenu, finalMenus, fin
       initialWeights[menu] = d?.consumption_per_person > 0 ? d.consumption_per_person : 0;
     });
 
+    // 구매는 있었지만 1단계(exact) 메뉴들이 잔여를 전부 소진한 자재는 배분 정보가 없다 —
+    // ×0.7 페널티로 남은 메뉴들을 근거 없이 끌어내리므로(콘샐러드가 옥수수 실사용 225kg
+    // 근거가 있는데도 77kg까지 끌려 내려간 실사례) 반복·신뢰도에서 제외한다.
+    // rawU=0, 즉 이 매장에서 아예 안 산 자재는 진짜 음성 증거이므로 유지.
+    [...materialUsers.keys()].forEach(key => {
+      const rawU = actualByMaterial.get(key) || 0;
+      if (rawU > 0 && (residualByMaterial.get(key) || 0) <= 1e-6) materialUsers.delete(key);
+    });
+    if (!materialUsers.size) { cluster.forEach(onNoEvidence); return; }
+
     const { x, confidence } = ipfSolveCluster(cluster, materialUsers, residualByMaterial, initialWeights);
+
+    // 메뉴별 신뢰도: 그 메뉴 BOM(공유자재 한정)에서 자재가 차지하는 그램 비중으로 자재별
+    // 상대 적합오차(|pred-target|/max)를 가중평균한다. 예전에는 클러스터 전체 신뢰도 하나로
+    // 전원을 판정해서, 한 덩어리로 얽힌 무관 메뉴의 대형 오차(물·튀김유 잔여)가 주자재는
+    // 완벽히 맞는 메뉴(쌀 target=predicted였던 흰쌀밥)까지 통째로 기각시켰다.
+    const menuConfidence = (menu) => {
+      let aSum = 0;
+      materialUsers.forEach((users) => { const a = users.get(menu); if (a > 0) aSum += a; });
+      if (aSum <= 0) return 0;
+      let conf = 0;
+      materialUsers.forEach((users, mat) => {
+        const a = users.get(menu);
+        if (!(a > 0)) return;
+        const target = residualByMaterial.get(mat) ?? 0;
+        let predicted = 0;
+        users.forEach((aRatio, m) => { predicted += aRatio * (x[m] || 0); });
+        const denom = Math.max(target, predicted);
+        const relErr = denom > 1e-9 ? Math.abs(predicted - target) / denom : 1;
+        conf += (a / aSum) * (1 - relErr);
+      });
+      return Math.max(0, Math.min(1, conf));
+    };
     cluster.forEach(menu => {
       // 이 메뉴가 걸쳐 있는 자재들이 전부 잔여사용량 0이면(=실사용 근거 없음) IPF가 0으로 수렴시키는 대신 onNoEvidence로 위임
       const flatBOM = flatByMenu.get(menu) || new Map();
       const hasEvidence = [...new Set([...flatBOM.keys()].map(find))].some(key => materialUsers.has(key) && (residualByMaterial.get(key) || 0) > 1e-6);
       if (!hasEvidence) { onNoEvidence(menu); return; }
-      // 신뢰도(confidence)가 낮다는 건 IPF 배분 결과가 실제 자재사용 패턴을 거의 설명 못 한다는 뜻이라,
-      // x값 자체가 수백만g처럼 발산해버릴 수 있다(실측: 무관한 메뉴 20여 개가 한 그룹으로 얽힌 경우
-      // confidence 0.00~0.08에 x가 수천만~수억g으로 튐). 예전엔 이럴 때 'design_fallback'이라는 딱지만
-      // 붙이고 발산한 값을 그대로 썼는데, 그 값을 실제 설계값으로 바꿔치기하는 코드가 없어서 사실상
-      // "낮음" 표시만 된 틀린 숫자가 그대로 쓰이고 있었다. 신뢰도 낮은 배분값은 아예 버리고 "근거 없음"과
+      // 신뢰도가 낮다는 건 이 메뉴의 배분 결과가 실제 자재사용 패턴을 거의 설명 못 한다는 뜻이라,
+      // x값 자체가 수백만g처럼 발산해버릴 수 있다. 신뢰도 낮은 배분값은 아예 버리고 "근거 없음"과
       // 동일하게 처리해서(onNoEvidence) 이 매장은 이 메뉴 데이터없음으로 남기고, 다른 매장 데이터나
-      // 브랜드 전체 안전망(설계값 대체)으로 넘어가게 한다.
-      if (confidence < 0.6) { onNoEvidence(menu); return; }
+      // 브랜드 전체 안전망(설계값 대체)으로 넘어가게 한다. 판정은 클러스터 전체 confidence가 아니라
+      // 메뉴별 신뢰도(menuConfidence) — 클러스터 단위 판정은 얽힌 무관 메뉴의 오차가 멀쩡한 메뉴까지
+      // 전염시켰다(26봄 흰쌀밥·단호박·콘샐러드 전 매장 기각 실사례).
+      const conf = menuConfidence(menu);
+      if (conf < 0.6) { onNoEvidence(menu); return; }
       gramsProducedByMenu.set(menu, Math.max(0, x[menu] || 0));
       sourceByMenu.set(menu, 'allocated');
-      confidenceByMenu.set(menu, Math.round(confidence * 100));
+      confidenceByMenu.set(menu, Math.round(conf * 100));
     });
   });
 
