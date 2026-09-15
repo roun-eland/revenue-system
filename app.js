@@ -2250,7 +2250,11 @@ function findSeasonIdForDate(dateStr) {
 async function computeMenuConsumption(onProgress, dateRange, brandOnly) {
   let seasonId, applyRange;
   if (dateRange) {
-    seasonId = findSeasonIdForDate(dateRange.end);
+    // 시즌 판정은 range의 시작일 기준 — 월별 보기(달력 경계)가 시즌 경계를 걸치면(예: 26년여름 종료
+    // 9/21, 26년가을 시작 9/22 사이인 9월을 조회) range.end(달력 월말, 9/30)는 아직 시작도 안 한
+    // 다음 시즌으로 잘못 판정되어(그 시즌엔 실사용 데이터가 전혀 없어 "데이터 없음" 오류가 남) 대부분의
+    // 실데이터가 있는 현재 시즌을 놓친다. range.start를 쓰면 이런 경우 실데이터가 있는 현재 시즌으로 판정된다.
+    seasonId = findSeasonIdForDate(dateRange.start);
     applyRange = (q, field) => q.gte(field, dateRange.start).lt(field, nextDay(dateRange.end));
   } else {
     seasonId = state.currentSeasonId;
@@ -4629,7 +4633,9 @@ function unionDesignByMenu(designByMenu, categoryByMenu) {
 async function loadPivotCompareData() {
   const dateRange = pivotDateRangeFromControls();
   if (!dateRange) return { error: '기간을 선택해주세요.' };
-  const seasonId = findSeasonIdForDate(dateRange.end);
+  // range.start 기준 판정 이유는 computeMenuConsumption 쪽 주석 참고 — 월별 보기가 시즌 경계를 걸치면
+  // range.end(달력 월말)로는 아직 시작도 안 한 다음 시즌이 걸려 "자재사용량 데이터가 없습니다" 오류가 난다.
+  const seasonId = findSeasonIdForDate(dateRange.start);
   if (!seasonId) return { error: '해당 기간을 포함하는 시즌이 없습니다.' };
   const season = state.seasons.find(s => s.id === seasonId);
   const unit = $('#pivotUnitSelect').value;
@@ -5148,7 +5154,9 @@ async function loadPivotTimeSeriesData() {
   const periodUnit = unit === 's' ? 'season' : unit === 'w' ? 'week' : 'month';
   const out = [];
   for (const p of periods) {
-    const seasonId = findSeasonIdForDate(p.end);
+    // range.start 기준 판정 이유는 computeMenuConsumption 쪽 주석 참고 — 달력 월말(p.end)로 판정하면
+    // 시즌 경계를 걸친 달에서 아직 시작 안 한 다음 시즌이 걸려버린다.
+    const seasonId = findSeasonIdForDate(p.start);
     const season = state.seasons.find(s => s.id === seasonId);
     if (targetCode === 'brand') {
       if (!designsBySeasonId.has(seasonId)) {
@@ -5377,7 +5385,7 @@ function populatePivotTsSnapWeeks() {
   const weeks = pivotAllWeekPeriods(range.from, range.to)
     .filter(w => w.periodEnd < todayStr)
     .filter(w => {
-      const s = state.seasons.find(x => x.id === findSeasonIdForDate(w.periodEnd));
+      const s = state.seasons.find(x => x.id === findSeasonIdForDate(w.periodStart));
       return s && !isSeasonClosed(s);
     });
   sel.innerHTML = weeks.map(w => `<option value="${w.periodStart}|${w.periodEnd}">${w.periodStart.slice(5)}~${w.periodEnd.slice(5)}</option>`).join('');
@@ -5389,7 +5397,7 @@ $('#pivotTsSnapshotBtn').addEventListener('click', async () => {
   const msg = $('#pivotTsSnapMsg'), btn = $('#pivotTsSnapshotBtn');
   if (!val) { msg.textContent = '계산할 완결 주차가 없습니다(진행 중 시즌 기준).'; return; }
   const [start, end] = val.split('|');
-  const seasonId = findSeasonIdForDate(end);
+  const seasonId = findSeasonIdForDate(start);
   btn.disabled = true;
   msg.textContent = `${start.slice(5)}~${end.slice(5)} 정확 계산 중… (5~6분, 이 창을 그대로 두세요)`;
   try {
