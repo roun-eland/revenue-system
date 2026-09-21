@@ -5,7 +5,8 @@
 const LABOR_CAP = 0.38;
 let OT_STD = {}; // { 매장코드: { weekday: plan, weekend: plan } }
 
-const STD_CATS = ["홀", "콜파트", "핫파트", "육절기", "프랩", "DMO", "관리·기타", "밥차"];
+// 밥차(직원 식사시간)는 근무 시간에서 제외 — 별도 집계(mealMH)만 한다 (사용자 확정 2026-09-21)
+const STD_CATS = ["홀", "콜파트", "핫파트", "육절기", "프랩", "DMO", "관리·기타"];
 
 // "6-27,30-31" → [6,7,...,27,30,31]   (슬롯 1 = 08:00, 30분 단위, 32 = 23:30)
 function stdSlotsOf(str) {
@@ -18,7 +19,7 @@ function stdSlotsOf(str) {
 }
 const stdSlotLabel = i => { const m = 8 * 60 + (i - 1) * 30; return String(Math.floor(m / 60)).padStart(2, "0") + ":" + (m % 60 ? "30" : "00"); };
 
-// 업무내용 → 파트 분류 (밥차 = 직원 식사, 유급 근무로 집계하되 별도 표시)
+// 업무내용 → 파트 분류 ("밥차" = 직원 식사시간: 근무·인건비 제외)
 function stdCat(name, part, ft) {
   const t = name || "";
   if (t.includes("밥차")) return "밥차";
@@ -46,10 +47,11 @@ function stdPrepare(rec) {
   const cat = {}; STD_CATS.forEach(c => { cat[c] = Array(34).fill(0); });
   let ftSlots = 0, mateSlots = 0, mealSlots = 0;
   blocks.forEach(b => b.slots.forEach(i => {
+    const c = stdCat(b.taskAt[i], b.p, b.ft);
+    if (c === "밥차") { mealSlots++; return; } // 식사시간 — 근무 인원·MH에 넣지 않음
     cnt.all[i]++; (b.ft ? cnt.ft : cnt.mate)[i]++;
     if (b.ft) ftSlots++; else mateSlots++;
-    const c = stdCat(b.taskAt[i], b.p, b.ft);
-    cat[c][i]++; if (c === "밥차") mealSlots++;
+    cat[c][i]++;
   }));
   // 1시간 단위 행 (08~23시): 두 개의 30분 슬롯 평균
   const hours = [];

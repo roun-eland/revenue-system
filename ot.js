@@ -51,6 +51,7 @@ async function enterApp(user) {
     } catch (e) { /* 실패 시 평균 단가 폴백 */ }
   }
   await loadStandardPlans();
+  await loadActualCoverage();
   // 기준정보·실적 입력은 planner 전용 (manager = 대시보드·계획·피드백만), 전사 대시보드는 모두 공개
   document.querySelector('#otNav button[data-view="ref"]').hidden = !isPlanner;
   document.querySelector('#otNav button[data-view="actual"]').hidden = !isPlanner;
@@ -133,12 +134,111 @@ function buildDashMonthOptions() {
   for (let y = 2026, m = 9;;) {
     const v = `${y}-${String(m).padStart(2, '0')}`;
     const o = document.createElement('option');
-    o.value = v; o.textContent = `${y}년 ${m}월 (계획)`;
+    o.value = v;
+    if (dashActual.months.has(v)) {
+      const dim = new Date(y, m, 0).getDate(), partial = dashActual.last.slice(0, 7) === v && +dashActual.last.slice(8) < dim;
+      o.textContent = partial ? `${y}년 ${m}월 (누적 ~${m}/${+dashActual.last.slice(8)})` : `${y}년 ${m}월 (실측)`;
+    } else o.textContent = `${y}년 ${m}월 (계획)`;
     msel2.appendChild(o);
     m++; if (m > 12) { m = 1; y++; } if (y === 2028) break;
   }
-  msel2.value = '2026-08';
+  // 기본 조회월 = 실적이 입력된 가장 최근 달(진행 중인 달), 없으면 8월 실측
+  const acts = [...dashActual.months].sort();
+  msel2.value = acts.length ? acts[acts.length - 1] : '2026-08';
   msel2.onchange = () => renderDash();
+}
+
+// 매출·근태 실적이 모두 적재된 달 (2026-08은 시드 기반 실측 모드를 그대로 사용, 2026-09부터 DB 실적)
+let dashActual = { months: new Set(), last: null };
+async function loadActualCoverage() {
+  dashActual = { months: new Set(), last: null };
+  try {
+    const [a, b] = await Promise.all([
+      sb.from('ot_sales_daily').select('sales_date').order('sales_date', { ascending: false }).limit(1),
+      sb.from('ot_labor_daily').select('work_date').order('work_date', { ascending: false }).limit(1)
+    ]);
+    const ls = a.data && a.data[0] && a.data[0].sales_date, ll = b.data && b.data[0] && b.data[0].work_date;
+    if (ls && ll) {
+      const last = ls < ll ? ls : ll; // 매출·근태가 모두 있는 마지막 일자
+      dashActual.last = last;
+      for (let y = 2026, m = 9; `${y}-${String(m).padStart(2, '0')}` <= last.slice(0, 7);) {
+        dashActual.months.add(`${y}-${String(m).padStart(2, '0')}`);
+        m++; if (m > 12) { m = 1; y++; }
+      }
+    }
+  } catch (e) { /* 실패 시 계획 모드로 폴백 */ }
+}
+
+// 진행 중인 달 누적 실적 집계 (순수 함수: 매출·근태 일별 행 → 매장별 누적치). 매출·근태가 모두 있는 영업일만 집계.
+function otMtdRows(ym, salesRows, laborRows) {
+  const [y, m] = ym.split('-').map(Number), dim = new Date(y, m, 0).getDate();
+  const sBy = {}, lBy = {};
+  salesRows.forEach(r => { (sBy[r.store_code] = sBy[r.store_code] || {})[r.sales_date] = r; });
+  laborRows.forEach(r => { (lBy[r.store_code] = lBy[r.store_code] || {})[r.work_date] = r; });
+  const out = [];
+  for (const [code, s0] of Object.entries(OT_DATA)) {
+    const S = sBy[code], L = lBy[code];
+    if (!S || !L) continue;
+    let sales = 0, mate = 0, ft = 0, need = 0, n = 0, first = null, last = null;
+    for (const x of monthDates(ym, s0)) {
+      const sr = S[x.iso], lr = L[x.iso];
+      if (!sr || !lr || sr.is_closed || !(+sr.total > 0)) continue;
+      const A = +sr.total;
+      sales += A; mate += +lr.mate_mh || 0; ft += +lr.ft_mh || 0; n++;
+      if (!first) first = x.iso;
+      last = x.iso;
+      need += OT_STD[code] ? OT_STD[code][stdDayKey(x)].stats.totMH : needMHof(s0, A, x.hol ? 'H' : x.wd);
+    }
+    if (!n) continue;
+    const frac = +last.slice(8) / dim; // 정직원 급여·연차수당은 경과일수 비례 안분
+    const labor = mate * s0.eff + (s0.fullpay + s0.nfull * 100000) * frac + sales / 1.1 * 0.006;
+    const mh = mate + ft;
+    out.push({ code, name: s0.name, sales, mh, mate, prod: sales / mh, need, over: mh - need,
+               ratio: labor / (sales / 1.1) * 100, labor, days: n, first, last, std: !!OT_STD[code], eff: s0.eff });
+  }
+  return out.sort((a, b) => b.prod - a.prod);
+}
+
+async function renderDashMTD(ym) {
+  $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">누적 실적 집계 중…</p>';
+  const [y, m] = ym.split('-').map(Number);
+  const start = `${ym}-01`, endEx = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  const [sr, lr] = await Promise.all([
+    sb.from('ot_sales_daily').select('store_code,sales_date,total,is_closed').gte('sales_date', start).lt('sales_date', endEx).limit(1000),
+    sb.from('ot_labor_daily').select('store_code,work_date,mate_mh,ft_mh').gte('work_date', start).lt('work_date', endEx).limit(1000)
+  ]);
+  const rows = otMtdRows(ym, sr.data || [], lr.data || []);
+  if (!rows.length) { $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">이 달에 적재된 실적이 없습니다.</p>'; $('dashKpis').innerHTML = ''; return; }
+  const last = rows.reduce((a, r) => r.last > a ? r.last : a, ''), first = rows.reduce((a, r) => !a || r.first < a ? r.first : a, '');
+  $('dashSub').textContent = `${ym} 누적 실적 (${first.slice(5)}~${last.slice(5)}) — 예상이 아니라 입력된 매출·근태 실적 기준입니다. ` +
+    '누적 인건비율은 메이트 실근무 MH×실질시급 + 정직원 급여(경과일 안분)·연차수당·퇴직(순매출 0.6%)의 근사치이고, 필요 MH는 표준표 등록 매장은 그날의 표(평일/주말), 그 외는 목표 72,000원/MH 엔진(운영 제약 포함) 기준입니다. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
+  const tSales = rows.reduce((t, r) => t + r.sales, 0), tMH = rows.reduce((t, r) => t + r.mh, 0);
+  const tLabor = rows.reduce((t, r) => t + r.labor, 0), ratioTot = tLabor / (tSales / 1.1) * 100;
+  const nOk = rows.filter(r => r.prod >= TARGET).length;
+  const overRows = rows.filter(r => r.over > 0);
+  const overMH = overRows.reduce((t, r) => t + r.over, 0), overCost = overRows.reduce((t, r) => t + r.over * r.eff, 0);
+  const overPct = tLabor ? overCost / tLabor * 100 : 0;
+  const score = (tSales / tMH / TARGET * 100).toFixed(0);
+  const nCap = rows.filter(r => r.ratio > LABOR_CAP * 100).length;
+  $('dashKpis').innerHTML =
+    `<div><div class="k">전사 누적 매출 · 누적 인건비율 (${ym.slice(5)}월)</div><div class="v">${(tSales / 1e8).toFixed(1)}억 <span style="font-size:15px;font-weight:700;color:var(--muted)">· ${ratioTot.toFixed(1)}%</span></div><div class="s">${rows.length}개 매장 · ${first.slice(5)}~${last.slice(5)} 누적 · 인건비율 = 근사 인건비 ÷ 순매출</div></div>` +
+    `<div><div class="k">전사 누적 생산성</div><div class="v">${won(tSales / tMH)} <span style="font-size:15px;font-weight:700;color:var(--good)">(${score}%)</span></div><div class="s">원/MH · 누적 ${won(tMH)}MH, 목표 72,000</div></div>` +
+    `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">누적 생산성 ≥ 72,000 · 인건비율 ${Math.round(LABOR_CAP * 100)}% 초과 ${nCap}곳</div></div>` +
+    `<div><div class="k">과잉 투입 인건비 (누적)</div><div class="v" style="color:var(--crit)">+${won(overCost / 10000)}만원</div><div class="s">+${won(overMH)} MH(필요·표 대비) · 인건비의 ${overPct.toFixed(1)}%</div></div>`;
+  const maxOver = Math.max(...rows.map(r => Math.abs(r.over)), 1);
+  let html = '<table><colgroup><col style="width:150px"><col style="width:85px"><col style="width:80px"><col style="width:95px"><col style="width:80px"><col style="width:95px"><col style="width:170px"><col style="width:100px"></colgroup>' +
+    '<thead><tr><th>매장</th><th>누적매출(억)</th><th>누적 MH</th><th>누적 생산성</th><th>생산성 점수</th><th>누적 인건비율</th><th>필요·표 대비 과잉 MH</th><th>기준</th></tr></thead><tbody>';
+  for (const r of rows) {
+    const w = Math.round(Math.abs(r.over) / maxOver * 90);
+    const rb = r.ratio > LABOR_CAP * 100 ? 'c' : r.ratio <= 24 ? 'g' : r.ratio <= 28 ? 'w' : 'c';
+    const capMark = r.ratio > LABOR_CAP * 100 ? ` title="상한 ${Math.round(LABOR_CAP * 100)}% 초과"` : '';
+    html += `<tr class="rowlink" data-code="${r.code}"><td>${r.name}</td><td>${(r.sales / 1e8).toFixed(2)}</td>` +
+      `<td>${won(r.mh)}</td><td><b>${won(r.prod)}</b></td><td><b>${(r.prod / TARGET * 100).toFixed(0)}%</b></td>` +
+      `<td><span class="band ${rb}"${capMark}>${r.ratio.toFixed(1)}%</span></td>` +
+      `<td>${r.over > 0 ? '+' + won(r.over) : won(r.over)} <span class="mini" style="width:${w}px;${r.over <= 0 ? 'background:var(--dark)' : ''}"></span></td>` +
+      `<td class="d" style="font-size:11px">${r.std ? '표준표' : '엔진'}<br>${r.days}일</td></tr>`;
+  }
+  $('dashTable').innerHTML = html + '</tbody></table>';
 }
 
 async function renderDash() {
@@ -186,6 +286,8 @@ async function renderDash() {
         `<td><span class="band ${b}">${b==='g'?'목표권':b==='w'?'관리':'미달'}</span></td></tr>`;
     }
     $('dashTable').innerHTML = html + '</tbody></table>';
+  } else if (dashActual.months.has(ym)) { // ---- 진행 중인 달: 누적 실적 ----
+    await renderDashMTD(ym);
   } else { // ---- 계획 모드 ----
     $('dashSub').textContent = `${ym} 계획 기준 — 확정 저장된 월 계획이 있으면 그 값을, 없으면 기본값(8월 매출·현재 정직원 구성)으로 계산합니다. 실적이 적재되면(M2) 자동으로 실측으로 전환됩니다.`;
     $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">계획 계산 중…</p>';
@@ -760,7 +862,7 @@ function renderStdOverview(std, cur, A, s, fullpay) {
   const st = std[k].stats, dcst = stdDayCost(st, A, s, fullpay, isH);
   const dayLabel = isH ? "공휴일 (주말 표 적용)" : cur.label + "요일";
   const over = dcst.ratio > LABOR_CAP * 100;
-  $('daysum').innerHTML = `<b>${dayLabel}</b> · 표준 계획표(${stdDayLabel(k)}) · 예상 일매출 <b>${won(A / 10000)}만원</b> · 총 ${st.totMH.toFixed(1)}인시 (정직원 ${st.ftMH.toFixed(1)} + 메이트 ${st.mateMH.toFixed(1)}, 밥차 ${st.mealMH.toFixed(1)}h 포함) · 생산성 <b>${won(A / st.totMH)}원/MH</b> · 이날 인건비율 <b${over ? ' style="color:var(--crit)"' : ""}>${dcst.ratio.toFixed(1)}%</b>${over ? ` (상한 ${Math.round(LABOR_CAP * 100)}% 초과)` : ""}`;
+  $('daysum').innerHTML = `<b>${dayLabel}</b> · 표준 계획표(${stdDayLabel(k)}) · 예상 일매출 <b>${won(A / 10000)}만원</b> · 총 ${st.totMH.toFixed(1)}인시 (정직원 ${st.ftMH.toFixed(1)} + 메이트 ${st.mateMH.toFixed(1)}, 식사 ${st.mealMH.toFixed(1)}h 제외) · 생산성 <b>${won(A / st.totMH)}원/MH</b> · 이날 인건비율 <b${over ? ' style="color:var(--crit)"' : ""}>${dcst.ratio.toFixed(1)}%</b>${over ? ` (상한 ${Math.round(LABOR_CAP * 100)}% 초과)` : ""}`;
   const maxNeed = Math.max(...st.hours.map(r => r.need));
   const tb = $('rows'); tb.innerHTML = "";
   for (const r of st.hours) {
@@ -786,8 +888,8 @@ function renderStdDetail(std) {
   box.appendChild(stdToggle(stdDetDay, k => { stdDetDay = k; renderStdDetail(std); }));
   const wrap = document.createElement("div"); wrap.innerHTML = h; box.appendChild(wrap);
   $('dsum').innerHTML = `<span>${stdDayLabel(stdDetDay)} 표준안</span><span>정직원 <b>${st.nFt}자리 · ${st.ftMH.toFixed(1)}h</b></span>` +
-    `<span>메이트 <b>${st.nMate}명 · ${st.mateMH.toFixed(1)}h</b></span><span>밥차(식사·유급) <b>${st.mealMH.toFixed(1)}h</b></span>`;
-  $('dNote').textContent = "표의 업무내용을 파트로 분류한 시간대별 인원(30분 슬롯 평균). 밥차 = 직원 식사시간(인건비 포함). 관리·기타 = 정직원 관리업무·발주·청소·업무 미기재 시간.";
+    `<span>메이트 <b>${st.nMate}명 · ${st.mateMH.toFixed(1)}h</b></span><span>식사(밥차, 근무 제외) <b>${st.mealMH.toFixed(1)}h</b></span>`;
+  $('dNote').textContent = "표의 업무내용을 파트로 분류한 시간대별 근무 인원(30분 슬롯 평균). 밥차 = 직원 식사시간으로 근무·인건비에서 제외. 관리·기타 = 정직원 관리업무·발주·청소·업무 미기재 시간.";
 }
 function renderStdShift(std, s, fullpay, stdAvg) {
   const plan = std[stdSfDay], st = plan.stats;
@@ -822,7 +924,7 @@ function renderStdShift(std, s, fullpay, stdAvg) {
     `<span>메이트 인건비 <b>${won(dcst.mate)}원</b></span>` +
     `<span>이날 예상 인건비율 <b${over ? ' style="color:var(--crit)"' : ""}>${dcst.ratio.toFixed(1)}%</b></span>`;
   $('mixBox').innerHTML = "표준 계획표 적용 매장은 선임점장 표준안의 개인별 시프트를 그대로 보여드리며, 계약 형태(주5일·초단시간) 가이드는 표시하지 않습니다.";
-  $('sfNote').textContent = "한 줄 = 한 사람의 시프트. 진한 칸 = 정직원, 초록 = 메이트, 빗금 = 밥차(직원 식사시간, 유급 — 인건비 포함).";
+  $('sfNote').textContent = "한 줄 = 한 사람의 시프트. 진한 칸 = 정직원, 초록 = 메이트, 빗금 = 밥차(직원 식사시간 — 근무·인건비 제외).";
   $('sfLegend').hidden = false;
 }
 
