@@ -200,3 +200,8 @@ select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent-sof
   text-align:center;color:var(--muted2);font-size:13px}
 .placeholder-box b{color:var(--muted)}
 @media(prefers-reduced-motion:no-preference){ .bar .f,.bar .m{transition:width .25s ease} }
+
+/* 표준 사용 계획표 시프트판 — 30분 슬롯(08:00~24:00) */
+.gantt.g30{grid-template-columns:200px repeat(32,minmax(0,1fr));min-width:720px}
+.gantt .gc.meal{background:repeating-linear-gradient(45deg,#8fdf46,#8fdf46 3px,#d9f3bd 3px,#d9f3bd 6px)}
+.gantt .gc.fmeal{background:repeating-linear-gradient(45deg,#2f3030,#2f3030 3px,#7a7a7a 3px,#7a7a7a 6px)}

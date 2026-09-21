@@ -50,6 +50,7 @@ async function enterApp(user) {
       if (data && data.length) { gradeCost = {}; for (const g of data) gradeCost[g.grade] = g.std_monthly_cost; }
     } catch (e) { /* 실패 시 평균 단가 폴백 */ }
   }
+  await loadStandardPlans();
   // 기준정보·실적 입력은 planner 전용 (manager = 대시보드·계획·피드백만), 전사 대시보드는 모두 공개
   document.querySelector('#otNav button[data-view="ref"]').hidden = !isPlanner;
   document.querySelector('#otNav button[data-view="actual"]').hidden = !isPlanner;
@@ -57,6 +58,17 @@ async function enterApp(user) {
   if (isPlanner) renderRef();
   buildPlanInputs(); render();
   showView('dash');
+}
+// 표준 사용 계획표(F4) 로드 — 평일·주말이 모두 있는 매장만 유효, 없거나 실패하면 임시 기준(엔진)으로 폴백
+async function loadStandardPlans() {
+  OT_STD = {};
+  try {
+    const { data } = await sb.from('ot_standard_plans')
+      .select('id,store_code,day_type,version,effective_ym,blocks,verified')
+      .eq('is_current', true).order('version', { ascending: true });
+    (data || []).forEach(r => { (OT_STD[r.store_code] = OT_STD[r.store_code] || {})[r.day_type] = stdPrepare(r); });
+  } catch (e) { /* 테이블 미생성·권한 오류 시 무시 */ }
+  for (const c of Object.keys(OT_STD)) if (!OT_STD[c].weekday || !OT_STD[c].weekend || !OT_DATA[c]) delete OT_STD[c];
 }
 $('loginForm').addEventListener('submit', async e => {
   e.preventDefault();
@@ -88,6 +100,11 @@ function computeMonthPlan(code, ym, M, nfull, fullpay) {
   const s = { ...OT_DATA[code], nfull };
   const att = attendance(s), holAtt = Math.max(...att);
   const dates = monthDates(ym, s), open = dates.filter(x => !x.closed);
+  if (OT_STD[code]) { // 표준 사용 계획표 적용 매장 — 표 + 인건비율 상한
+    const sm = stdMonthMH(code, open);
+    const cap = stdApplyCap(s, M, fullpay, sm.mMH, sm.mMHhol);
+    return { totMH: sm.ftMH + cap.mMH + cap.mMHhol + nfull * 8, ratio: cap.ratio, std: true, capped: cap.capped, cutMH: cap.cutMH, structural: cap.structural };
+  }
   const wsum = open.reduce((t, x) => t + (x.hol ? s.hol : s.wd[x.wd]), 0);
   let mMH = 0, mMHhol = 0, totMH = 0;
   const cache = {};
@@ -186,8 +203,9 @@ async function renderDash() {
       const fullpay = p?.staffing_snapshot?.fullpay ?? s.fullpay;
       const plan = computeMonthPlan(code, ym, M, nfull, fullpay);
       const prod = M / plan.totMH;
+      const stdTag = plan.std ? (plan.capped ? '<br>표준표·상한 적용' : '<br>표준표') : '';
       return { code, name: s.name, sales: M, mh: plan.totMH, prod,
-               ratio: p?.output?.ratio ?? plan.ratio, src: p ? '확정 계획' : '기본값' };
+               ratio: plan.std ? plan.ratio : (p?.output?.ratio ?? plan.ratio), src: (p ? '확정 계획' : '기본값') + stdTag };
     }).sort((a, b) => b.prod - a.prod);
     const tSales = rows.reduce((t, r) => t + r.sales, 0);
     const tMH = rows.reduce((t, r) => t + r.mh, 0);
@@ -429,15 +447,26 @@ function render() {
   const wsum = open.reduce((t, x) => t + (x.hol ? s.hol : s.wd[x.wd]), 0);
   const dailyOf = idx => M * idx / wsum;
 
-  let mMH = 0, mMHhol = 0;
-  const cache = {};
-  for (const x of open) {
-    const key = x.hol ? "H" : x.wd;
-    if (!(key in cache)) {
-      const sh = shiftsFor(s, x.hol ? holAtt : att[x.wd]);
-      cache[key] = dayCalc(s, dailyOf(x.hol ? s.hol : s.wd[x.wd]), sh, key).mateMH;
+  const std = OT_STD[sel.value] || null; // 표준 사용 계획표 등록 매장이면 표 + 인건비율 상한
+  let mMH = 0, mMHhol = 0, capInfo = null;
+  const stdAvg = { weekday: 0, weekend: 0 }; // 평일/주말 평균 일매출 (표 화면의 생산성·인건비율 계산용)
+  if (std) {
+    const sm = stdMonthMH(sel.value, open);
+    capInfo = stdApplyCap(s, M, fullpay, sm.mMH, sm.mMHhol);
+    mMH = capInfo.mMH; mMHhol = capInfo.mMHhol;
+    const cn = { weekday: 0, weekend: 0 };
+    for (const x of open) { const k = stdDayKey(x); stdAvg[k] += dailyOf(x.hol ? s.hol : s.wd[x.wd]); cn[k]++; }
+    for (const k of ["weekday", "weekend"]) stdAvg[k] = cn[k] ? stdAvg[k] / cn[k] : 0;
+  } else {
+    const cache = {};
+    for (const x of open) {
+      const key = x.hol ? "H" : x.wd;
+      if (!(key in cache)) {
+        const sh = shiftsFor(s, x.hol ? holAtt : att[x.wd]);
+        cache[key] = dayCalc(s, dailyOf(x.hol ? s.hol : s.wd[x.wd]), sh, key).mateMH;
+      }
+      if (x.hol) mMHhol += cache[key]; else mMH += cache[key];
     }
-    if (x.hol) mMHhol += cache[key]; else mMH += cache[key];
   }
   const totMateMH = mMH + mMHhol;
   const leaveMH = s.nfull * 8;
@@ -450,7 +479,15 @@ function render() {
   if (ratio <= 24) { t.classList.add("g"); note = "목표권 (24% 이하)"; }
   else if (ratio <= 28) { t.classList.add("w"); note = "관리 필요 (24~28%)"; }
   else { t.classList.add("c"); note = "목표 초과 (28% 이상)"; }
+  if (capInfo && capInfo.capped) {
+    t.classList.remove("g", "w"); t.classList.add("c");
+    note = `상한 ${Math.round(LABOR_CAP * 100)}% 적용 — 표 원안 ${capInfo.ratioBefore.toFixed(1)}%에서 메이트 ${won(capInfo.cutMH)}h(${((1 - capInfo.scale) * 100).toFixed(0)}%) 감축` +
+      (capInfo.structural ? " · 정직원 고정비만으로 상한 초과(구조적 적자)" : "");
+  }
   $('ratioNote').textContent = note;
+  $('basisChip').innerHTML = std
+    ? `산출 기준: <b>표준 사용 계획표</b> (선임점장${std.weekday.verified && std.weekend.verified ? "" : " · 합계 대조 대기"}) · 인건비율 상한 ${Math.round(LABOR_CAP * 100)}%`
+    : `산출 기준: <b>임시 기준 (엔진 · 72,000원/MH)</b> — 이 매장은 표준 사용 계획표 미등록`;
   $('mateMH').textContent = won(totMateMH + s.nfull * 8);
   $('mateWon').textContent = "약 " + won(mateCost / 10000) + "만원";
   $('totCost').textContent = won(cost / 10000) + "만";
@@ -460,7 +497,8 @@ function render() {
     staffing: { ...staffCnt }, nfull: s.nfull, fullpay: Math.round(fullpay),
     ratio: +ratio.toFixed(2), mate_mh: Math.round(totMateMH + leaveMH),
     mate_cost: Math.round(mateCost), total_cost: Math.round(cost),
-    daily_idx_sum: +wsum.toFixed(3)
+    daily_idx_sum: +wsum.toFixed(3),
+    std: std ? { weekday_id: std.weekday.id, weekend_id: std.weekend.id, capped: capInfo.capped, cut_mh: Math.round(capInfo.cutMH), ratio_before: +capInfo.ratioBefore.toFixed(2) } : null
   };
   $('planMsg').textContent = '';
 
@@ -488,10 +526,23 @@ function render() {
 
   const cur = types.find(ty => String(selDay) === ty.key) || types[5];
   const A = dailyOf(cur.idx);
+  $('tabDt').textContent = std ? "상세 (시간×파트)" : "상세 (시간×요일×파트)";
+  $('tabSf').textContent = std ? "시프트판 (표준안)" : "시프트판";
+  $('dHead').textContent = std ? "시간 × 파트 배치 — 선임점장 표준안 (평일·주말)" : "시간 × 요일 배치 — 요일을 누르면 파트별로 펼쳐집니다";
+  $('sfHead').textContent = std ? "표준 시프트판 — 선임점장 표준안, 이대로 스케줄에 옮기면 됩니다" : "요일별 시프트판 — 이대로 스케줄에 옮기면 됩니다";
+  if (std) {
+    renderStdOverview(std, cur, A, s, fullpay);
+    renderStdDetail(std);
+    renderStdShift(std, s, fullpay, stdAvg);
+    return;
+  }
+  $('dNote').textContent = "색이 진할수록 인원이 많은 시간. 파트 배분은 규칙 기반 초안 — 표준 사용 계획표 수집 후 실제값으로 교체됩니다.";
+  $('sfNote').textContent = "빗금 = 휴게(8h·7h는 1시간, 6h·5h는 30분 — 급여 미지급). 필요 인원 곡선을 최소 인건비로 덮는 자동 초안입니다.";
+  $('sfLegend').hidden = true;
   const curAtt = cur.key === "H" ? holAtt : att[+cur.key];
   const shifts = shiftsFor(s, curAtt);
   const dc = dayCalc(s, A, shifts, cur.key);
-  $('daysum').innerHTML = `<b>${cur.label === "공휴일" ? "공휴일" : cur.label + "요일"}</b> · 예상 일매출 <b>${won(A / 10000)}만원</b> · 총 ${dc.totMH.toFixed(1)}인시 (메이트 ${dc.mateMH.toFixed(1)}인시)`;
+  $('daysum').innerHTML =`<b>${cur.label === "공휴일" ? "공휴일" : cur.label + "요일"}</b> · 예상 일매출 <b>${won(A / 10000)}만원</b> · 총 ${dc.totMH.toFixed(1)}인시 (메이트 ${dc.mateMH.toFixed(1)}인시)`;
   const maxNeed = Math.max(...dc.rows.map(r => r.need));
   const peakP = Math.max(...pctFor(s, cur.key));
   const tb = $('rows'); tb.innerHTML = "";
@@ -686,6 +737,95 @@ function renderDetail(s, types, att, holAtt, dailyOf, fullpay) {
     `<span>이날 예상 인건비율 <b>${(costD / (d.A / 1.1) * 100).toFixed(1)}%</b></span>`;
 }
 
+// ----- 표준 사용 계획표(F4) 화면 -----
+let stdDetDay = "weekday", stdSfDay = "weekday";
+const stdDayLabel = k => k === "weekend" ? "주말" : "평일";
+const stdFmt = v => v % 1 ? v.toFixed(1) : String(v);
+function stdDayCost(sm, A, s, fullpay, hol) {
+  const mate = sm.mateMH * s.effBase * (hol ? 1.5 : 1);
+  const cost = mate + fullpay / 30.4 + s.nfull * 100000 / 30.4 + A / 1.1 * 0.006;
+  return { mate, cost, ratio: cost / (A / 1.1) * 100 };
+}
+function stdToggle(cur, pick) {
+  const d = document.createElement("div"); d.className = "sfdays";
+  for (const k of ["weekday", "weekend"]) {
+    const b = document.createElement("button"); b.textContent = stdDayLabel(k);
+    if (k === cur) b.classList.add("on");
+    b.onclick = () => pick(k); d.appendChild(b);
+  }
+  return d;
+}
+function renderStdOverview(std, cur, A, s, fullpay) {
+  const isH = cur.key === "H", k = stdDayKey({ hol: isH, wd: isH ? 0 : +cur.key });
+  const st = std[k].stats, dcst = stdDayCost(st, A, s, fullpay, isH);
+  const dayLabel = isH ? "공휴일 (주말 표 적용)" : cur.label + "요일";
+  const over = dcst.ratio > LABOR_CAP * 100;
+  $('daysum').innerHTML = `<b>${dayLabel}</b> · 표준 계획표(${stdDayLabel(k)}) · 예상 일매출 <b>${won(A / 10000)}만원</b> · 총 ${st.totMH.toFixed(1)}인시 (정직원 ${st.ftMH.toFixed(1)} + 메이트 ${st.mateMH.toFixed(1)}, 밥차 ${st.mealMH.toFixed(1)}h 포함) · 생산성 <b>${won(A / st.totMH)}원/MH</b> · 이날 인건비율 <b${over ? ' style="color:var(--crit)"' : ""}>${dcst.ratio.toFixed(1)}%</b>${over ? ` (상한 ${Math.round(LABOR_CAP * 100)}% 초과)` : ""}`;
+  const maxNeed = Math.max(...st.hours.map(r => r.need));
+  const tb = $('rows'); tb.innerHTML = "";
+  for (const r of st.hours) {
+    const tr = document.createElement("tr");
+    if (r.need === maxNeed) tr.className = "peak";
+    tr.innerHTML = `<td class="hour">${r.label}</td>` +
+      `<td>${r.need.toFixed(1)}</td><td>${r.cov.toFixed(1)}</td><td class="mate">${r.mate.toFixed(1)}</td>` +
+      `<td class="barcell"><div class="bar"><span class="f" style="width:${r.cov / maxNeed * 100}%"></span><span class="m" style="width:${r.mate / maxNeed * 100}%"></span></div></td>`;
+    tb.appendChild(tr);
+  }
+  $('shiftNote').textContent = `정직원 ${st.nFt}자리 · 메이트 ${st.nMate}명 — 선임점장 표준안(평균 매출일 기준)을 ${stdDayLabel(k)} 표 그대로 적용합니다. 인건비율 상한 ${Math.round(LABOR_CAP * 100)}%는 월 합계에서 적용되어 초과 시 메이트 인시를 비례 감축합니다.`;
+}
+function renderStdDetail(std) {
+  const st = std[stdDetDay].stats;
+  const heat = v => v <= 0 ? "" : `background:color-mix(in srgb,var(--heat) ${Math.min(75, Math.round(10 + v * 17))}%,transparent)`;
+  let h = '<table class="dtable"><thead><tr><th>시간</th><th>총</th>' + STD_CATS.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+  for (const r of st.hours) {
+    h += `<tr><td class="hr">${r.label}</td><td>${stdFmt(r.need)}</td>` +
+      STD_CATS.map(c => { const v = r.cats[c]; return `<td class="${v ? "" : "z"}" style="${heat(v)}">${v ? stdFmt(v) : "·"}</td>`; }).join("") + "</tr>";
+  }
+  h += "</tbody></table>";
+  const box = $('dtable'); box.innerHTML = "";
+  box.appendChild(stdToggle(stdDetDay, k => { stdDetDay = k; renderStdDetail(std); }));
+  const wrap = document.createElement("div"); wrap.innerHTML = h; box.appendChild(wrap);
+  $('dsum').innerHTML = `<span>${stdDayLabel(stdDetDay)} 표준안</span><span>정직원 <b>${st.nFt}자리 · ${st.ftMH.toFixed(1)}h</b></span>` +
+    `<span>메이트 <b>${st.nMate}명 · ${st.mateMH.toFixed(1)}h</b></span><span>밥차(식사·유급) <b>${st.mealMH.toFixed(1)}h</b></span>`;
+  $('dNote').textContent = "표의 업무내용을 파트로 분류한 시간대별 인원(30분 슬롯 평균). 밥차 = 직원 식사시간(인건비 포함). 관리·기타 = 정직원 관리업무·발주·청소·업무 미기재 시간.";
+}
+function renderStdShift(std, s, fullpay, stdAvg) {
+  const plan = std[stdSfDay], st = plan.stats;
+  const btns = $('sfDays'); btns.innerHTML = "";
+  for (const k of ["weekday", "weekend"]) {
+    const b = document.createElement("button"); b.textContent = stdDayLabel(k);
+    if (k === stdSfDay) b.classList.add("on");
+    b.onclick = () => { stdSfDay = k; render(); };
+    btns.appendChild(b);
+  }
+  const rows = plan.blocks.slice().sort((a, b) => (b.ft - a.ft) || (a.p === b.p ? a.slots[0] - b.slots[0] : (a.p === "홀" ? -1 : 1)));
+  let html = '<div class="gantt g30"><div class="ghead"></div>' +
+    [...Array(16)].map((_, i) => `<div class="ghead" style="grid-column:span 2">${8 + i}</div>`).join("");
+  for (const b of rows) {
+    const set = new Set(b.slots), first = b.slots[0], last = b.slots[b.slots.length - 1];
+    const lab = `${b.ft ? "정직원 " : ""}${b.p} ${b.r}${b.n ? " #" + b.n : ""} · ${stdSlotLabel(first)}~${stdSlotLabel(last + 1)}`;
+    html += `<div class="glab" title="${lab}">${lab}</div>`;
+    for (let i = 1; i <= 32; i++) {
+      let cls = "gc";
+      if (set.has(i)) { const meal = b.taskAt[i] === "밥차"; cls += b.ft ? (meal ? " fmeal" : " f") : (meal ? " meal" : " m8"); }
+      if (i === first) cls += " st";
+      if (i === last) cls += " en";
+      html += `<div class="${cls}"></div>`;
+    }
+  }
+  $('ganttBox').innerHTML = html + "</div>";
+  const A = stdAvg[stdSfDay], dcst = stdDayCost(st, A, s, fullpay, false), over = dcst.ratio > LABOR_CAP * 100;
+  $('sfSum').innerHTML =
+    `<span>${stdDayLabel(stdSfDay)} 평균 일매출 <b>${won(A / 10000)}만</b></span>` +
+    `<span>표 총 <b>${st.totMH.toFixed(1)}h</b> (정직원 ${st.ftMH.toFixed(1)} + 메이트 ${st.mateMH.toFixed(1)})</span>` +
+    `<span>생산성 <b>${won(A / st.totMH)}원/MH</b></span>` +
+    `<span>메이트 인건비 <b>${won(dcst.mate)}원</b></span>` +
+    `<span>이날 예상 인건비율 <b${over ? ' style="color:var(--crit)"' : ""}>${dcst.ratio.toFixed(1)}%</b></span>`;
+  $('mixBox').innerHTML = "표준 계획표 적용 매장은 선임점장 표준안의 개인별 시프트를 그대로 보여드리며, 계약 형태(주5일·초단시간) 가이드는 표시하지 않습니다.";
+  $('sfNote').textContent = "한 줄 = 한 사람의 시프트. 진한 칸 = 정직원, 초록 = 메이트, 빗금 = 밥차(직원 식사시간, 유급 — 인건비 포함).";
+  $('sfLegend').hidden = false;
+}
+
 // ----- 개괄/상세/시프트판 탭 -----
 function showPlanTab(t) {
   for (const [id, wrap] of [["tabOv", "ovWrap"], ["tabDt", "dtWrap"], ["tabSf", "sfWrap"]]) {
@@ -704,9 +844,9 @@ $('savePlanBtn').onclick = async () => {
   const row = {
     store_code: r.store_code, ym: r.ym, forecast_sales: r.forecast_sales,
     staffing_snapshot: { staffing: r.staffing, nfull: r.nfull, fullpay: r.fullpay, grade_cost: gradeCost },
-    standard_plan_id: null, // 임시 기준(엔진) — 표준 계획표 등록 후 연결
-    coeff_ym: '2026-08', engine_version: ENGINE_VERSION,
-    output: { ratio: r.ratio, mate_mh: r.mate_mh, mate_cost: r.mate_cost, total_cost: r.total_cost },
+    standard_plan_id: r.std ? r.std.weekday_id : null, // null = 임시 기준(엔진); 표준표 적용 시 평일표 id(주말표 id는 output.std)
+    coeff_ym: '2026-08', engine_version: r.std ? ENGINE_VERSION + '-std' : ENGINE_VERSION,
+    output: { ratio: r.ratio, mate_mh: r.mate_mh, mate_cost: r.mate_cost, total_cost: r.total_cost, ...(r.std ? { std: r.std } : {}) },
     status: 'confirmed', created_by: currentUser ? currentUser.id : null
   };
   const { error } = await sb.from('ot_plan_runs').upsert(row, { onConflict: 'store_code,ym' });

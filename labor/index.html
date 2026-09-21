@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>로운 생산성</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="../ot.css?v=202609041415">
+<link rel="stylesheet" href="../ot.css?v=202609211700">
 </head>
 <body>
 
@@ -116,21 +116,22 @@
       </div>
 
       <div id="dtWrap" hidden>
-        <h3>시간 × 요일 배치 — 요일을 누르면 파트별로 펼쳐집니다</h3>
+        <h3 id="dHead">시간 × 요일 배치 — 요일을 누르면 파트별로 펼쳐집니다</h3>
         <div class="card">
           <div class="tblwrap" id="dtable"></div>
           <div class="dsum" id="dsum"></div>
-          <div class="dnote">색이 진할수록 인원이 많은 시간. 파트 배분은 규칙 기반 초안 — 표준 사용 계획표 수집 후 실제값으로 교체됩니다.</div>
+          <div class="dnote" id="dNote">색이 진할수록 인원이 많은 시간. 파트 배분은 규칙 기반 초안 — 표준 사용 계획표 수집 후 실제값으로 교체됩니다.</div>
         </div>
       </div>
 
       <div id="sfWrap" hidden>
-        <h3>요일별 시프트판 — 이대로 스케줄에 옮기면 됩니다</h3>
+        <h3 id="sfHead">요일별 시프트판 — 이대로 스케줄에 옮기면 됩니다</h3>
         <div class="sfdays" id="sfDays"></div>
         <div class="card">
           <div class="tblwrap" id="ganttBox"></div>
           <div class="dsum" id="sfSum"></div>
-          <div class="dnote">빗금 = 휴게(8h·7h는 1시간, 6h·5h는 30분 — 급여 미지급). 필요 인원 곡선을 최소 인건비로 덮는 자동 초안입니다.</div>
+          <div class="legend" id="sfLegend" hidden><span><i style="background:var(--dark)"></i>정직원</span><span><i style="background:#5cb417"></i>메이트</span><span><i style="background:repeating-linear-gradient(45deg,#8fdf46,#8fdf46 3px,#d9f3bd 3px,#d9f3bd 6px)"></i>밥차(식사·유급)</span></div>
+          <div class="dnote" id="sfNote">빗금 = 휴게(8h·7h는 1시간, 6h·5h는 30분 — 급여 미지급). 필요 인원 곡선을 최소 인건비로 덮는 자동 초안입니다.</div>
         </div>
         <div class="card mixcard">
           <h3 style="margin:0 0 8px">주간 계약 가이드</h3>
@@ -239,7 +240,8 @@
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
-<script src="../ot.js?v=202609071640"></script>
+<script src="../ot-std.js?v=202609211700"></script>
+<script src="../ot.js?v=202609211700"></script>
 <script src="../ot-actuals.js?v=202609081130"></script>
 </body>
 </html>
