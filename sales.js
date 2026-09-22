@@ -426,6 +426,46 @@ function renderBrand() {
   });
 }
 
+// 브랜드 대시보드 "엑셀 다운로드" — 매장×일자 매트릭스(합계 열 포함). 셀 값 = 실적 있으면 실적, 없으면(미래) 발행된 예측, 휴점은 공란.
+function exportBrandDailyXlsx() {
+  if (typeof XLSX === 'undefined') { alert('엑셀 라이브러리가 로드되지 않았습니다.'); return; }
+  const ym = $('brandMonth').value;
+  const run = getRun(ym);
+  const asOf = lastActualDate(ym);
+  const dates = monthDates(ym);
+  const codes = Object.keys(OT_DATA).sort(); // 매장코드 순 — brandTable과 동일 정렬
+  const storeLabel = code => {
+    const name = OT_DATA[code].name.replace(/\(신규\)/, '');
+    return (PREMIER.has(code) ? '로운샤브 프리미엄 ' : '로운 ') + name + '점';
+  };
+  const dayVal = d => code => {
+    if (isClosed(code, d) || OT_CLOSED_DATES.has(d) || (NEW_OPEN[code] && d < NEW_OPEN[code])) return '';
+    const m = SALES[code], av = m ? m.get(d) : null;
+    if (av > 0) return av;
+    if (asOf && d <= asOf) return av || 0; // 실적기간인데 0원 — 휴점이 아니라 매출 0
+    const fv = run && run.daily.stores[code] ? run.daily.stores[code].daily[d] : null;
+    return fv == null ? '' : fv;
+  };
+  const aoa = [['매장명', '합계', ...dates]];
+  for (const code of codes) {
+    const vals = dates.map(d => dayVal(d)(code));
+    const sum = vals.reduce((t, v) => t + (typeof v === 'number' ? v : 0), 0);
+    aoa.push([storeLabel(code), sum, ...vals]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 34 }, { wch: 14 }, ...dates.map(() => ({ wch: 11 }))];
+  for (let R = 1; R < aoa.length; R++) {
+    for (let C = 1; C < aoa[0].length; C++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      if (cell && typeof cell.v === 'number') cell.z = '#,##0';
+    }
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, ymLabel(ym).replace(/\s+/g, ''));
+  XLSX.writeFile(wb, `로운_매장별매출_${ym}.xlsx`);
+}
+$('#brandExportBtn')?.addEventListener('click', exportBrandDailyXlsx);
+
 // ---------- V2 매장 일별 캘린더 ----------
 function renderDaily() {
   const sel = $('dailyStore').value || '__ALL__';

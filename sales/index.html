@@ -60,6 +60,7 @@
       <p class="view-sub" id="brandSub">확정 예측 vs 실적 진행 vs 착지 전망. 예측은 발행 시점 컷오프까지의 실적만 사용한 불변 스냅샷입니다.</p>
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:160px">조회 월<select id="brandMonth"></select></label>
+        <button id="brandExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div class="kpis" id="brandKpis"></div>
       <div class="card" style="margin-bottom:14px">
@@ -165,7 +166,8 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
+<script src="../vendor/xlsx.full.min.js"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
-<script src="../sales.js?v=202609091130"></script>
+<script src="../sales.js?v=202609221030"></script>
 </body>
 </html>
