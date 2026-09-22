@@ -464,7 +464,7 @@ function exportBrandDailyXlsx() {
   XLSX.utils.book_append_sheet(wb, ws, ymLabel(ym).replace(/\s+/g, ''));
   XLSX.writeFile(wb, `로운_매장별매출_${ym}.xlsx`);
 }
-$('#brandExportBtn')?.addEventListener('click', exportBrandDailyXlsx);
+document.getElementById('brandExportBtn')?.addEventListener('click', exportBrandDailyXlsx);
 
 // ---------- V2 매장 일별 캘린더 ----------
 function renderDaily() {
