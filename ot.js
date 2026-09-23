@@ -899,11 +899,11 @@ function renderStdOverview(std, cur, A, s, fullpay) {
 function renderStdDetail(std) {
   const plan = std[stdDetDay], st = plan.stats;
   const blocks = plan.blocks.slice().sort((a, b) => (b.ft - a.ft) || (a.p === b.p ? a.slots[0] - b.slots[0] : (a.p === "홀" ? -1 : 1)));
-  const cellText = (b, i) => b.slots.includes(i) ? (b.taskAt[i] || b.r) : "";
+  const cellText = (b, i) => b.slots.includes(i) ? stdShort(b.taskAt[i] || b.r) : "";
 
   let h = '<table class="dtable dtable-emp"><thead>' +
     '<tr><th class="hr">구분</th><th class="hr">근무인원</th>' + blocks.map(b => `<th class="${b.ft ? "ft" : "mate"}">${b.p}</th>`).join("") + "</tr>" +
-    '<tr><th class="hr">직책/역할</th><th class="hr"></th>' + blocks.map(b => `<th class="${b.ft ? "ft" : "mate"}">${b.ft ? "정직원 " : ""}${b.r}</th>`).join("") + "</tr>" +
+    '<tr><th class="hr">직책/역할</th><th class="hr"></th>' + blocks.map(b => `<th class="${b.ft ? "ft" : "mate"}">${b.ft ? "정직원 " : ""}${stdShort(b.r)}</th>`).join("") + "</tr>" +
     '<tr><th class="hr">시간</th><th class="hr">인원(명)</th>' + blocks.map((b, i) => `<th class="${b.ft ? "ft" : "mate"}">직원${i + 1}</th>`).join("") + "</tr>" +
     "</thead><tbody>";
   for (let i = 1; i <= 32; i++) {

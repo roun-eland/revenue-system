@@ -33,6 +33,14 @@ function stdCat(name, part, ft) {
   return ft ? "관리·기타" : (part === "주방" ? "관리·기타" : "홀");
 }
 
+// 시간×직원 표 셀 표시용 — "샐러드바/홀"처럼 겸업을 슬래시로 붙여 쓴 원본 텍스트는 앞부분만,
+// DMO 표기 변형("디엠오"·"디에모")은 통일해서 짧게 보여준다. stdCat과 달리 분류하지 않고 원래 단어를 살린다.
+function stdShort(t) {
+  if (!t) return t;
+  const s = String(t).split("/")[0].trim();
+  return /^(DMO|디엠오|디에모)$/.test(s) ? "DMO" : s;
+}
+
 // DB 레코드 1건(평일 또는 주말) → 파싱 + 통계
 function stdPrepare(rec) {
   const blocks = (rec.blocks || []).map(b => {
