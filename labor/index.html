@@ -56,6 +56,11 @@
       <p class="view-sub" id="dashSub">행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.</p>
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:180px">조회 월<select id="dashMonth"></select></label>
+        <label class="fld" style="min-width:140px">정렬<select id="dashSort">
+          <option value="code">매장순</option>
+          <option value="prod">생산성순</option>
+          <option value="ratio">인건비율순</option>
+        </select></label>
       </div>
       <div class="kpis" id="dashKpis"></div>
       <div class="card">
@@ -241,7 +246,7 @@
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
 <script src="../ot-std.js?v=202609211830"></script>
-<script src="../ot.js?v=202609211830"></script>
+<script src="../ot.js?v=202609231030"></script>
 <script src="../ot-actuals.js?v=202609081130"></script>
 </body>
 </html>

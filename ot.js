@@ -146,6 +146,18 @@ function buildDashMonthOptions() {
   const acts = [...dashActual.months].sort();
   msel2.value = acts.length ? acts[acts.length - 1] : '2026-08';
   msel2.onchange = () => renderDash();
+  const ssel = $('dashSort');
+  if (ssel) ssel.onchange = () => renderDash();
+}
+
+// 전사 대시보드 정렬 — 매장순(브랜드 고정 순서)/생산성순/인건비율순(둘 다 내림차순)
+const DASH_CODE_ORDER = Object.keys(OT_DATA);
+function sortDashRows(rows) {
+  const mode = $('dashSort') ? $('dashSort').value : 'code';
+  const out = rows.slice();
+  if (mode === 'prod') return out.sort((a, b) => b.prod - a.prod);
+  if (mode === 'ratio') return out.sort((a, b) => (b.ratio ?? -1) - (a.ratio ?? -1));
+  return out.sort((a, b) => DASH_CODE_ORDER.indexOf(a.code) - DASH_CODE_ORDER.indexOf(b.code));
 }
 
 // 매출·근태 실적이 모두 적재된 달 (2026-08은 시드 기반 실측 모드를 그대로 사용, 2026-09부터 DB 실적)
@@ -196,10 +208,13 @@ function otMtdRows(ym, salesRows, laborRows) {
     out.push({ code, name: s0.name, sales, mh, mate, prod: sales / mh, need, over: mh - need,
                ratio: labor / (sales / 1.1) * 100, labor, days: n, first, last, std: !!OT_STD[code], eff: s0.eff });
   }
-  return out.sort((a, b) => b.prod - a.prod);
+  return out; // 정렬은 렌더링 시점(sortDashRows)에서 적용 — 코드 순서 그대로 반환
 }
 
-async function renderDashMTD(ym) {
+// dashMonth/dashSort를 빠르게 연속 변경하면 먼저 시작한 비동기 요청이 나중에 끝나며 최신 결과를
+// 옛날 결과로 덮어쓸 수 있다(경쟁 상태) — renderDash가 매 호출마다 올리는 dashReqId로 막는다.
+let dashReqId = 0;
+async function renderDashMTD(ym, myReq) {
   $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">누적 실적 집계 중…</p>';
   const [y, m] = ym.split('-').map(Number);
   const start = `${ym}-01`, endEx = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
@@ -207,7 +222,8 @@ async function renderDashMTD(ym) {
     sb.from('ot_sales_daily').select('store_code,sales_date,total,is_closed').gte('sales_date', start).lt('sales_date', endEx).limit(1000),
     sb.from('ot_labor_daily').select('store_code,work_date,mate_mh,ft_mh').gte('work_date', start).lt('work_date', endEx).limit(1000)
   ]);
-  const rows = otMtdRows(ym, sr.data || [], lr.data || []);
+  if (myReq !== dashReqId) return; // 그 사이 더 최신 조회로 바뀜 — 이 결과는 버린다
+  const rows = sortDashRows(otMtdRows(ym, sr.data || [], lr.data || []));
   if (!rows.length) { $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">이 달에 적재된 실적이 없습니다.</p>'; $('dashKpis').innerHTML = ''; return; }
   const last = rows.reduce((a, r) => r.last > a ? r.last : a, ''), first = rows.reduce((a, r) => !a || r.first < a ? r.first : a, '');
   $('dashSub').textContent = `${ym} 누적 실적 (${first.slice(5)}~${last.slice(5)}) — 예상이 아니라 입력된 매출·근태 실적 기준입니다. ` +
@@ -242,26 +258,26 @@ async function renderDashMTD(ym) {
 }
 
 async function renderDash() {
+  const myReq = ++dashReqId;
   buildDashMonthOptions();
   const ym = $('dashMonth') ? $('dashMonth').value : '2026-08';
 
   if (ym === '2026-08') { // ---- 실측 모드 ----
     $('dashSub').textContent = '2026-08 실측(근태·매출) 기준 — 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
-    const rows = Object.entries(OT_DATA).filter(([, s]) => s.aug) // 실측 없는 신규점(동부산)은 실측 모드에서 제외
+    const rows = sortDashRows(Object.entries(OT_DATA).filter(([, s]) => s.aug) // 실측 없는 신규점(동부산)은 실측 모드에서 제외
       .map(([code, s]) => {
       const need = monthNeedMH(code, '2026-08', s.augM); // 운영 제약 포함 필요 (피드백과 동일 산식)
+      // 8월 실측 인건비 근사: 메이트(실근무MH×실질시급) + 정직원 급여 + 연차수당 + 퇴직(순매출 0.6%)
+      const labor = s.aug.mmh * s.eff + s.fullpay + s.nfull * 100000 + s.augM / 1.1 * 0.006;
       return { code, name: s.name, sales: s.augM, mh: s.aug.mh,
-               prod: s.aug.prod, need, over: s.aug.mh - need, needTheory: s.aug.need };
-    }).sort((a, b) => b.prod - a.prod);
+               prod: s.aug.prod, need, over: s.aug.mh - need, needTheory: s.aug.need,
+               labor, ratio: labor / (s.augM / 1.1) * 100 };
+    }));
     const tSales = rows.reduce((t, r) => t + r.sales, 0);
     const tMH = rows.reduce((t, r) => t + r.mh, 0);
     const tOver = rows.reduce((t, r) => t + Math.max(0, r.over), 0);
     const nOk = rows.filter(r => r.prod >= TARGET).length;
-    // 8월 실측 인건비 근사: 메이트(실근무MH×실질시급) + 정직원 급여 + 연차수당 + 퇴직(순매출 0.6%)
-    const laborTot = rows.reduce((t, r) => {
-      const s = OT_DATA[r.code];
-      return t + s.aug.mmh * s.eff + s.fullpay + s.nfull * 100000 + s.augM / 1.1 * 0.006;
-    }, 0);
+    const laborTot = rows.reduce((t, r) => t + r.labor, 0);
     const ratioTot = laborTot / (tSales / 1.1) * 100;
     // 과잉 MH를 인건비액으로 환산(매장별 실질시급) — 줄였다면 그대로 이익이 됐을 금액
     const overCost = rows.reduce((t, r) => t + Math.max(0, r.over) * OT_DATA[r.code].eff, 0);
@@ -275,19 +291,21 @@ async function renderDash() {
       `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">생산성 ≥ 72,000</div></div>` +
       `<div><div class="k">과잉 투입 인건비</div><div class="v" style="color:var(--crit)">+${won(overCost/10000)}만원</div><div class="s">+${won(tOver)} MH(운영 제약 반영) · 인건비의 ${overPct.toFixed(1)}% · 이론 여지 +${won(overTheory)} MH</div></div>`;
     const maxOver = Math.max(...rows.map(r => Math.abs(r.over)));
-    let html = '<table><colgroup><col style="width:150px"><col style="width:80px"><col style="width:80px"><col style="width:90px"><col style="width:80px"><col style="width:170px"><col style="width:90px"></colgroup>' +
-      '<thead><tr><th>매장</th><th>매출(억)</th><th>총 MH</th><th>생산성(원/MH)</th><th>생산성 점수</th><th>과잉 MH</th><th>밴드</th></tr></thead><tbody>';
+    let html = '<table><colgroup><col style="width:150px"><col style="width:80px"><col style="width:80px"><col style="width:90px"><col style="width:80px"><col style="width:90px"><col style="width:170px"><col style="width:90px"></colgroup>' +
+      '<thead><tr><th>매장</th><th>매출(억)</th><th>총 MH</th><th>생산성(원/MH)</th><th>생산성 점수</th><th>인건비율</th><th>과잉 MH</th><th>밴드</th></tr></thead><tbody>';
     for (const r of rows) {
       const b = prodBand(r.prod);
+      const rb = r.ratio > LABOR_CAP * 100 ? 'c' : r.ratio <= 24 ? 'g' : r.ratio <= 28 ? 'w' : 'c';
       const w = Math.round(Math.abs(r.over) / maxOver * 90);
       html += `<tr class="rowlink" data-code="${r.code}"><td>${r.name}</td><td>${(r.sales/1e8).toFixed(2)}</td>` +
         `<td>${won(r.mh)}</td><td><b>${won(r.prod)}</b></td><td><b>${(r.prod / TARGET * 100).toFixed(0)}%</b></td>` +
+        `<td><span class="band ${rb}">${r.ratio.toFixed(1)}%</span></td>` +
         `<td>${r.over > 0 ? '+' + won(r.over) : won(r.over)} <span class="mini" style="width:${w}px;${r.over<=0?'background:var(--dark)':''}"></span></td>` +
         `<td><span class="band ${b}">${b==='g'?'목표권':b==='w'?'관리':'미달'}</span></td></tr>`;
     }
     $('dashTable').innerHTML = html + '</tbody></table>';
   } else if (dashActual.months.has(ym)) { // ---- 진행 중인 달: 누적 실적 ----
-    await renderDashMTD(ym);
+    await renderDashMTD(ym, myReq);
   } else { // ---- 계획 모드 ----
     $('dashSub').textContent = `${ym} 계획 기준 — 확정 저장된 월 계획이 있으면 그 값을, 없으면 기본값(8월 매출·현재 정직원 구성)으로 계산합니다. 실적이 적재되면(M2) 자동으로 실측으로 전환됩니다.`;
     $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">계획 계산 중…</p>';
@@ -298,7 +316,8 @@ async function renderDash() {
         .select('store_code,forecast_sales,staffing_snapshot,output').eq('ym', ym).eq('status', 'confirmed');
       (data || []).forEach(p => { saved[p.store_code] = p; });
     } catch (e) { /* 무시 */ }
-    const rows = Object.entries(OT_DATA).map(([code, s]) => {
+    if (myReq !== dashReqId) return; // 그 사이 더 최신 조회로 바뀜 — 이 결과는 버린다
+    const rows = sortDashRows(Object.entries(OT_DATA).map(([code, s]) => {
       const p = saved[code];
       const M = p ? Number(p.forecast_sales) : s.augM;
       const nfull = p?.staffing_snapshot?.nfull ?? s.nfull;
@@ -308,7 +327,7 @@ async function renderDash() {
       const stdTag = plan.std ? (plan.capped ? '<br>표준표·상한 적용' : '<br>표준표') : '';
       return { code, name: s.name, sales: M, mh: plan.totMH, prod,
                ratio: plan.std ? plan.ratio : (p?.output?.ratio ?? plan.ratio), src: (p ? '확정 계획' : '기본값') + stdTag };
-    }).sort((a, b) => b.prod - a.prod);
+    }));
     const tSales = rows.reduce((t, r) => t + r.sales, 0);
     const tMH = rows.reduce((t, r) => t + r.mh, 0);
     const nOk = rows.filter(r => r.prod >= TARGET).length;
