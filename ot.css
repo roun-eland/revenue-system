@@ -165,6 +165,16 @@ select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent-sof
 .dtable th.day.exp{color:#fff;background:var(--dark)}
 .dtable td.hr{font-weight:500;text-align:left;background:var(--surface);color:var(--muted)}
 .dtable td.z{color:#bbbbbb}
+/* 시간×직원 표(dtable-emp) — 엑셀 표준안과 같은 모양: 열=직원 1명, 행=30분 슬롯 */
+.dtable-emp th.hr,.dtable-emp td.hr{position:sticky;left:0;z-index:2}
+.dtable-emp th.hr{z-index:3;background:var(--fill)}
+.dtable-emp th.ft{background:var(--dark);color:#fff}
+.dtable-emp th.mate{background:var(--accent-bg)}
+.dtable-emp td.off{background:var(--surface)}
+.dtable-emp td.slot-ft{background:#f0f0f0}
+.dtable-emp td.slot-mate{background:var(--accent-bg)}
+.dtable-emp td.meal{background:repeating-linear-gradient(45deg,#8fdf46,#8fdf46 3px,#d9f3bd 3px,#d9f3bd 6px)}
+.dtable-emp td.fmeal{background:repeating-linear-gradient(45deg,#2f3030,#2f3030 3px,#7a7a7a 3px,#7a7a7a 6px);color:#fff}
 .dsum{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .dsum span{font-size:12px;color:var(--muted);background:var(--surface);border:1px solid var(--line);
   border-radius:12px;padding:5px 12px;display:inline-flex;align-items:center;gap:4px}

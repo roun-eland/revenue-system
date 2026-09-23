@@ -647,9 +647,9 @@ function render() {
 
   const cur = types.find(ty => String(selDay) === ty.key) || types[5];
   const A = dailyOf(cur.idx);
-  $('tabDt').textContent = std ? "상세 (시간×파트)" : "상세 (시간×요일×파트)";
+  $('tabDt').textContent = std ? "상세 (시간×직원)" : "상세 (시간×요일×파트)";
   $('tabSf').textContent = std ? "시프트판 (표준안)" : "시프트판";
-  $('dHead').textContent = std ? "시간 × 파트 배치 — 선임점장 표준안 (평일·주말)" : "시간 × 요일 배치 — 요일을 누르면 파트별로 펼쳐집니다";
+  $('dHead').textContent = std ? "시간 × 직원 배치 — 선임점장 표준안 (평일·주말)" : "시간 × 요일 배치 — 요일을 누르면 파트별로 펼쳐집니다";
   $('sfHead').textContent = std ? "표준 시프트판 — 선임점장 표준안, 이대로 스케줄에 옮기면 됩니다" : "요일별 시프트판 — 이대로 스케줄에 옮기면 됩니다";
   if (std) {
     renderStdOverview(std, cur, A, s, fullpay);
@@ -894,13 +894,27 @@ function renderStdOverview(std, cur, A, s, fullpay) {
   }
   $('shiftNote').textContent = `정직원 ${st.nFt}자리 · 메이트 ${st.nMate}명 — 선임점장 표준안(평균 매출일 기준)을 ${stdDayLabel(k)} 표 그대로 적용합니다. 인건비율 상한 ${Math.round(LABOR_CAP * 100)}%는 월 합계에서 적용되어 초과 시 메이트 인시를 비례 감축합니다.`;
 }
+// 원본 엑셀 표준안과 같은 모양 — 열 = 직원 1명(블록), 행 = 30분 슬롯. 셀 값 = 그 시간의 구체 업무(없으면 기본 역할).
+// 정직원 먼저, 그다음 파트(홀→주방)·시작시간 순 — 시프트판과 동일 정렬로 두 탭이 서로 대응되게 한다.
 function renderStdDetail(std) {
-  const st = std[stdDetDay].stats;
-  const heat = v => v <= 0 ? "" : `background:color-mix(in srgb,var(--heat) ${Math.min(75, Math.round(10 + v * 17))}%,transparent)`;
-  let h = '<table class="dtable"><thead><tr><th>시간</th><th>총</th>' + STD_CATS.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
-  for (const r of st.hours) {
-    h += `<tr><td class="hr">${r.label}</td><td>${stdFmt(r.need)}</td>` +
-      STD_CATS.map(c => { const v = r.cats[c]; return `<td class="${v ? "" : "z"}" style="${heat(v)}">${v ? stdFmt(v) : "·"}</td>`; }).join("") + "</tr>";
+  const plan = std[stdDetDay], st = plan.stats;
+  const blocks = plan.blocks.slice().sort((a, b) => (b.ft - a.ft) || (a.p === b.p ? a.slots[0] - b.slots[0] : (a.p === "홀" ? -1 : 1)));
+  const cellText = (b, i) => b.slots.includes(i) ? (b.taskAt[i] || b.r) : "";
+
+  let h = '<table class="dtable dtable-emp"><thead>' +
+    '<tr><th class="hr">구분</th><th class="hr">근무인원</th>' + blocks.map(b => `<th class="${b.ft ? "ft" : "mate"}">${b.p}</th>`).join("") + "</tr>" +
+    '<tr><th class="hr">직책/역할</th><th class="hr"></th>' + blocks.map(b => `<th class="${b.ft ? "ft" : "mate"}">${b.ft ? "정직원 " : ""}${b.r}</th>`).join("") + "</tr>" +
+    '<tr><th class="hr">시간</th><th class="hr">인원(명)</th>' + blocks.map((b, i) => `<th class="${b.ft ? "ft" : "mate"}">직원${i + 1}</th>`).join("") + "</tr>" +
+    "</thead><tbody>";
+  for (let i = 1; i <= 32; i++) {
+    h += `<tr><td class="hr">${stdSlotLabel(i)}</td><td class="hr">${st.cnt.all[i] || 0}</td>` +
+      blocks.map(b => {
+        const t = cellText(b, i);
+        if (!t) return '<td class="off"></td>';
+        const meal = t === "밥차";
+        const cls = meal ? (b.ft ? "fmeal" : "meal") : (b.ft ? "slot-ft" : "slot-mate");
+        return `<td class="${cls}">${t}</td>`;
+      }).join("") + "</tr>";
   }
   h += "</tbody></table>";
   const box = $('dtable'); box.innerHTML = "";
@@ -908,7 +922,7 @@ function renderStdDetail(std) {
   const wrap = document.createElement("div"); wrap.innerHTML = h; box.appendChild(wrap);
   $('dsum').innerHTML = `<span>${stdDayLabel(stdDetDay)} 표준안</span><span>정직원 <b>${st.nFt}자리 · ${st.ftMH.toFixed(1)}h</b></span>` +
     `<span>메이트 <b>${st.nMate}명 · ${st.mateMH.toFixed(1)}h</b></span><span>식사(밥차, 근무 제외) <b>${st.mealMH.toFixed(1)}h</b></span>`;
-  $('dNote').textContent = "표의 업무내용을 파트로 분류한 시간대별 근무 인원(30분 슬롯 평균). 밥차 = 직원 식사시간으로 근무·인건비에서 제외. 관리·기타 = 정직원 관리업무·발주·청소·업무 미기재 시간.";
+  $('dNote').textContent = "열 = 직원 1명(왼쪽부터 정직원·홀·주방, 시작시간 순 — 시프트판 탭과 동일 순서). 셀 = 그 시간 구체 업무(없으면 기본 역할). 밥차 = 직원 식사시간으로 근무·인건비에서 제외. 성명·인원번호는 개인정보라 표시하지 않고 순번으로만 표기합니다.";
 }
 function renderStdShift(std, s, fullpay, stdAvg) {
   const plan = std[stdSfDay], st = plan.stats;
