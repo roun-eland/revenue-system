@@ -606,6 +606,34 @@
         </div>
         </details>
       </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>④ 축산 단가</h3>
+          <span class="hint">소고기·돼지고기 등 축산 자재는 실사용량수량이 박스규격 기준 명목치라 그램이 부정확합니다(월말에 단가로 금액만 맞춤) — 그 달의 진짜 kg당 고정단가(전 매장 공통)를 넣어두면, 인당소비량 계산 시 금액÷단가로 실제 소비 무게를 역산합니다. 원가율(금액 기준)에는 영향 없습니다.</span>
+        </div>
+        <div class="history-year-row">
+          <span class="hint">등록 연월</span>
+          <input type="month" id="meatPriceMonthInput">
+        </div>
+        <div class="table-scroll">
+          <table class="data-table editable-grid" id="meatPriceGrid">
+            <thead><tr><th>자재코드</th><th>자재명</th><th>kg당단가(원)</th><th></th></tr></thead>
+            <tbody id="meatPriceGridBody"></tbody>
+          </table>
+        </div>
+        <div class="grid-actions">
+          <button id="addMeatPriceRowBtn" class="btn btn-ghost btn-sm" type="button">+ 행 추가</button>
+          <button id="saveMeatPriceGridBtn" class="btn btn-primary btn-sm" type="button">붙여넣은 표 저장</button>
+          <span id="meatPriceSaveMsg" class="save-msg"></span>
+        </div>
+        <div class="card-head" style="margin-top:14px"><h3 style="font-size:13px">이 달 등록된 고정단가</h3></div>
+        <div class="table-scroll">
+          <table class="data-table" id="meatPriceViewTable">
+            <thead><tr><th>자재코드</th><th class="cell-left">자재명</th><th>kg당단가</th><th></th></tr></thead>
+            <tbody id="meatPriceViewBody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <div id="subtab-usage" class="subtab-panel">
@@ -758,6 +786,6 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../app.js?v=202609151145"></script>
+<script src="../app.js?v=202609291200"></script>
 </body>
 </html>

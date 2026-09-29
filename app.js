@@ -3726,6 +3726,85 @@ $('#usageFileInput').addEventListener('change', async (e) => {
   }
 });
 
+// =====================================================================
+// Tab 6b: 축산 고정단가 (소고기·돼지고기 등 — kg당단가, 전 매장 공통, 월 1건/자재)
+// 배경: EATS 자재사용량의 수량은 박스규격 기준 명목치라 실제 소비 무게가 아니다(금액만 정확·[[project_roun_consumption_model_pitfalls]]류 함정).
+// 여기 입력한 고정단가로 "금액÷단가=진짜 소비 무게"를 역산해 인당소비량에만 반영한다(원가율은 금액 기준이라 무관).
+const MEAT_PRICE_FIELDS = ['material_code', 'material_name', 'price_per_kg'];
+(() => {
+  const now = new Date();
+  $('#meatPriceMonthInput').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+})();
+
+const meatPriceGridBody = $('#meatPriceGridBody');
+function addMeatPriceRow() {
+  const tr = document.createElement('tr');
+  tr.innerHTML = MEAT_PRICE_FIELDS.map((f, i) => {
+    const isNumeric = i === 2;
+    return `<td><input type="${isNumeric ? 'number' : 'text'}" ${isNumeric ? 'step="0.01"' : ''} data-col="${i}"></td>`;
+  }).join('') + `<td><button type="button" class="row-del-btn" title="삭제">×</button></td>`;
+  tr.querySelector('.row-del-btn').addEventListener('click', () => tr.remove());
+  meatPriceGridBody.appendChild(tr);
+  return tr;
+}
+for (let i = 0; i < 3; i++) addMeatPriceRow();
+$('#addMeatPriceRowBtn').addEventListener('click', () => addMeatPriceRow());
+attachPasteFill(meatPriceGridBody, addMeatPriceRow);
+
+async function loadMeatPriceView() {
+  const monthValue = $('#meatPriceMonthInput').value; // "YYYY-MM"
+  const body = $('#meatPriceViewBody');
+  if (!monthValue) { body.innerHTML = ''; return; }
+  const usageMonth = `${monthValue}-01`;
+  const { data, error } = await sb.from('material_fixed_price').select('id, material_code, material_name, price_per_kg')
+    .eq('usage_month', usageMonth).order('material_name');
+  if (error) { body.innerHTML = `<tr><td colspan="4" class="hint">불러오기 실패: ${error.message}</td></tr>`; return; }
+  if (!data || !data.length) { body.innerHTML = `<tr><td colspan="4" class="hint">이 달에 등록된 고정단가가 없습니다.</td></tr>`; return; }
+  body.innerHTML = data.map(r => `<tr data-id="${r.id}">
+    <td>${r.material_code}</td><td class="cell-left">${r.material_name || ''}</td><td>${fmtNum(r.price_per_kg, 0)}</td>
+    <td><button type="button" class="row-del-btn" title="삭제">×</button></td></tr>`).join('');
+  body.querySelectorAll('.row-del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const tr = btn.closest('tr');
+      const { error: delErr } = await sb.from('material_fixed_price').delete().eq('id', tr.dataset.id);
+      if (delErr) { flash($('#meatPriceSaveMsg'), '삭제 실패: ' + delErr.message, false); return; }
+      tr.remove();
+    });
+  });
+}
+$('#meatPriceMonthInput').addEventListener('change', loadMeatPriceView);
+loadMeatPriceView();
+
+$('#saveMeatPriceGridBtn').addEventListener('click', async () => {
+  const monthValue = $('#meatPriceMonthInput').value;
+  if (!monthValue) { flash($('#meatPriceSaveMsg'), '등록 연월을 선택해주세요.', false); return; }
+  const usageMonth = `${monthValue}-01`;
+  const rows = [];
+  $$('tr', meatPriceGridBody).forEach(tr => {
+    const code = tr.querySelector('input[data-col="0"]').value.trim();
+    const name = tr.querySelector('input[data-col="1"]').value.trim();
+    const price = numOrNull(tr.querySelector('input[data-col="2"]').value);
+    if (!code || price == null) return; // 자재코드·단가 둘 다 있어야 저장
+    rows.push({ usage_month: usageMonth, material_code: code, material_name: name || null, price_per_kg: price });
+  });
+  if (!rows.length) { flash($('#meatPriceSaveMsg'), '입력된 행이 없습니다(자재코드·단가 필수).', false); return; }
+  const btn = $('#saveMeatPriceGridBtn');
+  const originalLabel = btn.textContent;
+  btn.disabled = true; btn.textContent = '저장 중...';
+  try {
+    const { error } = await sb.from('material_fixed_price').upsert(rows, { onConflict: 'usage_month,material_code' });
+    if (error) throw new Error(error.message);
+    meatPriceGridBody.innerHTML = '';
+    for (let i = 0; i < 3; i++) addMeatPriceRow();
+    await loadMeatPriceView();
+    flash($('#meatPriceSaveMsg'), `${rows.length}개 자재의 ${monthValue} 고정단가가 저장되었습니다.`);
+  } catch (e) {
+    flash($('#meatPriceSaveMsg'), '저장 실패: ' + e.message, false);
+  } finally {
+    btn.disabled = false; btn.textContent = originalLabel;
+  }
+});
+
 let usageViewCache = [];
 async function loadUsageView() {
   if (!state.currentSeasonId) return;
