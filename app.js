@@ -2266,14 +2266,20 @@ async function computeMenuConsumption(onProgress, dateRange, brandOnly) {
   if (!flat) return { error: '레시피 데이터를 불러오지 못했습니다.' };
   const { flatByMenu, cookedWeightByMenu, finalMenus, availabilityPatternByMenu } = flat;
 
-  const [{ data: usageRows, error: usageErr }, { data: salesRows, error: salesErr }, { data: designRows }, aliasRes] = await Promise.all([
-    fetchAllRows('material_usage', q => applyRange(q, 'period_end'), 'store_code, store_name, material_code, actual_usage_qty, conversion_factor'),
+  const [{ data: usageRows, error: usageErr }, { data: salesRows, error: salesErr }, { data: designRows }, aliasRes, fixedPriceRes] = await Promise.all([
+    fetchAllRows('material_usage', q => applyRange(q, 'period_end'), 'store_code, store_name, material_code, actual_usage_qty, actual_usage_amount, conversion_factor, usage_month'),
     fetchAllRows('store_sales', q => applyRange(q, 'sales_date'), 'store_code, store_name, customers_total, customers_dinner, is_holiday, sales_total'),
     fetchAllRows('menu_designs', q => q.eq('season_id', seasonId)),
     sb.from('material_aliases').select('primary_material_code, alt_material_code').eq('status', 'confirmed'),
+    sb.from('material_fixed_price').select('material_code, usage_month, price_per_kg'),
   ]);
   if (usageErr || salesErr) return { error: '자재사용량/매출 데이터를 불러오지 못했습니다.' };
   const confirmedAliases = aliasRes.data;
+  // 축산(소고기·돼지고기 등) 고정단가가 등록된 자재·월은 "금액÷고정단가"로 진짜 소비 무게를 역산한다 —
+  // EATS 실사용량수량이 박스규격 기준 명목치라 그램이 부정확한 문제의 보정([[project_roun_consumption_model_pitfalls]]류).
+  // 등록된 그 자재코드·그 달에만 적용되고, 별칭으로 묶인 다른 코드나 값이 없는 달은 기존 방식 그대로.
+  const fixedPriceByKey = new Map();
+  (fixedPriceRes.data || []).forEach(r => { if (r.price_per_kg > 0) fixedPriceByKey.set(`${r.material_code}||${r.usage_month}`, Number(r.price_per_kg)); });
 
   // ---- 매장과 무관한, 레시피에서만 나오는 구조는 한 번만 계산 ----
   // 브랜드/공급처가 바뀌어 다른 코드로 쓰인 것으로 확정된 자재들을 "그룹"으로 묶는다 (union-find로 중복 합산 방지).
@@ -2323,7 +2329,10 @@ async function computeMenuConsumption(onProgress, dateRange, brandOnly) {
     const ownUsageByCode = new Map();
     rows.forEach(r => {
       if (!r.material_code) return;
-      const grams = (Number(r.actual_usage_qty) || 0) * (Number(r.conversion_factor) || 0);
+      const fixedPrice = fixedPriceByKey.get(`${r.material_code}||${r.usage_month}`);
+      const grams = (fixedPrice && r.actual_usage_amount != null)
+        ? (Number(r.actual_usage_amount) / fixedPrice) * 1000
+        : (Number(r.actual_usage_qty) || 0) * (Number(r.conversion_factor) || 0);
       ownUsageByCode.set(r.material_code, (ownUsageByCode.get(r.material_code) || 0) + grams);
     });
     const clusterTotal = new Map();
