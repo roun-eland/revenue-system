@@ -3574,11 +3574,16 @@ const USAGE_FIELDS = [...USAGE_GRID_FIELDS, ...USAGE_CLASSIFICATION_FIELDS];
 const USAGE_NUMERIC_FROM = 6; // conversion_factor onward through actual_usage_amount (index 14) are numeric
 const USAGE_NUMERIC_TO = 14;
 
-// 재고실사 주기: 매주 월요일 + 매달 말일(요일 무관). 한 주의 실사용 기간은 (직전 실사일, 이번 실사일].
+// 명절 등으로 정기(월요일) 재고실사를 건너뛰고 다음 실사(주로 말일)로 합친 날 — 그 주만 예외적으로
+// 없던 걸로 치고 앞뒤 실사 구간을 합친다. 2026-09-28: 추석 연휴로 생략, 9/30 월말실사로 통합(사용자 확인 2026-09-30).
+const SKIPPED_INVENTORY_CUTOFFS = new Set(['2026-09-28']);
+
+// 재고실사 주기: 매주 월요일 + 매달 말일(요일 무관, 위 예외 제외). 한 주의 실사용 기간은 (직전 실사일, 이번 실사일].
 // 선택한 연월에 "실사일(period_end)"이 속하는 주차들을 계산한다 — 과거 대량 백필 때 파일명으로 검증한 규칙과 동일.
 function computeWeekOptionsForMonth(year, month) {
   const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const isCutoffDay = (d) => {
+    if (SKIPPED_INVENTORY_CUTOFFS.has(fmt(d))) return false; // 실사를 생략한 날 — 다음 실사에 합쳐짐
     if (d.getDay() === 1) return true; // 월요일
     const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
     return d.getDate() === lastDay; // 말일
