@@ -4404,19 +4404,24 @@ async function loadStoreDash() {
   $('#sdashTable').innerHTML = '<tbody><tr><td style="padding:18px;color:var(--muted)">불러오는 중…</td></tr></tbody>';
   $('#sdashFreshTable').innerHTML = '';
 
-  const [{ data: usage }, { data: sales }, { data: targets }] = await Promise.all([
+  const [{ data: usage }, { data: sales }, { data: targets }, { data: fixedPrices }] = await Promise.all([
     fetchAllRows('material_usage', q => q.gte('period_end', weeks[0].periodEnd).lte('period_end', to),
-      'store_code,store_name,remark,material_name,conversion_factor,actual_usage_qty,actual_usage_amount,current_stock_qty,period_end'),
+      'store_code,store_name,remark,material_code,material_name,conversion_factor,actual_usage_qty,actual_usage_amount,current_stock_qty,period_end'),
     fetchAllRows('store_sales', q => q.gte('sales_date', from).lte('sales_date', to),
       'store_code,store_name,sales_date,sales_total,customers_total'),
     // cost_targets는 PK가 store_code라 fetchAllRows(order by id)를 못 쓴다 — 17행이라 단건 조회로 충분
     sb.from('cost_targets').select('store_code,target_pct'),
+    sb.from('material_fixed_price').select('material_code,price_per_kg'),
   ]);
   if (my !== sdashToken) return;
   if (!(usage || []).length) {
     $('#sdashTable').innerHTML = `<tbody><tr><td style="padding:18px;color:var(--muted)">${inp.value} 자재 사용량 데이터가 없습니다 — 데이터 › 업로드에서 주차 자재를 올려주세요.</td></tr></tbody>`;
     return;
   }
+  // 축산 고정단가 등록된 자재는 여기서도 금액÷고정단가로 그램을 역산한다 — computeMenuConsumption과
+  // 같은 보정([[project_roun_consumption_model_pitfalls]]류, 자재코드 1건당 단가 1개).
+  const fixedPriceByCode = new Map();
+  (fixedPrices || []).forEach(r => { if (r.price_per_kg > 0) fixedPriceByCode.set(r.material_code, Number(r.price_per_kg)); });
   const targetBy = new Map((targets || []).map(t => [t.store_code, Number(t.target_pct)]));
   const weekIdxByEnd = new Map(weeks.map((w, i) => [w.periodEnd, i]));
   const weekOfDate = d => weeks.findIndex(w => d >= w.periodStart && d <= w.periodEnd);
@@ -4436,7 +4441,10 @@ async function loadStoreDash() {
     const amt = Number(r.actual_usage_amount) || 0;
     if (wi != null) s.wAmt[wi] += amt;
     if (wi == null || !inMonth[wi]) return; // 우측 지표(소비량·축산)는 기준월 주차만
-    const grams = (Number(r.actual_usage_qty) || 0) * (Number(r.conversion_factor) || 0);
+    const fixedPrice = fixedPriceByCode.get(r.material_code);
+    const grams = (fixedPrice && r.actual_usage_amount != null)
+      ? (Number(r.actual_usage_amount) / fixedPrice) * 1000
+      : (Number(r.actual_usage_qty) || 0) * (Number(r.conversion_factor) || 0);
     s.g += grams;
     if (r.remark === '축산') {
       s.gMeat += grams; s.amtMeat += amt;
