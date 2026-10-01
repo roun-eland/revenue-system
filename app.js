@@ -2271,15 +2271,16 @@ async function computeMenuConsumption(onProgress, dateRange, brandOnly) {
     fetchAllRows('store_sales', q => applyRange(q, 'sales_date'), 'store_code, store_name, customers_total, customers_dinner, is_holiday, sales_total'),
     fetchAllRows('menu_designs', q => q.eq('season_id', seasonId)),
     sb.from('material_aliases').select('primary_material_code, alt_material_code').eq('status', 'confirmed'),
-    sb.from('material_fixed_price').select('material_code, usage_month, price_per_kg'),
+    sb.from('material_fixed_price').select('material_code, price_per_kg'),
   ]);
   if (usageErr || salesErr) return { error: '자재사용량/매출 데이터를 불러오지 못했습니다.' };
   const confirmedAliases = aliasRes.data;
-  // 축산(소고기·돼지고기 등) 고정단가가 등록된 자재·월은 "금액÷고정단가"로 진짜 소비 무게를 역산한다 —
+  // 축산(소고기·돼지고기 등) 고정단가가 등록된 자재는 "금액÷고정단가"로 진짜 소비 무게를 역산한다 —
   // EATS 실사용량수량이 박스규격 기준 명목치라 그램이 부정확한 문제의 보정([[project_roun_consumption_model_pitfalls]]류).
-  // 등록된 그 자재코드·그 달에만 적용되고, 별칭으로 묶인 다른 코드나 값이 없는 달은 기존 방식 그대로.
+  // 등록된 그 자재코드에만 적용되고(별칭으로 묶인 다른 코드는 안 번짐), 코드당 단가 1개(월 구분 없음 — 단가가
+  // 바뀌면 보통 새 자재코드로 들어오기 때문).
   const fixedPriceByKey = new Map();
-  (fixedPriceRes.data || []).forEach(r => { if (r.price_per_kg > 0) fixedPriceByKey.set(`${r.material_code}||${r.usage_month}`, Number(r.price_per_kg)); });
+  (fixedPriceRes.data || []).forEach(r => { if (r.price_per_kg > 0) fixedPriceByKey.set(r.material_code, Number(r.price_per_kg)); });
 
   // ---- 매장과 무관한, 레시피에서만 나오는 구조는 한 번만 계산 ----
   // 브랜드/공급처가 바뀌어 다른 코드로 쓰인 것으로 확정된 자재들을 "그룹"으로 묶는다 (union-find로 중복 합산 방지).
@@ -2329,7 +2330,7 @@ async function computeMenuConsumption(onProgress, dateRange, brandOnly) {
     const ownUsageByCode = new Map();
     rows.forEach(r => {
       if (!r.material_code) return;
-      const fixedPrice = fixedPriceByKey.get(`${r.material_code}||${r.usage_month}`);
+      const fixedPrice = fixedPriceByKey.get(r.material_code);
       const grams = (fixedPrice && r.actual_usage_amount != null)
         ? (Number(r.actual_usage_amount) / fixedPrice) * 1000
         : (Number(r.actual_usage_qty) || 0) * (Number(r.conversion_factor) || 0);
@@ -3741,14 +3742,12 @@ $('#usageFileInput').addEventListener('change', async (e) => {
 });
 
 // =====================================================================
-// Tab 6b: 축산 고정단가 (소고기·돼지고기 등 — kg당단가, 전 매장 공통, 월 1건/자재)
+// Tab 6b: 축산 고정단가 (소고기·돼지고기 등 — kg당단가, 전 매장 공통, 자재코드 1건당 1개)
 // 배경: EATS 자재사용량의 수량은 박스규격 기준 명목치라 실제 소비 무게가 아니다(금액만 정확·[[project_roun_consumption_model_pitfalls]]류 함정).
 // 여기 입력한 고정단가로 "금액÷단가=진짜 소비 무게"를 역산해 인당소비량에만 반영한다(원가율은 금액 기준이라 무관).
+// 월 구분이 없는 이유(2026-10-01 확인): 실제로는 같은 코드의 단가가 달마다 바뀌는 게 아니라, 단가가
+// 바뀌면 공급처가 새 자재코드를 발급한다 — 그래서 코드별 최신 단가 1개만 유지하면 된다.
 const MEAT_PRICE_FIELDS = ['material_code', 'material_name', 'price_per_kg'];
-(() => {
-  const now = new Date();
-  $('#meatPriceMonthInput').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-})();
 
 const meatPriceGridBody = $('#meatPriceGridBody');
 function addMeatPriceRow() {
@@ -3766,14 +3765,11 @@ $('#addMeatPriceRowBtn').addEventListener('click', () => addMeatPriceRow());
 attachPasteFill(meatPriceGridBody, addMeatPriceRow);
 
 async function loadMeatPriceView() {
-  const monthValue = $('#meatPriceMonthInput').value; // "YYYY-MM"
   const body = $('#meatPriceViewBody');
-  if (!monthValue) { body.innerHTML = ''; return; }
-  const usageMonth = `${monthValue}-01`;
   const { data, error } = await sb.from('material_fixed_price').select('id, material_code, material_name, price_per_kg')
-    .eq('usage_month', usageMonth).order('material_name');
+    .order('material_name');
   if (error) { body.innerHTML = `<tr><td colspan="4" class="hint">불러오기 실패: ${error.message}</td></tr>`; return; }
-  if (!data || !data.length) { body.innerHTML = `<tr><td colspan="4" class="hint">이 달에 등록된 고정단가가 없습니다.</td></tr>`; return; }
+  if (!data || !data.length) { body.innerHTML = `<tr><td colspan="4" class="hint">등록된 고정단가가 없습니다.</td></tr>`; return; }
   body.innerHTML = data.map(r => `<tr data-id="${r.id}">
     <td>${r.material_code}</td><td class="cell-left">${r.material_name || ''}</td><td>${fmtNum(r.price_per_kg, 0)}</td>
     <td><button type="button" class="row-del-btn" title="삭제">×</button></td></tr>`).join('');
@@ -3786,32 +3782,28 @@ async function loadMeatPriceView() {
     });
   });
 }
-$('#meatPriceMonthInput').addEventListener('change', loadMeatPriceView);
 loadMeatPriceView();
 
 $('#saveMeatPriceGridBtn').addEventListener('click', async () => {
-  const monthValue = $('#meatPriceMonthInput').value;
-  if (!monthValue) { flash($('#meatPriceSaveMsg'), '등록 연월을 선택해주세요.', false); return; }
-  const usageMonth = `${monthValue}-01`;
   const rows = [];
   $$('tr', meatPriceGridBody).forEach(tr => {
     const code = tr.querySelector('input[data-col="0"]').value.trim();
     const name = tr.querySelector('input[data-col="1"]').value.trim();
     const price = numOrNull(tr.querySelector('input[data-col="2"]').value);
     if (!code || price == null) return; // 자재코드·단가 둘 다 있어야 저장
-    rows.push({ usage_month: usageMonth, material_code: code, material_name: name || null, price_per_kg: price });
+    rows.push({ material_code: code, material_name: name || null, price_per_kg: price });
   });
   if (!rows.length) { flash($('#meatPriceSaveMsg'), '입력된 행이 없습니다(자재코드·단가 필수).', false); return; }
   const btn = $('#saveMeatPriceGridBtn');
   const originalLabel = btn.textContent;
   btn.disabled = true; btn.textContent = '저장 중...';
   try {
-    const { error } = await sb.from('material_fixed_price').upsert(rows, { onConflict: 'usage_month,material_code' });
+    const { error } = await sb.from('material_fixed_price').upsert(rows, { onConflict: 'material_code' });
     if (error) throw new Error(error.message);
     meatPriceGridBody.innerHTML = '';
     for (let i = 0; i < 3; i++) addMeatPriceRow();
     await loadMeatPriceView();
-    flash($('#meatPriceSaveMsg'), `${rows.length}개 자재의 ${monthValue} 고정단가가 저장되었습니다.`);
+    flash($('#meatPriceSaveMsg'), `${rows.length}개 자재의 고정단가가 저장되었습니다.`);
   } catch (e) {
     flash($('#meatPriceSaveMsg'), '저장 실패: ' + e.message, false);
   } finally {
