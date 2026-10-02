@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>로운 생산성</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="../ot.css?v=202610021447">
+<link rel="stylesheet" href="../ot.css?v=202610021614">
 </head>
 <body>
 
@@ -108,9 +108,9 @@
       </div>
 
       <div id="ovWrap">
-        <h3>요일을 누르면 그날의 배치표</h3>
+        <h3 id="ovHead">요일을 누르면 그날의 배치표</h3>
         <div class="days" id="days" role="tablist" aria-label="요일 선택"></div>
-        <div class="card">
+        <div class="card" id="ovLegacyCard">
           <p class="daysum" id="daysum"></p>
           <div class="tblwrap">
             <table>
@@ -120,6 +120,10 @@
           </div>
           <div class="legend"><span><i style="background:var(--accent)"></i>정직원</span><span><i style="background:var(--accent-soft)"></i>메이트</span></div>
           <div class="shift" id="shiftNote"></div>
+        </div>
+        <div class="card" id="stdWeekCard" hidden>
+          <div class="tblwrap" id="stdWeekTable"></div>
+          <div class="dnote" id="stdWeekNote"></div>
         </div>
       </div>
 
@@ -254,7 +258,7 @@
 <script src="../export-tables.js?v=202610021415"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
 <script src="../ot-std.js?v=202609231500"></script>
-<script src="../ot.js?v=202610021557"></script>
+<script src="../ot.js?v=202610021614"></script>
 <script src="../ot-actuals.js?v=202610021415"></script>
 </body>
 </html>
