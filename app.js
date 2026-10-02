@@ -480,8 +480,8 @@ function renderKpiRow() {
   const actualRatio = t?.actual_cost_ratio_brand ?? null; // 자재실사용액 / (총매출/1.1), 실적 반영 버튼으로 계산됨
   const wrap = $('#kpiRow');
   const gap = (targetRatio !== null && actualRatio !== null) ? (actualRatio - targetRatio) : null;
-  // 목표 대비 갭(%p) 기준 — 3%p 이내 연두, 3~5%p 주황, 5%p 이상 빨강 (2026-10-02 확정)
-  const sevClass = gap === null ? '' : gap > 5 ? 'is-crit' : gap > 3 ? 'is-warn' : 'is-good';
+  // 목표 대비 갭(%p) 기준 — 1%p 이내 연두, 1~2%p 주황, 2%p 이상 빨강 (2026-10-02 수정)
+  const sevClass = gap === null ? '' : gap >= 2 ? 'is-crit' : gap > 1 ? 'is-warn' : 'is-good';
 
   wrap.innerHTML = `
     <div class="kpi-tile">
