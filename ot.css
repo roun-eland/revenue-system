@@ -175,6 +175,7 @@ select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent-sof
 .dtable-emp td.slot-mate{background:var(--accent-bg)}
 .dtable-emp td.meal{background:repeating-linear-gradient(45deg,#8fdf46,#8fdf46 3px,#d9f3bd 3px,#d9f3bd 6px)}
 .dtable-emp td.fmeal{background:repeating-linear-gradient(45deg,#2f3030,#2f3030 3px,#7a7a7a 3px,#7a7a7a 6px);color:#fff}
+.dtable-emp tr.std-cost-row td{border-top:2px solid var(--line-strong);font-weight:700;font-variant-numeric:tabular-nums}
 .dsum{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .dsum span{font-size:12px;color:var(--muted);background:var(--surface);border:1px solid var(--line);
   border-radius:12px;padding:5px 12px;display:inline-flex;align-items:center;gap:4px}

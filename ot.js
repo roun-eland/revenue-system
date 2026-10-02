@@ -653,7 +653,7 @@ function render() {
   $('sfHead').textContent = std ? "표준 시프트판 — 선임점장 표준안, 이대로 스케줄에 옮기면 됩니다" : "요일별 시프트판 — 이대로 스케줄에 옮기면 됩니다";
   if (std) {
     renderStdOverview(std, cur, A, s, fullpay);
-    renderStdDetail(std);
+    renderStdDetail(std, s, fullpay);
     renderStdShift(std, s, fullpay, stdAvg);
     return;
   }
@@ -896,7 +896,7 @@ function renderStdOverview(std, cur, A, s, fullpay) {
 }
 // 원본 엑셀 표준안과 같은 모양 — 열 = 직원 1명(블록), 행 = 30분 슬롯. 셀 값 = 그 시간의 구체 업무(없으면 기본 역할).
 // 정직원 먼저, 그다음 파트(홀→주방)·시작시간 순 — 시프트판과 동일 정렬로 두 탭이 서로 대응되게 한다.
-function renderStdDetail(std) {
+function renderStdDetail(std, s, fullpay) {
   const plan = std[stdDetDay], st = plan.stats;
   const blocks = plan.blocks.slice().sort((a, b) => (b.ft - a.ft) || (a.p === b.p ? a.slots[0] - b.slots[0] : (a.p === "홀" ? -1 : 1)));
   const cellText = (b, i) => b.slots.includes(i) ? stdShort(b.taskAt[i] || b.r) : "";
@@ -916,9 +916,21 @@ function renderStdDetail(std) {
         return `<td class="${cls}">${t}</td>`;
       }).join("") + "</tr>";
   }
+  // 금액 행 — 정직원(관리자)은 매장 평균 일급(월급합÷정직원수÷30.4), 메이트는 매장 평균 실질시급×근무시간
+  // (식사/밥차 제외)으로 계산해 "하루에 얼마 쓰는지·매출대비 인건비율"을 바로 가늠할 수 있게 한다.
+  const ftDaily = s.nfull ? fullpay / s.nfull / 30.4 : 0;
+  const blockCost = blocks.map(b => {
+    if (b.ft) return ftDaily;
+    let workSlots = 0;
+    for (let i = 1; i <= 32; i++) { const t = cellText(b, i); if (t && t !== "밥차") workSlots++; }
+    return s.effBase * (workSlots / 2);
+  });
+  const totalCost = blockCost.reduce((a, c) => a + c, 0);
+  h += `<tr class="std-cost-row"><td class="hr">금액</td><td class="hr">${won(totalCost)}</td>` +
+    blocks.map((b, i) => `<td class="${b.ft ? "slot-ft" : "slot-mate"}">${won(blockCost[i])}</td>`).join("") + "</tr>";
   h += "</tbody></table>";
   const box = $('dtable'); box.innerHTML = "";
-  box.appendChild(stdToggle(stdDetDay, k => { stdDetDay = k; renderStdDetail(std); }));
+  box.appendChild(stdToggle(stdDetDay, k => { stdDetDay = k; renderStdDetail(std, s, fullpay); }));
   const wrap = document.createElement("div"); wrap.innerHTML = h; box.appendChild(wrap);
   $('dsum').innerHTML = `<span>${stdDayLabel(stdDetDay)} 표준안</span><span>정직원 <b>${st.nFt}자리 · ${st.ftMH.toFixed(1)}h</b></span>` +
     `<span>메이트 <b>${st.nMate}명 · ${st.mateMH.toFixed(1)}h</b></span><span>식사(밥차, 근무 제외) <b>${st.mealMH.toFixed(1)}h</b></span>`;
