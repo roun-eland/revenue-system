@@ -773,19 +773,20 @@ function renderFeedback() {
         <button type="button" class="feedback-item-del" data-key="${key}" data-idx="${i}" title="삭제">×</button>
       </li>`).join('');
   });
+  const resultInput = $('#feedbackResultInput');
+  if (resultInput) resultInput.value = state.seasonTarget?.feedback_result ?? '';
 }
-async function saveFeedbackSections(sections) {
+async function saveSeasonTargetPatch(payload) {
   const seasonId = state.currentSeasonId;
   if (!seasonId) return;
   const hint = $('#feedbackSavedHint');
-  const payload = { feedback_sections: sections };
   if (state.seasonTarget?.id) {
     await sb.from('season_targets').update(payload).eq('id', state.seasonTarget.id);
   } else {
     const { data } = await sb.from('season_targets').insert({ ...payload, season_id: seasonId }).select().maybeSingle();
     if (data) state.seasonTarget = data;
   }
-  if (state.seasonTarget) state.seasonTarget.feedback_sections = payload.feedback_sections;
+  if (state.seasonTarget) Object.assign(state.seasonTarget, payload);
   if (hint) {
     hint.textContent = '저장됨';
     setTimeout(() => { if (hint.textContent === '저장됨') hint.textContent = ''; }, 2000);
@@ -804,7 +805,7 @@ $('#feedbackCard').addEventListener('click', async (e) => {
   if (!state.seasonTarget) state.seasonTarget = {};
   state.seasonTarget.feedback_sections = sections;
   renderFeedback();
-  await saveFeedbackSections(sections);
+  await saveSeasonTargetPatch({ feedback_sections: sections });
   if (addBtn) {
     const key = addBtn.dataset.key;
     const idx = sections[key].length - 1;
@@ -813,10 +814,15 @@ $('#feedbackCard').addEventListener('click', async (e) => {
 });
 $('#feedbackCard').addEventListener('change', async (e) => {
   const input = e.target.closest('.feedback-item-input');
-  if (!input) return;
-  const sections = feedbackSections();
-  sections[input.dataset.key][Number(input.dataset.idx)] = input.value;
-  await saveFeedbackSections(sections);
+  if (input) {
+    const sections = feedbackSections();
+    sections[input.dataset.key][Number(input.dataset.idx)] = input.value;
+    await saveSeasonTargetPatch({ feedback_sections: sections });
+    return;
+  }
+  if (e.target.id === 'feedbackResultInput') {
+    await saveSeasonTargetPatch({ feedback_result: e.target.value });
+  }
 });
 
 // =====================================================================
