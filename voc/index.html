@@ -88,6 +88,7 @@
       <p class="view-sub">매장별 고객 만족 현황 한눈에 — 요인 4종(맛·서비스·청결·가격)의 긍정 응답률을 브랜드 평균과 비교합니다. 행 클릭 → 매장 요인 분석.</p>
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:160px">조회 월<select id="brandMonth"></select></label>
+        <button id="brandExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div class="kpis" id="brandKpis"></div>
       <div class="card">
@@ -103,6 +104,7 @@
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:200px">매장<select id="stStore"></select></label>
         <label class="fld" style="min-width:150px">조회 월<select id="stMonth"></select></label>
+        <button id="stExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div class="kpis" id="stKpis"></div>
       <div class="card" style="margin-bottom:14px">
@@ -146,6 +148,7 @@
       <p class="view-sub">매장×주차 평점으로 흐름을 보고, 칸을 클릭하면 그 매장·주차의 핵심 불만 요소와 리뷰가 아래에 열립니다. 주차 = <b>원가·생산성과 동일 기준</b>(마감 매주 월요일·매달 말일, 보통 화~월).</p>
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:150px">조회 월<select id="wrMonth"></select></label>
+        <button id="wrExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div class="card" style="margin-bottom:14px">
         <div class="tblwrap" id="wrTable"></div>
@@ -165,6 +168,7 @@
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:150px">조회 월<select id="prMonth"></select></label>
         <label class="fld" style="min-width:200px">매장<select id="prStore"></select></label>
+        <button id="prExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div class="kpis" id="prKpis"></div>
       <div id="prClusters"></div>
@@ -181,6 +185,7 @@
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:200px">매장<select id="redStore"></select></label>
         <label class="fld" style="min-width:120px">조치 상태<select id="redStatus"><option value="">전체</option><option value="open">미조치만</option></select></label>
+        <button id="redExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div class="kpis" id="redKpis"></div>
       <div class="card"><div id="redList"></div></div>
@@ -202,13 +207,16 @@
         </select></label>
       </div>
       <div id="rvList"></div>
-      <div class="plan-actions"><button id="rvMore" class="btn btn-sm" type="button" hidden>더 보기</button><span class="plan-msg" id="rvCount"></span></div>
+      <div class="plan-actions"><button id="rvMore" class="btn btn-sm" type="button" hidden>더 보기</button><span class="plan-msg" id="rvCount"></span><button id="rvExportBtn" class="btn btn-sm" type="button">엑셀 다운로드 ⬇</button></div>
     </section>
 
     <!-- V5 데이터 업로드 (planner) -->
     <section id="view-upload" class="view narrow" hidden>
       <h2>데이터 업로드</h2>
       <p class="view-sub">리뷰 원문 파일을 올리면 자동 분류(카테고리·레드플래그) 후 저장됩니다. 같은 영수증의 리뷰는 덮어씁니다(중복 없음).</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <button id="uploadExportBtn" class="btn btn-sm" type="button">엑셀 다운로드 ⬇</button>
+      </div>
       <div class="card" style="margin-bottom:14px">
         <h3 style="margin:0 0 8px">리뷰 원문 업로드</h3>
         <div class="plan-actions">
@@ -241,7 +249,8 @@
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
+<script src="../export-tables.js?v=202610021415"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
-<script src="../voc.js?v=202609092310"></script>
+<script src="../voc.js?v=202610021415"></script>
 </body>
 </html>

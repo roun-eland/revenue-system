@@ -29,10 +29,31 @@ function exTableToAoa(table) {
   return grid;
 }
 
-function exSheetNameFrom(table, fallback) {
-  const raw = table.id || fallback || '표';
+function exSheetNameFrom(nameOrTable, fallback) {
+  const raw = (typeof nameOrTable === 'string' ? nameOrTable : nameOrTable?.id) || fallback || '표';
   const name = String(raw).replace(/[\\/?*[\]:]/g, '').slice(0, 31);
   return name || '표';
+}
+
+function exUniqueSheetName(name, used) {
+  let unique = name, n = 2;
+  while (used.has(unique)) { unique = `${name}_${n++}`.slice(0, 31); }
+  used.add(unique);
+  return unique;
+}
+
+function exDateStamp() {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// container 안의 table들을 [[시트명, aoa], ...] 쌍으로 모은다 — downloadTablesAsExcel 내부용이지만,
+// 표+커스텀 레이아웃을 한 파일에 같이 담고 싶을 때(예: downloadAoaAsExcel에 합쳐서) 직접 써도 된다.
+function collectTableSheetPairs(container) {
+  const root = typeof container === 'string' ? document.querySelector(container) : container;
+  if (!root) return [];
+  const tables = [...root.querySelectorAll('table')].filter(t => t.rows.length && t.offsetParent !== null);
+  return tables.map((table, i) => [exSheetNameFrom(table, `표${i + 1}`), exTableToAoa(table)]).filter(([, aoa]) => aoa.length);
 }
 
 // container(엘리먼트 또는 CSS 선택자) 안의 table을 전부 모아 하나의 xlsx로 받는다.
@@ -40,22 +61,22 @@ function downloadTablesAsExcel(container, filenameBase) {
   if (typeof XLSX === 'undefined') { alert('엑셀 라이브러리가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.'); return; }
   const root = typeof container === 'string' ? document.querySelector(container) : container;
   if (!root) { alert('다운로드할 영역을 찾을 수 없습니다.'); return; }
-  const tables = [...root.querySelectorAll('table')].filter(t => t.rows.length && t.offsetParent !== null);
-  if (!tables.length) { alert('다운로드할 표가 비어 있습니다.'); return; }
+  const pairs = collectTableSheetPairs(root);
+  if (!pairs.length) { alert('다운로드할 표가 비어 있습니다.'); return; }
+  downloadAoaAsExcel(pairs, filenameBase);
+}
+
+// <table> DOM이 아니라 직접 만든 2차원 배열(aoa)을 시트로 받고 싶을 때 쓴다 — 리뷰 카드 목록처럼
+// 화면이 table이 아닌 커스텀 레이아웃인 경우용. sheets: [[시트명, aoa], ...] 배열.
+function downloadAoaAsExcel(sheets, filenameBase) {
+  if (typeof XLSX === 'undefined') { alert('엑셀 라이브러리가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.'); return; }
+  const valid = (sheets || []).filter(([, aoa]) => aoa && aoa.length);
+  if (!valid.length) { alert('다운로드할 내용이 없습니다.'); return; }
   const wb = XLSX.utils.book_new();
   const used = new Set();
-  tables.forEach((table, i) => {
-    const aoa = exTableToAoa(table);
-    if (!aoa.length) return;
-    const name = exSheetNameFrom(table, `표${i + 1}`);
-    let unique = name, n = 2;
-    while (used.has(unique)) { unique = `${name}_${n++}`.slice(0, 31); }
-    used.add(unique);
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    XLSX.utils.book_append_sheet(wb, ws, unique);
+  valid.forEach(([name, aoa], i) => {
+    const unique = exUniqueSheetName(exSheetNameFrom(name, `표${i + 1}`), used);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), unique);
   });
-  if (!wb.SheetNames.length) { alert('다운로드할 표가 비어 있습니다.'); return; }
-  const d = new Date();
-  const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-  XLSX.writeFile(wb, `${filenameBase}_${stamp}.xlsx`);
+  XLSX.writeFile(wb, `${filenameBase}_${exDateStamp()}.xlsx`);
 }

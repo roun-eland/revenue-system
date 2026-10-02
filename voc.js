@@ -11,6 +11,10 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const pct = (n, d) => d ? Math.round(n / d * 100) + '%' : '—';
 
+// 리뷰 카드 목록(표가 아닌 커스텀 레이아웃)을 쓰는 뷰들의 "지금 화면에 보이는 행" 캐시 —
+// 엑셀 다운로드 버튼이 다시 필터링하지 않고 그대로 받아쓴다. 각 render 함수가 채운다.
+const EXPORT_ROWS = {};
+
 // [CX-CLASSIFY-BEGIN] 분류 사전 — 과거분 적재 스크립트(node)가 이 구간을 그대로 재사용하므로 마커를 지우지 말 것
 const CX_CATS = ['위생·이물질', '고객응대', '음식품질', '샐러드바 구성', '운영·대기', '가격', '시설·환경', '기타'];
 // v2 (2026-09-09): 사전을 둘로 분리 — "샐러드바 맛있어요", "친절하게 응대해주셔서" 같은
@@ -377,6 +381,7 @@ function renderStore() {
   // 최근 불만 리뷰 10건
   const recent = [...neg].sort((a, b) => b.sale_date.localeCompare(a.sale_date)).slice(0, 10);
   $('stRecent').innerHTML = recent.length ? recent.map(r => reviewCard(r, false)).join('') : '<p class="dnote">불만 리뷰가 없습니다.</p>';
+  EXPORT_ROWS.stRecent = recent;
 }
 
 // ---------- 리뷰 카드 ----------
@@ -474,7 +479,9 @@ function renderWReview() {
   $('wrCats').innerHTML = ordered.length
     ? ordered.map(c => `<span class="chip cat" style="margin-right:4px">${c} ${cnt[c]}</span>`).join('') + ` <span class="chip">불만 ${neg.length}건 / 전체 ${rows.length}건</span>`
     : `<span class="chip medal">불만 리뷰 없음 🎉 (전체 ${rows.length}건)</span>`;
-  $('wrList').innerHTML = [...neg].sort((a, b) => b.sale_date.localeCompare(a.sale_date)).map(r => reviewCard(r, true)).join('');
+  const wrListRows = [...neg].sort((a, b) => b.sale_date.localeCompare(a.sale_date));
+  $('wrList').innerHTML = wrListRows.map(r => reviewCard(r, true)).join('');
+  EXPORT_ROWS.wrList = wrListRows;
 }
 function selectWr(code, n) {
   wrSel = { code, n };
@@ -573,6 +580,7 @@ function renderPraise() {
     : '<p class="dnote">이 달에는 사람을 특정할 단서(직책·이름)가 있는 칭찬 리뷰가 없습니다.</p>';
 
   const prRows = praised.sort((a, b) => b.r.sale_date.localeCompare(a.r.sale_date));
+  EXPORT_ROWS.prList = prRows;
   $('prList').innerHTML = prRows.length ? prRows.map(({ r, p }) => {
     const chips = [...p.names.map(n => `<span class="chip pname">${esc(n)}님</span>`), ...p.roles.map(n => `<span class="chip role">${n}</span>`),
       ...(p.gender ? [`<span class="chip trait">${p.gender}</span>`] : []), ...p.traits.map(n => `<span class="chip trait">${n}</span>`)].join(' ');
@@ -589,6 +597,7 @@ function renderRed() {
   const open = rows.filter(r => actionStatus(r.id) !== '완료');
   if (openOnly) rows = open;
   rows = [...rows].sort((a, b) => b.sale_date.localeCompare(a.sale_date));
+  EXPORT_ROWS.red = rows;
 
   const byGrade = {};
   for (const r of REVIEWS.filter(x => x.red_flag)) {
@@ -758,5 +767,45 @@ $('rvFile').onchange = async e => {
     e.target.value = '';
   }
 };
+
+// ---- 탭 단위 엑셀 다운로드 — export-tables.js의 downloadTablesAsExcel/downloadAoaAsExcel 공용 헬퍼 사용 ----
+// 리뷰 카드 목록(표가 아닌 커스텀 레이아웃)을 쓰는 뷰는 reviewRowsToAoa로 직접 시트를 만든다.
+function reviewRowsToAoa(rows) {
+  const aoa = [['매장', '판매일', '판매시간', '연령대', '평점', '레드플래그', '카테고리', '아쉬운 메뉴', '내용', '조치상태', '조치내용']];
+  (rows || []).forEach(r => {
+    const a = actionOf(r.id);
+    aoa.push([
+      storeName(r.store_code), r.sale_date, r.sale_time || '', r.age_group || '', r.rating,
+      r.red_flag ? (r.red_keyword || 'O') : '', (r.categories || []).join(', '), r.worst_menus || '',
+      r.body || '', a ? a.status : '미조치', a ? a.action_text : '',
+    ]);
+  });
+  return aoa;
+}
+$('brandExportBtn')?.addEventListener('click', () => {
+  downloadTablesAsExcel($('view-brand'), `VOC_브랜드대시보드_${$('brandMonth')?.value || ''}`);
+});
+$('stExportBtn')?.addEventListener('click', () => {
+  const pairs = collectTableSheetPairs($('view-store'));
+  pairs.push(['최근 불만 리뷰', reviewRowsToAoa(EXPORT_ROWS.stRecent)]);
+  downloadAoaAsExcel(pairs, `VOC_매장요인분석_${$('stStore')?.value || ''}_${$('stMonth')?.value || ''}`);
+});
+$('wrExportBtn')?.addEventListener('click', () => {
+  const pairs = collectTableSheetPairs($('view-wreview'));
+  pairs.push(['선택 주차 상세', reviewRowsToAoa(EXPORT_ROWS.wrList)]);
+  downloadAoaAsExcel(pairs, `VOC_주차별리뷰_${$('wrMonth')?.value || ''}`);
+});
+$('prExportBtn')?.addEventListener('click', () => {
+  downloadAoaAsExcel([['칭찬 리뷰', reviewRowsToAoa((EXPORT_ROWS.prList || []).map(x => x.r))]], `VOC_칭찬사원_${$('prMonth')?.value || ''}`);
+});
+$('redExportBtn')?.addEventListener('click', () => {
+  downloadAoaAsExcel([['레드플래그', reviewRowsToAoa(EXPORT_ROWS.red)]], `VOC_레드플래그_${$('redStore')?.value || '전체'}`);
+});
+$('rvExportBtn')?.addEventListener('click', () => {
+  downloadAoaAsExcel([['리뷰·조치', reviewRowsToAoa(rvFiltered())]], `VOC_리뷰조치_${$('rvStore')?.value || '전체'}`);
+});
+$('uploadExportBtn')?.addEventListener('click', () => {
+  downloadTablesAsExcel($('view-upload'), 'VOC_데이터업로드');
+});
 
 init();
