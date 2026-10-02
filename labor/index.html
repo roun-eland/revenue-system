@@ -61,6 +61,7 @@
           <option value="prod">생산성순</option>
           <option value="ratio">인건비율순</option>
         </select></label>
+        <button id="dashExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div class="kpis" id="dashKpis"></div>
       <div class="card">
@@ -96,6 +97,7 @@
       <div class="plan-actions">
         <button id="savePlanBtn" class="btn btn-green" type="button">이 계획을 월 계획으로 확정</button>
         <span class="plan-msg" id="planMsg"></span>
+        <button id="planExportBtn" class="btn btn-sm" type="button">엑셀 다운로드 ⬇</button>
       </div>
 
       <div class="tabs">
@@ -160,6 +162,7 @@
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:200px">매장<select id="fbStore"></select></label>
         <label class="fld" style="min-width:150px">월<select id="fbMonth"></select></label>
+        <button id="fbExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div id="fbBody"></div>
     </section>
@@ -202,6 +205,9 @@
     <section id="view-ref" class="view" hidden>
       <h2>기준정보</h2>
       <p class="view-sub">엔진이 사용하는 기준값. 직급 단가는 여기서 수정하면 계획 시뮬레이션에 바로 반영됩니다.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <button id="refExportBtn" class="btn btn-sm" type="button">엑셀 다운로드 ⬇</button>
+      </div>
       <div class="ref-grid">
         <div class="card">
           <h3 style="margin:0 0 10px">직급별 표준 인건비 <span class="band w" style="vertical-align:2px">실측 기반 추정</span></h3>
@@ -244,9 +250,10 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
+<script src="../export-tables.js?v=202610021415"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
 <script src="../ot-std.js?v=202609231500"></script>
-<script src="../ot.js?v=202609231500"></script>
-<script src="../ot-actuals.js?v=202609081130"></script>
+<script src="../ot.js?v=202610021415"></script>
+<script src="../ot-actuals.js?v=202610021415"></script>
 </body>
 </html>

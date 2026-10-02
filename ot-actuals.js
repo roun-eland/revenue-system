@@ -494,3 +494,19 @@ function initActualViews() {
   bind('acPayFile', uploadPayroll);
   bind('acAttFile', uploadAtt);
 }
+
+// ---- 탭 단위 엑셀 다운로드 — export-tables.js의 downloadTablesAsExcel 공용 헬퍼 사용 ----
+// 계획 시뮬레이션은 하위탭(개괄/상세/시프트판) 중 "시프트판"(gantt)은 표가 아니라 커스텀 div라 못 받고,
+// 지금 화면에 보이는 표(개괄 또는 상세)만 내려받는다.
+$('dashExportBtn')?.addEventListener('click', () => {
+  downloadTablesAsExcel($('view-dash'), `생산성대시보드_${$('dashMonth')?.value || ''}`);
+});
+$('planExportBtn')?.addEventListener('click', () => {
+  downloadTablesAsExcel($('view-plan'), `계획시뮬레이션_${$('store')?.value || ''}_${$('month')?.value || ''}`);
+});
+$('fbExportBtn')?.addEventListener('click', () => {
+  downloadTablesAsExcel($('view-feedback'), `매장피드백_${$('fbStore')?.value || ''}_${$('fbMonth')?.value || ''}`);
+});
+$('refExportBtn')?.addEventListener('click', () => {
+  downloadTablesAsExcel($('view-ref'), '기준정보');
+});
