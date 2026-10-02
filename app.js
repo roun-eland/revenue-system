@@ -4421,6 +4421,27 @@ $$('.pivot-tab-btn[data-pivot-tab]').forEach(btn => {
   btn.addEventListener('click', () => setPivotTab(btn.dataset.pivotTab));
 });
 
+// ---- 탭/서브탭 단위 엑셀 다운로드 버튼 (export-tables.js의 downloadTablesAsExcel 공용 헬퍼 사용) ----
+// 파일명 앞에 시즌명을 붙여 어느 시즌 걸 받았는지 구분되게 한다.
+const PIVOT_MAIN_TAB_LABEL = { A: '모델별비교', B: '전매장', C: '시계열', D: 'VE' };
+function seasonTag() { return (currentSeason()?.name || '').replace(/\s+/g, ''); }
+[
+  ['#exportDashMBtn', '#pivotPanelStoreDash', () => `${seasonTag()}_대시보드_매장요약`],
+  ['#exportDashTBtn', '#pivotPanelTarget', () => `${seasonTag()}_대시보드_목표`],
+  ['#exportPivotABBtn', '#pivotPanelMain', () => `${seasonTag()}_대시보드_${PIVOT_MAIN_TAB_LABEL[pivotTab] || '모델별비교'}`],
+  ['#exportPivotCBtn', '#pivotPanelMain', () => `${seasonTag()}_대시보드_시계열`],
+  ['#exportPivotDBtn', '#pivotPanelMain', () => `${seasonTag()}_대시보드_VE`],
+  ['#exportTargetCostBtn', '#subtab-target-cost', () => `${seasonTag()}_시즌설계_목표원가`],
+  ['#exportBomBtn', '#subtab-bom', () => `${seasonTag()}_시즌설계_레시피등록`],
+  ['#exportMenuConsumptionBtn', '#subtab-menu-consumption', () => `${seasonTag()}_시즌설계_메뉴별소비액`],
+  ['#exportUploadBtn', '#subtab-upload', () => `${seasonTag()}_데이터_업로드`],
+  ['#exportUsageBtn', '#subtab-usage', () => `${seasonTag()}_데이터_자재사용량`],
+  ['#exportMarketBtn', '#subtab-market', () => `${seasonTag()}_데이터_시장데이터`],
+  ['#exportSalesDataBtn', '#subtab-sales', () => `${seasonTag()}_데이터_매출객수`],
+].forEach(([btnSel, containerSel, filenameFn]) => {
+  $(btnSel)?.addEventListener('click', () => downloadTablesAsExcel(containerSel, filenameFn()));
+});
+
 // =====================================================================
 // M: 매장 대시보드 — 매장 관리자용 요약 (참고: Tabler·AdminLTE류의 신호등 히트맵 테이블 문법)
 // 전부 실측만 사용: 원가율 = 자재 실사용액 ÷ 순매출(주차·누적), 소비량 = Σ(수량×환산계수) ÷ 객수.

@@ -70,6 +70,7 @@
         <div class="pivot-ctl">
           <label>기준 월:</label><input type="month" id="sdashMonthInput">
           <span class="pivot-note" id="sdashHint">원가 주차(화~월) 기준 · 목표 원가율(기획자 등록) 기준으로 색이 표시됩니다</span>
+          <button id="exportDashMBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
         </div>
         <div class="card">
           <div class="card-head">
@@ -88,6 +89,9 @@
       </div>
 
       <div id="pivotPanelTarget" style="display:none">
+        <div class="pivot-ctl">
+          <button id="exportDashTBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
+        </div>
         <div class="kpi-row" id="kpiRow"></div>
 
         <div class="card" id="feedbackCard">
@@ -183,6 +187,7 @@
         <span id="pivotStoreSelectBox"><label>매장 열:</label><select id="pivotStoreSelect"></select></span>
         <button id="pivotResetOrderBtn" class="pivot-btn" type="button" style="display:none">매장 순서 초기화</button>
         <button id="pivotRefreshBtnAB" class="pivot-btn" type="button" title="메뉴별 소비액에서 새로 계산한 값을 이 표에 다시 반영합니다">↻ 피벗 최신화</button>
+        <button id="exportPivotABBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
         <span class="pivot-note" id="pivotNoteAB">셀: 그램/금액 모드에선 괄호 안에 다른 단위도 같이 표시 · 존/메뉴 행 클릭=접기/펼치기 <span class="pivot-d" id="pivotCacheHint"></span></span>
       </div>
       <div class="pivot-ctl" id="pivotCtlC" style="display:none">
@@ -194,9 +199,11 @@
         <select id="pivotTsSnapWeek"></select>
         <button id="pivotTsSnapshotBtn" class="pivot-btn" type="button" title="진행 중 시즌의 선택 주차를 정확 계산(5~6분)해 매장×메뉴 스냅샷으로 저장합니다 — 이후 그 주차는 매장 대상에서도 존·메뉴 분해가 보입니다 (주차별 단위 전용). 자재를 재업로드했으면 다시 실행하세요.">이 주차 정확 계산 (5~6분)</button>
         <span class="pivot-d" id="pivotTsSnapMsg"></span>
+        <button id="exportPivotCBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
       </div>
       <div class="pivot-ctl" id="pivotCtlD" style="display:none">
         <span class="pivot-note">대상: g당원가가 핫 3.5원·콜 3원·디저트 5원 이상인 메뉴 · TO-BE 칸을 수정하면 Δ원/객·Δ%p가 바로 재계산됩니다.</span>
+        <button id="exportPivotDBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
       </div>
       <div id="pivotVeSummary"></div>
 
@@ -222,6 +229,9 @@
       <div class="panel-head">
         <h2>목표원가</h2>
         <p class="panel-sub">시즌·조닝별 목표 원가를 입력합니다. 대시보드는 이 값을 그대로 가져와 비교합니다.</p>
+      </div>
+      <div class="pivot-ctl">
+        <button id="exportTargetCostBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
       </div>
 
       <div class="card">
@@ -369,6 +379,9 @@
         <h2>레시피 등록</h2>
         <p class="panel-sub">메뉴별로 들어가는 자재와 비율(g)을 시즌별로 등록합니다. 메뉴별 인당소비량 자동계산에 사용됩니다.</p>
       </div>
+      <div class="pivot-ctl">
+        <button id="exportBomBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
+      </div>
 
       <div class="card">
         <div class="card-head">
@@ -420,6 +433,9 @@
       <div class="panel-head">
         <h2>메뉴별 소비액</h2>
         <p class="panel-sub">메뉴명과 g당원가는 설계원가 탭의 현재 시즌 메뉴 기준으로 자동 표시됩니다. 인당소비량은 레시피+자재사용량+매출/객수 데이터로 자동 계산됩니다.</p>
+      </div>
+      <div class="pivot-ctl">
+        <button id="exportMenuConsumptionBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
       </div>
 
       <div class="card">
@@ -570,6 +586,9 @@
         <h2>업로드</h2>
         <p class="panel-sub">엑셀 원본을 그대로 올리면 파서가 정리해 저장합니다. 조회·수정·삭제는 옆의 시장 데이터·자재 사용량·매출/객수 탭에서.</p>
       </div>
+      <div class="pivot-ctl">
+        <button id="exportUploadBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
+      </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:14px;align-items:start">
         <div class="card">
           <div class="card-head">
@@ -662,6 +681,9 @@
         <h2>자재 사용량</h2>
         <p class="panel-sub">저장된 자재 사용량을 조회·관리합니다. 입력은 업로드 탭에서.</p>
       </div>
+      <div class="pivot-ctl">
+        <button id="exportUsageBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
+      </div>
 
       <div class="card">
         <div class="card-head">
@@ -711,6 +733,9 @@
         <h2>시장 데이터</h2>
         <p class="panel-sub">저장된 시장 단가를 조회·관리합니다. 업로드는 업로드 탭에서.</p>
       </div>
+      <div class="pivot-ctl">
+        <button id="exportMarketBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
+      </div>
 
       <div class="card">
         <div class="card-head"><h3>저장된 시장 데이터</h3></div>
@@ -746,6 +771,9 @@
       <div class="panel-head">
         <h2>매출/객수</h2>
         <p class="panel-sub">저장된 매출·객수를 조회·관리합니다. 업로드는 업로드 탭에서.</p>
+      </div>
+      <div class="pivot-ctl">
+        <button id="exportSalesDataBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
       </div>
       <div class="card">
         <details>
@@ -807,6 +835,7 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../app.js?v=202610021111"></script>
+<script src="../export-tables.js?v=202610021405"></script>
+<script src="../app.js?v=202610021405"></script>
 </body>
 </html>
