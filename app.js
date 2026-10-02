@@ -750,25 +750,73 @@ function renderCostTrendChart(months, ratios, targetRatio) {
 }
 
 // 예전엔 설계-실적 갭을 자동으로 문구화해 보여줬는데, 자동생성 문구 대신 직접 메모를 남기고
-// 싶다는 요청으로 수기 입력 텍스트로 바꿨다. season_targets.feedback_note에 시즌별로 저장한다.
-function renderFeedback() {
-  const input = $('#feedbackNoteInput');
-  input.value = state.seasonTarget?.feedback_note ?? '';
+// 싶다는 요청으로 수기 입력 텍스트로 바꿨다. 2026-10-02: 한 칸짜리 자유 텍스트 대신 "의도한 것/된 것/
+// 안된 것/버전업 할 것" 4칸으로 나누고 칸마다 번호 붙은 항목을 하나씩 추가할 수 있게 구조화했다.
+// season_targets.feedback_sections(jsonb, {intended/done/not_done/next_version: string[]})에 저장.
+const FEEDBACK_KEYS = ['intended', 'done', 'not_done', 'next_version'];
+function feedbackSections() {
+  const raw = state.seasonTarget?.feedback_sections;
+  const out = {};
+  FEEDBACK_KEYS.forEach(k => { out[k] = Array.isArray(raw?.[k]) ? raw[k] : []; });
+  return out;
 }
-$('#feedbackNoteInput').addEventListener('change', async (e) => {
+function renderFeedback() {
+  const sections = feedbackSections();
+  FEEDBACK_KEYS.forEach(key => {
+    const list = $(`.feedback-list[data-key="${key}"]`);
+    if (!list) return;
+    const items = sections[key];
+    list.innerHTML = items.map((val, i) => `
+      <li class="feedback-item">
+        <span class="feedback-item-num">${i + 1}.</span>
+        <input type="text" class="feedback-item-input" data-key="${key}" data-idx="${i}" value="${(val ?? '').replace(/"/g, '&quot;')}">
+        <button type="button" class="feedback-item-del" data-key="${key}" data-idx="${i}" title="삭제">×</button>
+      </li>`).join('');
+  });
+}
+async function saveFeedbackSections(sections) {
   const seasonId = state.currentSeasonId;
   if (!seasonId) return;
   const hint = $('#feedbackSavedHint');
-  const payload = { feedback_note: e.target.value };
+  const payload = { feedback_sections: sections };
   if (state.seasonTarget?.id) {
     await sb.from('season_targets').update(payload).eq('id', state.seasonTarget.id);
   } else {
     const { data } = await sb.from('season_targets').insert({ ...payload, season_id: seasonId }).select().maybeSingle();
     if (data) state.seasonTarget = data;
   }
-  if (state.seasonTarget) state.seasonTarget.feedback_note = payload.feedback_note;
-  hint.textContent = '저장됨';
-  setTimeout(() => { if (hint.textContent === '저장됨') hint.textContent = ''; }, 2000);
+  if (state.seasonTarget) state.seasonTarget.feedback_sections = payload.feedback_sections;
+  if (hint) {
+    hint.textContent = '저장됨';
+    setTimeout(() => { if (hint.textContent === '저장됨') hint.textContent = ''; }, 2000);
+  }
+}
+$('#feedbackCard').addEventListener('click', async (e) => {
+  const addBtn = e.target.closest('.feedback-add-btn');
+  const delBtn = e.target.closest('.feedback-item-del');
+  if (!addBtn && !delBtn) return;
+  const sections = feedbackSections();
+  if (addBtn) {
+    sections[addBtn.dataset.key].push('');
+  } else {
+    sections[delBtn.dataset.key].splice(Number(delBtn.dataset.idx), 1);
+  }
+  if (!state.seasonTarget) state.seasonTarget = {};
+  state.seasonTarget.feedback_sections = sections;
+  renderFeedback();
+  await saveFeedbackSections(sections);
+  if (addBtn) {
+    const key = addBtn.dataset.key;
+    const idx = sections[key].length - 1;
+    $(`.feedback-item-input[data-key="${key}"][data-idx="${idx}"]`)?.focus();
+  }
+});
+$('#feedbackCard').addEventListener('change', async (e) => {
+  const input = e.target.closest('.feedback-item-input');
+  if (!input) return;
+  const sections = feedbackSections();
+  sections[input.dataset.key][Number(input.dataset.idx)] = input.value;
+  await saveFeedbackSections(sections);
 });
 
 // =====================================================================

@@ -6,7 +6,7 @@
 <title>로운 원가설계판</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700;800&family=Noto+Sans+KR:wght@400;500;700&display=swap">
 <!-- v8 스킨 (매출·생산성과 통일). 롤백: 아래 한 줄을 ../style.css?v=202609081940 으로 되돌리면 이전 디자인 -->
-<link rel="stylesheet" href="../cost-v8.css?v=202609082120">
+<link rel="stylesheet" href="../cost-v8.css?v=202610021038">
 </head>
 <body>
 
@@ -95,7 +95,28 @@
             <h3>피드백</h3>
             <span class="hint" id="feedbackSavedHint"></span>
           </div>
-          <textarea id="feedbackNoteInput" class="feedback-note-input" rows="5" placeholder="이번 시즌 원가 관련 메모를 자유롭게 남겨보세요."></textarea>
+          <div class="feedback-grid">
+            <div class="feedback-col" data-key="intended">
+              <h4>의도한 것</h4>
+              <ol class="feedback-list" data-key="intended"></ol>
+              <button type="button" class="btn btn-sm btn-ghost feedback-add-btn" data-key="intended">+ 항목 추가</button>
+            </div>
+            <div class="feedback-col" data-key="done">
+              <h4>된 것</h4>
+              <ol class="feedback-list" data-key="done"></ol>
+              <button type="button" class="btn btn-sm btn-ghost feedback-add-btn" data-key="done">+ 항목 추가</button>
+            </div>
+            <div class="feedback-col" data-key="not_done">
+              <h4>안된 것</h4>
+              <ol class="feedback-list" data-key="not_done"></ol>
+              <button type="button" class="btn btn-sm btn-ghost feedback-add-btn" data-key="not_done">+ 항목 추가</button>
+            </div>
+            <div class="feedback-col" data-key="next_version">
+              <h4>버전업 할 것</h4>
+              <ol class="feedback-list" data-key="next_version"></ol>
+              <button type="button" class="btn btn-sm btn-ghost feedback-add-btn" data-key="next_version">+ 항목 추가</button>
+            </div>
+          </div>
         </div>
 
         <div class="card">
@@ -782,6 +803,6 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../app.js?v=202610020958"></script>
+<script src="../app.js?v=202610021038"></script>
 </body>
 </html>
