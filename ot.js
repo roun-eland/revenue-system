@@ -23,6 +23,27 @@ let gradeCost = null;
 // 매장별 직급 구성 상태 (시뮬레이션 입력)
 let staffCnt = {};
 
+// 계획 시뮬레이션의 "예상 월매출"을 매출 앱의 확정 예측(sf_forecast_runs)과 연동하기 위한 캐시 —
+// 같은 매장×월에 발행된 확정 예측이 있으면 그 값을, 없으면 8월 실측(OT_DATA[code].augM)으로 폴백한다.
+let SF_RUNS = [];
+async function loadSfRuns() {
+  try {
+    const { data } = await sb.from('sf_forecast_runs').select('ym,kind,daily')
+      .order('ym', { ascending: false }).order('version', { ascending: false });
+    SF_RUNS = data || [];
+  } catch (e) { /* 테이블 접근 실패 시 폴백만 사용 */ }
+}
+function forecastSales(code, ym) {
+  const run = SF_RUNS.find(r => r.ym === ym && r.kind === '확정');
+  return run?.daily?.stores?.[code]?.total ?? null;
+}
+function syncMsalesFromForecast() {
+  const code = sel.value, ym = msel.value;
+  const fc = forecastSales(code, ym);
+  $('msales').value = fc ?? OT_DATA[code].augM;
+  $('msalesSrc').textContent = fc != null ? `매출 앱 확정 예측(${ym}) 연동` : `예측 미발행 — 8월 실측 대체`;
+}
+
 // ---------- 인증 ----------
 let currentUser = null, currentRole = 'planner';
 
@@ -52,6 +73,7 @@ async function enterApp(user) {
   }
   await loadStandardPlans();
   await loadActualCoverage();
+  await loadSfRuns();
   // 기준정보·실적 입력은 planner 전용 (manager = 대시보드·계획·피드백만), 전사 대시보드는 모두 공개
   document.querySelector('#otNav button[data-view="ref"]').hidden = !isPlanner;
   document.querySelector('#otNav button[data-view="actual"]').hidden = !isPlanner;
@@ -405,7 +427,7 @@ function buildPlanInputs() {
   }
   sel.value = 'RU019'; msel.value = defaultYm();
   loadStaff('RU019');
-  $('msales').value = OT_DATA.RU019.augM;
+  syncMsalesFromForecast();
 }
 function defaultYm() { // 다음 달
   const d = new Date(); const y = d.getMonth() === 11 ? d.getFullYear() + 1 : d.getFullYear();
@@ -444,16 +466,16 @@ function staffTotals(code) {
   return { nf: Math.max(1, nf), fullpay };
 }
 function updateStaffSum() {
-  const { nf, fullpay } = staffTotals(sel.value);
-  $('staffSum').innerHTML = `합계 <b>${nf}명</b> · 정직원 월급여 <b>${won(fullpay)}원</b> ` +
-    (gradeCost ? '(직급 단가 합 + 매장 보정, 8월 실제 급여 기준)' : '(매장 급여 실적 기준, 인원 증감은 평균 단가로 추정)');
+  // 합계·월급여 문구는 화면이 번잡하다는 피드백으로 제거 (2026-10-02) — staffTotals()는 render()가
+  // 계속 그대로 쓰므로 계산에는 영향 없음.
+  $('staffSum').innerHTML = '';
 }
 function onStoreChange() {
-  $('msales').value = OT_DATA[sel.value].augM;
+  syncMsalesFromForecast();
   loadStaff(sel.value); render();
 }
 sel.onchange = onStoreChange;
-msel.onchange = () => render();
+msel.onchange = () => { syncMsalesFromForecast(); render(); };
 $('msales').oninput = () => render();
 
 // ---------- 엔진 (프로토타입 v8 이관 — PRD §5) ----------
