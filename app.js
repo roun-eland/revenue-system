@@ -769,7 +769,6 @@ function renderFeedback() {
     const items = sections[key];
     list.innerHTML = items.map((val, i) => `
       <li class="feedback-item">
-        <span class="feedback-item-num">${i + 1}.</span>
         <input type="text" class="feedback-item-input" data-key="${key}" data-idx="${i}" value="${(val ?? '').replace(/"/g, '&quot;')}">
         <button type="button" class="feedback-item-del" data-key="${key}" data-idx="${i}" title="삭제">×</button>
       </li>`).join('');
