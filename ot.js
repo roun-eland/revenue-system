@@ -72,6 +72,7 @@ async function enterApp(user) {
     } catch (e) { /* 실패 시 평균 단가 폴백 */ }
   }
   await loadStandardPlans();
+  await loadStdBaselines();
   await loadActualCoverage();
   await loadSfRuns();
   // 기준정보·실적 입력은 planner 전용 (manager = 대시보드·계획·피드백만), 전사 대시보드는 모두 공개
@@ -93,6 +94,133 @@ async function loadStandardPlans() {
   } catch (e) { /* 테이블 미생성·권한 오류 시 무시 */ }
   for (const c of Object.keys(OT_STD)) if (!OT_STD[c].weekday || !OT_STD[c].weekend || !OT_DATA[c]) delete OT_STD[c];
 }
+
+// ---- 표준표 매장들의 매출연동 요일별 스케줄 (2026-10-02 사용자 확정 설계) ----
+// 표준표는 "9월 평일/주말 평균 실측 매출" 수준에 맞춰 짜여 있다(선임점장 표 수령 당시 확정). 이 매출÷표
+// MH = 그 매장의 "목표생산성"(평일/주말 각각, 고정값) — 요일마다 실제 예상매출이 달라져도 이 비율만큼은
+// 유지하는 게 목표다. 다만 그날 필요 인원을 매끈한 산술 배분이 아니라, 비슷한 매출대의 "다른 매장 표"가
+// 실제로 그 매출에서 어떻게 분포시키는지를 본떠서(모양은 빌리고, 총량만 그날 매출÷목표생산성으로 스케일)
+// 만든다. 정직원은 그 매장 자기 표 그대로 고정(요일 조정 대상 아님) — 메이트만 늘고 줄어든다. 바닥은
+// 등록된 표 중 총 MH가 가장 적은 매장(가장 근무시간 적은 매장)의 슬롯별 곡선 그대로 — 그 밑으로는 못 내려간다.
+let STD_BASE = {}; // code -> { weekday: {sales, prod}|null, weekend: {...}|null }
+let STD_FLOOR = null; // { weekday: cnt.all 길이34 배열, weekend: ... , weekdayStore, weekendStore }
+async function loadStdBaselines() {
+  STD_BASE = {}; STD_FLOOR = null;
+  const codes = Object.keys(OT_STD);
+  if (!codes.length) return;
+  try {
+    const { data } = await sb.from('ot_sales_daily').select('store_code,sales_date,total,is_closed')
+      .gte('sales_date', '2026-09-01').lt('sales_date', '2026-10-01').in('store_code', codes).limit(1000);
+    const sum = {};
+    (data || []).forEach(r => {
+      if (r.is_closed || !(+r.total > 0)) return;
+      const dow = new Date(r.sales_date + 'T00:00:00').getDay(); // 0=일 6=토
+      const k = (dow === 0 || dow === 6) ? 'we' : 'wd';
+      const s = (sum[r.store_code] = sum[r.store_code] || { wd: [0, 0], we: [0, 0] });
+      s[k][0] += +r.total; s[k][1]++;
+    });
+    for (const code of codes) {
+      const st = OT_STD[code], s = sum[code];
+      if (!s) continue;
+      const avgWd = s.wd[1] ? s.wd[0] / s.wd[1] : null, avgWe = s.we[1] ? s.we[0] / s.we[1] : null;
+      STD_BASE[code] = {
+        weekday: avgWd ? { sales: avgWd, prod: avgWd / st.weekday.stats.totMH } : null,
+        weekend: avgWe ? { sales: avgWe, prod: avgWe / st.weekend.stats.totMH } : null,
+      };
+    }
+  } catch (e) { /* 실패 시 적응형 스케줄 비활성 — 표 그대로 폴백 */ }
+  STD_FLOOR = {};
+  for (const k of ['weekday', 'weekend']) {
+    let min = null, minCode = null;
+    for (const code of codes) {
+      const mh = OT_STD[code][k].stats.totMH;
+      if (min === null || mh < min) { min = mh; minCode = code; }
+    }
+    if (minCode) { STD_FLOOR[k] = OT_STD[minCode][k].stats.cnt.all.slice(); STD_FLOOR[k + 'Store'] = OT_DATA[minCode]?.name || minCode; }
+  }
+}
+// 그 매장(code)의 day-type(k) 표를, 예상 일매출(A)에 맞춰 조정한 필요 인원 곡선. 기준(STD_BASE) 없으면 null
+// — 호출부는 null이면 표 그대로(st) 쓴다.
+function stdAdaptiveCurve(code, k, A) {
+  const st = OT_STD[code][k].stats;
+  const base = STD_BASE[code] && STD_BASE[code][k];
+  if (!base || !base.prod || !A) return null;
+  const idealTotMH = A / base.prod;
+
+  // 비슷한 매출대 매장 찾기 — 같은 day-type의 다른 매장(자기 자신 포함) 중 평균매출이 A와 가장 가까운 표
+  let bestCode = code, bestDiff = Infinity;
+  for (const c of Object.keys(STD_BASE)) {
+    const b = STD_BASE[c] && STD_BASE[c][k];
+    if (!b) continue;
+    const diff = Math.abs(b.sales - A);
+    if (diff < bestDiff) { bestDiff = diff; bestCode = c; }
+  }
+  const shape = OT_STD[bestCode][k].stats.cnt.all;
+  const shapeMH = shape.slice(1, 33).reduce((a, v) => a + (v || 0), 0) / 2;
+  const scale = shapeMH > 0 ? idealTotMH / shapeMH : 1;
+
+  const floor = STD_FLOOR ? STD_FLOOR[k] : null;
+  const ftCurve = st.cnt.ft; // 정직원은 그 매장 자기 표 그대로 — 조정 대상 아님
+  const total = new Array(34).fill(0), mate = new Array(34).fill(0);
+  for (let i = 1; i <= 32; i++) {
+    let v = (shape[i] || 0) * scale;
+    if (floor && floor[i] > v) v = floor[i];
+    const ft = ftCurve[i] || 0;
+    total[i] = Math.max(v, ft);
+    mate[i] = Math.max(0, total[i] - ft);
+  }
+  const hours = [];
+  for (let h = 8; h <= 23; h++) {
+    const a = 2 * (h - 8) + 1, b = a + 1;
+    const avg = arr => (arr[a] + arr[b]) / 2;
+    const row = { h, label: String(h).padStart(2, "0") + ":00", need: avg(total), cov: avg(ftCurve), mate: avg(mate) };
+    if (row.need > 0) hours.push(row);
+  }
+  const mateMH = mate.slice(1, 33).reduce((a, v) => a + v, 0) / 2;
+  const ftMH = ftCurve.slice(1, 33).reduce((a, v) => a + v, 0) / 2;
+  // nMate는 이산 블록이 아니라 곡선이라 정확한 인원수가 없다 — 원표 인원수를 MH 비율로 환산한 근사치(표시용).
+  const nMate = st.nMate ? Math.max(1, Math.round(st.nMate * (st.mateMH ? mateMH / st.mateMH : 1))) : 0;
+  return { totMH: mateMH + ftMH, ftMH, mateMH, mealMH: st.mealMH, hours, totalCurve: total, mateCurve: mate, ftCurve,
+            nFt: st.nFt, nMate, shapeCode: bestCode, shapeName: OT_DATA[bestCode]?.name || bestCode, idealTotMH, targetProd: base.prod };
+}
+
+// 상세·시프트판은 (곡선이 아니라) 선임점장이 준 실제 이름 있는 블록을 그대로 보여주는 화면이라, 조정은
+// "그 블록의 끝 시간을 늘이거나 줄인다"로 최대한 단순하게 한다(시작시간·몇 명인지는 안 바꿈 — 인원을
+// 통째로 추가/삭제하면 어느 자리를 새로 만들지 판단이 더 불확실해지므로, 이번 버전은 시간 조정까지만).
+function stdScaleMateBlock(b, ratio) {
+  if (!b.slots.length || Math.abs(ratio - 1) < 0.02) return b;
+  const slots = b.slots.slice().sort((x, y) => x - y);
+  const start = slots[0], end = slots[slots.length - 1];
+  const origLen = end - start + 1;
+  const newLen = Math.max(1, Math.min(32 - start + 1, Math.round(origLen * ratio)));
+  if (newLen === origLen) return b;
+  const nb = { ...b, taskAt: { ...b.taskAt } };
+  if (newLen > origLen) {
+    const lastTask = b.taskAt[end] || b.r;
+    for (let i = end + 1; i <= start + newLen - 1; i++) nb.taskAt[i] = lastTask;
+  } else {
+    for (let i = start + newLen; i <= end; i++) delete nb.taskAt[i];
+  }
+  nb.slots = []; for (let i = start; i <= start + newLen - 1; i++) nb.slots.push(i);
+  return nb;
+}
+
+// ot-std.js의 stdMonthMH(표 그대로, flat)를 대신해 월 합계도 요일별 매출에 맞춘 값으로 집계한다 — "목표생산성
+// 유지"를 월 단위로 보장하려면 캡(stdApplyCap) 입력 자체가 적응형이어야 한다. 기준(STD_BASE) 없는 매장은
+// stdAdaptiveCurve가 null을 주므로 자동으로 표 그대로(flat) 폴백.
+function stdMonthMHAdaptive(code, open, dailyOf, s) {
+  let mMH = 0, mMHhol = 0, ftMH = 0, nWd = 0, nWe = 0;
+  for (const x of open) {
+    const k = stdDayKey(x);
+    const A = dailyOf(x.hol ? s.hol : s.wd[x.wd]);
+    const sm = stdAdaptiveCurve(code, k, A) || OT_STD[code][k].stats;
+    if (x.hol) mMHhol += sm.mateMH; else mMH += sm.mateMH;
+    ftMH += sm.ftMH;
+    if (k === "weekend") nWe++; else nWd++;
+  }
+  return { mMH, mMHhol, ftMH, nWd, nWe };
+}
+
 $('loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   $('loginError').hidden = true;
@@ -601,7 +729,7 @@ function render() {
   let mMH = 0, mMHhol = 0, capInfo = null;
   const stdAvg = { weekday: 0, weekend: 0 }; // 평일/주말 평균 일매출 (표 화면의 생산성·인건비율 계산용)
   if (std) {
-    const sm = stdMonthMH(sel.value, open);
+    const sm = stdMonthMHAdaptive(sel.value, open, dailyOf, s);
     capInfo = stdApplyCap(s, M, fullpay, sm.mMH, sm.mMHhol);
     mMH = capInfo.mMH; mMHhol = capInfo.mMHhol;
     const cn = { weekday: 0, weekend: 0 };
@@ -682,7 +810,7 @@ function render() {
   $('sfHead').textContent = std ? "표준 시프트판 — 선임점장 표준안, 이대로 스케줄에 옮기면 됩니다" : "요일별 시프트판 — 이대로 스케줄에 옮기면 됩니다";
   if (std) {
     renderStdOverview(std, cur, A, s, fullpay);
-    renderStdDetail(std, s, fullpay);
+    renderStdDetail(std, s, fullpay, stdAvg);
     renderStdShift(std, s, fullpay, stdAvg);
     return;
   }
@@ -907,10 +1035,14 @@ function stdToggle(cur, pick) {
 }
 function renderStdOverview(std, cur, A, s, fullpay) {
   const isH = cur.key === "H", k = stdDayKey({ hol: isH, wd: isH ? 0 : +cur.key });
-  const st = std[k].stats, dcst = stdDayCost(st, A, s, fullpay, isH);
+  const adaptive = stdAdaptiveCurve(s.code, k, A);
+  const st = adaptive || std[k].stats, dcst = stdDayCost(st, A, s, fullpay, isH);
   const dayLabel = isH ? "공휴일 (주말 표 적용)" : cur.label + "요일";
   const over = dcst.ratio > LABOR_CAP * 100;
-  $('daysum').innerHTML = `<b>${dayLabel}</b> · 표준 계획표(${stdDayLabel(k)}) · 예상 일매출 <b>${won(A / 10000)}만원</b> · 총 ${st.totMH.toFixed(1)}인시 (정직원 ${st.ftMH.toFixed(1)} + 메이트 ${st.mateMH.toFixed(1)}, 식사 ${st.mealMH.toFixed(1)}h 제외) · 생산성 <b>${won(A / st.totMH)}원/MH</b> · 이날 인건비율 <b${over ? ' style="color:var(--crit)"' : ""}>${dcst.ratio.toFixed(1)}%</b>${over ? ` (상한 ${Math.round(LABOR_CAP * 100)}% 초과)` : ""}`;
+  const adaptNote = adaptive
+    ? ` · 목표생산성 ${won(adaptive.targetProd)}원/MH 유지 기준(${adaptive.shapeCode === s.code ? "자기 표" : adaptive.shapeName + " 표 모양 참고"})으로 인원 조정됨`
+    : "";
+  $('daysum').innerHTML = `<b>${dayLabel}</b> · 표준 계획표(${stdDayLabel(k)}) · 예상 일매출 <b>${won(A / 10000)}만원</b> · 총 ${st.totMH.toFixed(1)}인시 (정직원 ${st.ftMH.toFixed(1)} + 메이트 ${st.mateMH.toFixed(1)}, 식사 ${st.mealMH.toFixed(1)}h 제외) · 생산성 <b>${won(A / st.totMH)}원/MH</b> · 이날 인건비율 <b${over ? ' style="color:var(--crit)"' : ""}>${dcst.ratio.toFixed(1)}%</b>${over ? ` (상한 ${Math.round(LABOR_CAP * 100)}% 초과)` : ""}${adaptNote}`;
   const maxNeed = Math.max(...st.hours.map(r => r.need));
   const tb = $('rows'); tb.innerHTML = "";
   for (const r of st.hours) {
@@ -921,13 +1053,19 @@ function renderStdOverview(std, cur, A, s, fullpay) {
       `<td class="barcell"><div class="bar"><span class="f" style="width:${r.cov / maxNeed * 100}%"></span><span class="m" style="width:${r.mate / maxNeed * 100}%"></span></div></td>`;
     tb.appendChild(tr);
   }
-  $('shiftNote').textContent = `정직원 ${st.nFt}자리 · 메이트 ${st.nMate}명 — 선임점장 표준안(평균 매출일 기준)을 ${stdDayLabel(k)} 표 그대로 적용합니다. 인건비율 상한 ${Math.round(LABOR_CAP * 100)}%는 월 합계에서 적용되어 초과 시 메이트 인시를 비례 감축합니다.`;
+  $('shiftNote').textContent = adaptive
+    ? `정직원 ${st.nFt}자리 · 메이트 약 ${st.nMate}명 — 선임점장 표준안을 그대로 쓰지 않고, 이날 예상매출에 맞춰 목표생산성을 유지하도록 메이트 인시를 조정했습니다(정직원은 고정). 인건비율 상한 ${Math.round(LABOR_CAP * 100)}%는 월 합계에서 적용되어 초과 시 메이트 인시를 비례 감축합니다.`
+    : `정직원 ${st.nFt}자리 · 메이트 ${st.nMate}명 — 선임점장 표준안(평균 매출일 기준)을 ${stdDayLabel(k)} 표 그대로 적용합니다. 인건비율 상한 ${Math.round(LABOR_CAP * 100)}%는 월 합계에서 적용되어 초과 시 메이트 인시를 비례 감축합니다.`;
 }
 // 원본 엑셀 표준안과 같은 모양 — 열 = 직원 1명(블록), 행 = 30분 슬롯. 셀 값 = 그 시간의 구체 업무(없으면 기본 역할).
 // 정직원 먼저, 그다음 파트(홀→주방)·시작시간 순 — 시프트판과 동일 정렬로 두 탭이 서로 대응되게 한다.
-function renderStdDetail(std, s, fullpay) {
-  const plan = std[stdDetDay], st = plan.stats;
-  const blocks = plan.blocks.slice().sort((a, b) => (b.ft - a.ft) || (a.p === b.p ? a.slots[0] - b.slots[0] : (a.p === "홀" ? -1 : 1)));
+function renderStdDetail(std, s, fullpay, stdAvg) {
+  const plan = std[stdDetDay], st0 = plan.stats;
+  const A = stdAvg ? stdAvg[stdDetDay] : null;
+  const adaptive = A ? stdAdaptiveCurve(s.code, stdDetDay, A) : null;
+  const ratio = adaptive && st0.mateMH ? Math.max(0.3, Math.min(3, adaptive.mateMH / st0.mateMH)) : 1;
+  let blocks = plan.blocks.slice().sort((a, b) => (b.ft - a.ft) || (a.p === b.p ? a.slots[0] - b.slots[0] : (a.p === "홀" ? -1 : 1)));
+  if (ratio !== 1) blocks = blocks.map(b => b.ft ? b : stdScaleMateBlock(b, ratio));
   const cellText = (b, i) => b.slots.includes(i) ? stdShort(b.taskAt[i] || b.r) : "";
 
   let h = '<table class="dtable dtable-emp"><thead>' +
@@ -935,8 +1073,11 @@ function renderStdDetail(std, s, fullpay) {
     '<tr><th class="hr">직책/역할</th><th class="hr"></th>' + blocks.map(b => `<th class="${b.ft ? "ft" : "mate"}">${b.ft ? "정직원 " : ""}${stdShort(b.r)}</th>`).join("") + "</tr>" +
     '<tr><th class="hr">시간</th><th class="hr">인원(명)</th>' + blocks.map((b, i) => `<th class="${b.ft ? "ft" : "mate"}">직원${i + 1}</th>`).join("") + "</tr>" +
     "</thead><tbody>";
+  // 근무인원 행은 조정된 블록에서 그대로 다시 센다 — 표시된 칸·합계·아래 금액 행이 항상 서로 일치하게.
+  const cntAll = new Array(33).fill(0);
+  for (let i = 1; i <= 32; i++) for (const b of blocks) { const t = cellText(b, i); if (t && t !== "밥차") cntAll[i]++; }
   for (let i = 1; i <= 32; i++) {
-    h += `<tr><td class="hr">${stdSlotLabel(i)}</td><td class="hr">${st.cnt.all[i] || 0}</td>` +
+    h += `<tr><td class="hr">${stdSlotLabel(i)}</td><td class="hr">${cntAll[i] || 0}</td>` +
       blocks.map(b => {
         const t = cellText(b, i);
         if (!t) return '<td class="off"></td>';
@@ -948,10 +1089,12 @@ function renderStdDetail(std, s, fullpay) {
   // 금액 행 — 정직원(관리자)은 매장 평균 일급(월급합÷정직원수÷30.4), 메이트는 매장 평균 실질시급×근무시간
   // (식사/밥차 제외)으로 계산해 "하루에 얼마 쓰는지·매출대비 인건비율"을 바로 가늠할 수 있게 한다.
   const ftDaily = s.nfull ? fullpay / s.nfull / 30.4 : 0;
+  let mateMH = 0;
   const blockCost = blocks.map(b => {
     if (b.ft) return ftDaily;
     let workSlots = 0;
     for (let i = 1; i <= 32; i++) { const t = cellText(b, i); if (t && t !== "밥차") workSlots++; }
+    mateMH += workSlots / 2;
     return s.effBase * (workSlots / 2);
   });
   const totalCost = blockCost.reduce((a, c) => a + c, 0);
@@ -959,11 +1102,14 @@ function renderStdDetail(std, s, fullpay) {
     blocks.map((b, i) => `<td class="${b.ft ? "slot-ft" : "slot-mate"}">${won(blockCost[i])}</td>`).join("") + "</tr>";
   h += "</tbody></table>";
   const box = $('dtable'); box.innerHTML = "";
-  box.appendChild(stdToggle(stdDetDay, k => { stdDetDay = k; renderStdDetail(std, s, fullpay); }));
+  box.appendChild(stdToggle(stdDetDay, k => { stdDetDay = k; renderStdDetail(std, s, fullpay, stdAvg); }));
   const wrap = document.createElement("div"); wrap.innerHTML = h; box.appendChild(wrap);
-  $('dsum').innerHTML = `<span>${stdDayLabel(stdDetDay)} 표준안</span><span>정직원 <b>${st.nFt}자리 · ${st.ftMH.toFixed(1)}h</b></span>` +
-    `<span>메이트 <b>${st.nMate}명 · ${st.mateMH.toFixed(1)}h</b></span><span>식사(밥차, 근무 제외) <b>${st.mealMH.toFixed(1)}h</b></span>`;
-  $('dNote').textContent = "열 = 직원 1명(왼쪽부터 정직원·홀·주방, 시작시간 순 — 시프트판 탭과 동일 순서). 셀 = 그 시간 구체 업무(없으면 기본 역할). 밥차 = 직원 식사시간으로 근무·인건비에서 제외. 성명·인원번호는 개인정보라 표시하지 않고 순번으로만 표기합니다.";
+  $('dsum').innerHTML = `<span>${stdDayLabel(stdDetDay)} 표준안</span><span>정직원 <b>${st0.nFt}자리 · ${st0.ftMH.toFixed(1)}h</b></span>` +
+    `<span>메이트 <b>${st0.nMate}명 · ${mateMH.toFixed(1)}h</b></span><span>식사(밥차, 근무 제외) <b>${st0.mealMH.toFixed(1)}h</b></span>` +
+    (adaptive ? `<span>목표생산성 유지 기준 조정됨 (${(ratio * 100).toFixed(0)}%)</span>` : "");
+  $('dNote').textContent = adaptive
+    ? `열 = 직원 1명(왼쪽부터 정직원·홀·주방, 시작시간 순 — 시프트판 탭과 동일 순서). 셀 = 그 시간 구체 업무(없으면 기본 역할). 밥차 = 직원 식사시간으로 근무·인건비에서 제외. 메이트 칸의 끝 시간은 이 매장의 목표생산성(${won(adaptive.targetProd)}원/MH)을 유지하도록 늘이거나 줄였습니다(시작 시간·인원수는 원표 그대로). 성명·인원번호는 개인정보라 표시하지 않고 순번으로만 표기합니다.`
+    : "열 = 직원 1명(왼쪽부터 정직원·홀·주방, 시작시간 순 — 시프트판 탭과 동일 순서). 셀 = 그 시간 구체 업무(없으면 기본 역할). 밥차 = 직원 식사시간으로 근무·인건비에서 제외. 성명·인원번호는 개인정보라 표시하지 않고 순번으로만 표기합니다.";
 }
 function renderStdShift(std, s, fullpay, stdAvg) {
   const plan = std[stdSfDay], st = plan.stats;
@@ -974,7 +1120,11 @@ function renderStdShift(std, s, fullpay, stdAvg) {
     b.onclick = () => { stdSfDay = k; render(); };
     btns.appendChild(b);
   }
-  const rows = plan.blocks.slice().sort((a, b) => (b.ft - a.ft) || (a.p === b.p ? a.slots[0] - b.slots[0] : (a.p === "홀" ? -1 : 1)));
+  const A = stdAvg[stdSfDay];
+  const adaptive = A ? stdAdaptiveCurve(s.code, stdSfDay, A) : null;
+  const ratio = adaptive && st.mateMH ? Math.max(0.3, Math.min(3, adaptive.mateMH / st.mateMH)) : 1;
+  let rows = plan.blocks.slice().sort((a, b) => (b.ft - a.ft) || (a.p === b.p ? a.slots[0] - b.slots[0] : (a.p === "홀" ? -1 : 1)));
+  if (ratio !== 1) rows = rows.map(b => b.ft ? b : stdScaleMateBlock(b, ratio));
   let html = '<div class="gantt g30"><div class="ghead"></div>' +
     [...Array(16)].map((_, i) => `<div class="ghead" style="grid-column:span 2">${8 + i}</div>`).join("");
   for (const b of rows) {
@@ -990,15 +1140,22 @@ function renderStdShift(std, s, fullpay, stdAvg) {
     }
   }
   $('ganttBox').innerHTML = html + "</div>";
-  const A = stdAvg[stdSfDay], dcst = stdDayCost(st, A, s, fullpay, false), over = dcst.ratio > LABOR_CAP * 100;
+  // 실제 조정된 블록에서 메이트 MH를 다시 세어 요약과 인건비율이 화면 그대로와 일치하게 한다.
+  let mateMH = 0;
+  for (const b of rows) if (!b.ft) for (const i of b.slots) if (b.taskAt[i] !== "밥차") mateMH += 0.5;
+  const stAdj = { ...st, mateMH, totMH: st.ftMH + mateMH };
+  const dcst = stdDayCost(stAdj, A, s, fullpay, false), over = dcst.ratio > LABOR_CAP * 100;
   $('sfSum').innerHTML =
     `<span>${stdDayLabel(stdSfDay)} 평균 일매출 <b>${won(A / 10000)}만</b></span>` +
-    `<span>표 총 <b>${st.totMH.toFixed(1)}h</b> (정직원 ${st.ftMH.toFixed(1)} + 메이트 ${st.mateMH.toFixed(1)})</span>` +
-    `<span>생산성 <b>${won(A / st.totMH)}원/MH</b></span>` +
+    `<span>표 총 <b>${stAdj.totMH.toFixed(1)}h</b> (정직원 ${st.ftMH.toFixed(1)} + 메이트 ${mateMH.toFixed(1)})</span>` +
+    `<span>생산성 <b>${won(A / stAdj.totMH)}원/MH</b></span>` +
     `<span>메이트 인건비 <b>${won(dcst.mate)}원</b></span>` +
-    `<span>이날 예상 인건비율 <b${over ? ' style="color:var(--crit)"' : ""}>${dcst.ratio.toFixed(1)}%</b></span>`;
+    `<span>이날 예상 인건비율 <b${over ? ' style="color:var(--crit)"' : ""}>${dcst.ratio.toFixed(1)}%</b></span>` +
+    (adaptive ? `<span>목표생산성 유지 기준 조정됨 (${(ratio * 100).toFixed(0)}%)</span>` : "");
   $('mixBox').innerHTML = "표준 계획표 적용 매장은 선임점장 표준안의 개인별 시프트를 그대로 보여드리며, 계약 형태(주5일·초단시간) 가이드는 표시하지 않습니다.";
-  $('sfNote').textContent = "한 줄 = 한 사람의 시프트. 진한 칸 = 정직원, 초록 = 메이트, 빗금 = 밥차(직원 식사시간 — 근무·인건비 제외).";
+  $('sfNote').textContent = adaptive
+    ? "한 줄 = 한 사람의 시프트. 진한 칸 = 정직원, 초록 = 메이트, 빗금 = 밥차(직원 식사시간 — 근무·인건비 제외). 메이트 시프트의 끝 시간은 목표생산성 유지를 위해 원표에서 늘이거나 줄였습니다(시작 시간·인원수는 그대로)."
+    : "한 줄 = 한 사람의 시프트. 진한 칸 = 정직원, 초록 = 메이트, 빗금 = 밥차(직원 식사시간 — 근무·인건비 제외).";
   $('sfLegend').hidden = false;
 }
 
