@@ -172,18 +172,21 @@ table { font-variant-numeric: tabular-nums; }
 .kpi-tile.is-warn .kpi-value { color: var(--warn); }
 .kpi-tile.is-crit .kpi-value { color: var(--crit); }
 
-/* 히어로 타일: 그라데이션 → 플랫 다크 + 로운 그린 숫자 (매출 대시보드 다크 앵커와 동일 어법) */
+/* 히어로 타일: 검정 배경이 너무 쎄다는 피드백(2026-10-02)으로 플랫 다크 대신, 목표 대비 갭(%p)에
+   따라 연두(3%p 이내)/주황(3~5%p)/빨강(5%p 이상)으로 옅게 톤을 넣는 방식으로 교체. */
 .kpi-tile.kpi-hero {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--surface);
+  border-color: var(--line);
 }
-.kpi-tile.kpi-hero .kpi-label { color: #aab3a6; }
-.kpi-tile.kpi-hero .kpi-value,
-.kpi-tile.kpi-hero.is-good .kpi-value,
-.kpi-tile.kpi-hero.is-warn .kpi-value,
-.kpi-tile.kpi-hero.is-crit .kpi-value { color: var(--green); }
-.kpi-tile.kpi-hero .kpi-sub { color: #9aa39a; }
+.kpi-tile.kpi-hero .kpi-label { color: var(--muted); }
+.kpi-tile.kpi-hero .kpi-value { color: var(--ink); }
+.kpi-tile.kpi-hero .kpi-sub { color: var(--muted); }
+.kpi-tile.kpi-hero.is-good { background: var(--good-soft); border-color: var(--good); }
+.kpi-tile.kpi-hero.is-good .kpi-value { color: var(--good); }
+.kpi-tile.kpi-hero.is-warn { background: var(--warn-soft); border-color: var(--warn); }
+.kpi-tile.kpi-hero.is-warn .kpi-value { color: var(--warn); }
+.kpi-tile.kpi-hero.is-crit { background: var(--crit-soft); border-color: var(--crit); }
+.kpi-tile.kpi-hero.is-crit .kpi-value { color: var(--crit); }
 
 /* ---------- Tables (Tabler/Tabulator 문법: 스티키 헤더·행 hover·강조 행 틴트) ---------- */
 .table-scroll { overflow-x: auto; }
@@ -261,9 +264,9 @@ table { font-variant-numeric: tabular-nums; }
 @media (max-width: 900px) { .feedback-grid { grid-template-columns: repeat(2, 1fr); } }
 .feedback-col {
   display: flex; flex-direction: column; gap: 6px;
-  background: var(--paper); border: 1px solid var(--line); border-radius: 4px; padding: 10px;
+  background: #fffbe0; border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px 10px;
 }
-.feedback-col h4 { font-size: 12px; font-weight: 700; color: var(--ink); }
+.feedback-col h4 { font-size: 12px; font-weight: 700; color: var(--ink); margin: 0; }
 .feedback-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
 .feedback-item { display: flex; align-items: flex-start; gap: 4px; }
 .feedback-item-num { font-size: 11.5px; color: var(--muted); padding: 6px 0 0 2px; flex: 0 0 auto; }
