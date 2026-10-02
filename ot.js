@@ -627,10 +627,9 @@ function buildPlanInputs() {
   loadStaff('RU019');
   syncMsalesFromForecast();
 }
-function defaultYm() { // 다음 달
-  const d = new Date(); const y = d.getMonth() === 11 ? d.getFullYear() + 1 : d.getFullYear();
-  const m = d.getMonth() === 11 ? 1 : d.getMonth() + 2;
-  const v = `${y}-${String(m).padStart(2, '0')}`;
+function defaultYm() { // 이번 달 (2026-10-02 사용자 피드백 — 처음 열면 다음 달이 아니라 지금 달로)
+  const d = new Date();
+  const v = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   return [...msel.options].some(o => o.value === v) ? v : msel.options[0].value;
 }
 function loadStaff(code) {
