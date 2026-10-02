@@ -227,7 +227,11 @@ function otMtdRows(ym, salesRows, laborRows) {
     const frac = +last.slice(8) / dim; // 정직원 급여·연차수당은 경과일수 비례 안분
     const labor = mate * s0.eff + (s0.fullpay + s0.nfull * 100000) * frac + sales / 1.1 * 0.006;
     const mh = mate + ft;
-    out.push({ code, name: s0.name, sales, mh, mate, prod: sales / mh, need, over: mh - need,
+    // 목표생산성 = 그 매장 표준표(평일/주말, 없으면 72,000원/MH 엔진)를 9월 실제 매출에 그대로 적용했을 때
+    // 나왔을 생산성(=매출÷필요MH) — "메이트 초과시간"도 이 기준(필요MH) 대비로 재정의한다(값은 동일, 관점만 전환:
+    // 필요MH=필요총MH-FT 고정이므로 mh-need = mate-(need-ft) = 메이트 몫 초과분과 대수적으로 같다).
+    out.push({ code, name: s0.name, sales, mh, mate, ft, prod: sales / mh, need, over: mh - need,
+               targetProd: need ? sales / need : null,
                ratio: labor / (sales / 1.1) * 100, labor, days: n, first, last, std: !!OT_STD[code], eff: s0.eff });
   }
   return out; // 정렬은 렌더링 시점(sortDashRows)에서 적용 — 코드 순서 그대로 반환
@@ -249,31 +253,34 @@ async function renderDashMTD(ym, myReq) {
   if (!rows.length) { $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">이 달에 적재된 실적이 없습니다.</p>'; $('dashKpis').innerHTML = ''; return; }
   const last = rows.reduce((a, r) => r.last > a ? r.last : a, ''), first = rows.reduce((a, r) => !a || r.first < a ? r.first : a, '');
   $('dashSub').textContent = `${ym} 누적 실적 (${first.slice(5)}~${last.slice(5)}) — 예상이 아니라 입력된 매출·근태 실적 기준입니다. ` +
-    '누적 인건비율은 메이트 실근무 MH×실질시급 + 정직원 급여(경과일 안분)·연차수당·퇴직(순매출 0.6%)의 근사치이고, 필요 MH는 표준표 등록 매장은 그날의 표(평일/주말), 그 외는 목표 72,000원/MH 엔진(운영 제약 포함) 기준입니다. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
+    '누적 인건비율은 메이트 실근무 MH×실질시급 + 정직원 급여(경과일 안분)·연차수당·퇴직(순매출 0.6%)의 근사치이고, 목표생산성은 표준표 등록 매장은 그 표(평일/주말)를 이번 달 실제 매출에 그대로 적용했을 때의 생산성, 그 외는 72,000원/MH 엔진(운영 제약 포함) 기준입니다. 메이트 초과시간 = 실제 메이트MH − 목표생산성 달성에 필요한 메이트MH. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
   const tSales = rows.reduce((t, r) => t + r.sales, 0), tMH = rows.reduce((t, r) => t + r.mh, 0);
+  const tNeed = rows.reduce((t, r) => t + r.need, 0);
   const tLabor = rows.reduce((t, r) => t + r.labor, 0), ratioTot = tLabor / (tSales / 1.1) * 100;
-  const nOk = rows.filter(r => r.prod >= TARGET).length;
+  const nOk = rows.filter(r => r.targetProd != null && r.prod >= r.targetProd).length;
   const overRows = rows.filter(r => r.over > 0);
   const overMH = overRows.reduce((t, r) => t + r.over, 0), overCost = overRows.reduce((t, r) => t + r.over * r.eff, 0);
   const overPct = tLabor ? overCost / tLabor * 100 : 0;
-  const score = (tSales / tMH / TARGET * 100).toFixed(0);
+  const score = (tNeed / tMH * 100).toFixed(0);
   const nCap = rows.filter(r => r.ratio > LABOR_CAP * 100).length;
   $('dashKpis').innerHTML =
     `<div><div class="k">전사 누적 매출 · 누적 인건비율 (${ym.slice(5)}월)</div><div class="v">${(tSales / 1e8).toFixed(1)}억 <span style="font-size:15px;font-weight:700;color:var(--muted)">· ${ratioTot.toFixed(1)}%</span></div><div class="s">${rows.length}개 매장 · ${first.slice(5)}~${last.slice(5)} 누적 · 인건비율 = 근사 인건비 ÷ 순매출</div></div>` +
-    `<div><div class="k">전사 누적 생산성</div><div class="v">${won(tSales / tMH)} <span style="font-size:15px;font-weight:700;color:var(--good)">(${score}%)</span></div><div class="s">원/MH · 누적 ${won(tMH)}MH, 목표 72,000</div></div>` +
-    `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">누적 생산성 ≥ 72,000 · 인건비율 ${Math.round(LABOR_CAP * 100)}% 초과 ${nCap}곳</div></div>` +
-    `<div><div class="k">과잉 투입 인건비 (누적)</div><div class="v" style="color:var(--crit)">+${won(overCost / 10000)}만원</div><div class="s">+${won(overMH)} MH(필요·표 대비) · 인건비의 ${overPct.toFixed(1)}%</div></div>`;
+    `<div><div class="k">전사 누적 생산성</div><div class="v">${won(tSales / tMH)} <span style="font-size:15px;font-weight:700;color:var(--good)">(${score}%)</span></div><div class="s">원/MH · 누적 ${won(tMH)}MH, 목표(매장별 표준표 기준) ${won(tNeed)}MH 환산치</div></div>` +
+    `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">누적 생산성 ≥ 매장별 목표생산성 · 인건비율 ${Math.round(LABOR_CAP * 100)}% 초과 ${nCap}곳</div></div>` +
+    `<div><div class="k">과잉 투입 인건비 (누적)</div><div class="v" style="color:var(--crit)">+${won(overCost / 10000)}만원</div><div class="s">메이트 초과 +${won(overMH)}h · 인건비의 ${overPct.toFixed(1)}%</div></div>`;
   const maxOver = Math.max(...rows.map(r => Math.abs(r.over)), 1);
-  let html = '<table><colgroup><col style="width:150px"><col style="width:85px"><col style="width:80px"><col style="width:95px"><col style="width:80px"><col style="width:95px"><col style="width:170px"><col style="width:100px"></colgroup>' +
-    '<thead><tr><th>매장</th><th>누적매출(억)</th><th>누적 MH</th><th>누적 생산성</th><th>생산성 점수</th><th>누적 인건비율</th><th>필요·표 대비 과잉 MH</th><th>기준</th></tr></thead><tbody>';
+  let html = '<table><colgroup><col style="width:150px"><col style="width:85px"><col style="width:90px"><col style="width:95px"><col style="width:80px"><col style="width:95px"><col style="width:170px"><col style="width:100px"></colgroup>' +
+    '<thead><tr><th>매장</th><th>누적매출(억)</th><th>목표생산성</th><th>누적 생산성</th><th>생산성 점수</th><th>누적 인건비율</th><th>메이트 초과시간</th><th>기준</th></tr></thead><tbody>';
   for (const r of rows) {
     const w = Math.round(Math.abs(r.over) / maxOver * 90);
     const rb = r.ratio > LABOR_CAP * 100 ? 'c' : r.ratio <= 24 ? 'g' : r.ratio <= 28 ? 'w' : 'c';
     const capMark = r.ratio > LABOR_CAP * 100 ? ` title="상한 ${Math.round(LABOR_CAP * 100)}% 초과"` : '';
+    const scorePct = r.targetProd ? (r.prod / r.targetProd * 100) : (r.prod / TARGET * 100);
+    const overColor = r.over > 0 ? 'var(--crit)' : 'var(--good)';
     html += `<tr class="rowlink" data-code="${r.code}"><td>${r.name}</td><td>${(r.sales / 1e8).toFixed(2)}</td>` +
-      `<td>${won(r.mh)}</td><td><b>${won(r.prod)}</b></td><td><b>${(r.prod / TARGET * 100).toFixed(0)}%</b></td>` +
+      `<td>${r.targetProd != null ? won(r.targetProd) : '-'}</td><td><b>${won(r.prod)}</b></td><td><b>${scorePct.toFixed(0)}%</b></td>` +
       `<td><span class="band ${rb}"${capMark}>${r.ratio.toFixed(1)}%</span></td>` +
-      `<td>${r.over > 0 ? '+' + won(r.over) : won(r.over)} <span class="mini" style="width:${w}px;${r.over <= 0 ? 'background:var(--dark)' : ''}"></span></td>` +
+      `<td style="color:${overColor};font-weight:700">${r.over > 0 ? '+' + won(r.over) : won(r.over)}h <span class="mini" style="width:${w}px;background:${overColor}"></span></td>` +
       `<td class="d" style="font-size:11px">${r.std ? '표준표' : '엔진'}<br>${r.days}일</td></tr>`;
   }
   $('dashTable').innerHTML = html + '</tbody></table>';
