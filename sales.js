@@ -537,6 +537,50 @@ function renderDaily() {
   $('calGrid').innerHTML = html;
 }
 
+// 매장 일별 "엑셀 다운로드" — 캘린더가 표가 아니라 커스텀 div 그리드라 downloadTablesAsExcel로는 못 읽는다.
+// renderDaily()와 같은 계산을 그대로 다시 돌려 날짜별 행으로 펴서 내보낸다.
+function exportDailyXlsx() {
+  if (typeof XLSX === 'undefined') { alert('엑셀 라이브러리가 로드되지 않았습니다.'); return; }
+  const sel = $('dailyStore').value || '__ALL__';
+  const isBrand = sel === '__ALL__';
+  const code = isBrand ? null : sel;
+  const ym = $('dailyMonth').value;
+  const run = getRun(ym);
+  const codes = isBrand ? Object.keys(OT_DATA) : [code];
+  const fDay = d => { if (!run) return 0; let t = 0; for (const c of codes) { const s = run.daily.stores[c]; if (s) t += (s.daily[d] || 0); } return t; };
+  const actDay = d => { let t = 0; for (const c of codes) { const mm = SALES[c]; if (mm) t += (mm.get(d) || 0); } return t; };
+  const f = run ? (isBrand ? { src: `${codes.length}개 매장 합계` } : run.daily.stores[code]) : null;
+  const m = SALES[code] || new Map();
+  const dates = monthDates(ym);
+  const aoa = [['날짜', '요일', '실적', '전년 동일요일(-364일) 실적', '성장율(%)', '예측']];
+  for (const d of dates) {
+    const fv = f ? fDay(d) : null, av = isBrand ? actDay(d) : m.get(d);
+    const closed = isBrand ? OT_CLOSED_DATES.has(d) : (isClosed(code, d) || (fv === 0 && f && !av));
+    const pd = addD(d, -364);
+    const pv = isBrand ? actDay(pd) : (m.get(pd) || 0);
+    let growth = null;
+    if (isBrand) {
+      let a = 0, p = 0;
+      for (const c of codes) {
+        const mm = SALES[c]; if (!mm) continue;
+        const ac = mm.get(d) || 0, pc = mm.get(pd) || 0;
+        if (ac > 0 && pc > 0) { a += ac; p += pc; }
+      }
+      if (a > 0 && p > 0) growth = (a / p - 1) * 100;
+    } else if (av > 0 && pv > 0) {
+      growth = (av / pv - 1) * 100;
+    }
+    aoa.push([d, WD[dowIdx(d)], closed ? '휴점' : (av || ''), pv || '', growth !== null ? Number(growth.toFixed(1)) : '', fv != null ? fv : '']);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 12 }, { wch: 6 }, { wch: 12 }, { wch: 20 }, { wch: 10 }, { wch: 12 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, ymLabel(ym).replace(/\s+/g, ''));
+  const storeTag = isBrand ? '브랜드전체' : (OT_DATA[code]?.name || code);
+  XLSX.writeFile(wb, `매장일별_${storeTag}_${ym}.xlsx`);
+}
+document.getElementById('dailyExportBtn')?.addEventListener('click', exportDailyXlsx);
+
 // ---------- V2b 주차별 매출 (실적 전용, 주 = 월~일 — 생산성 급여 주차(화~월)와 다른 기준) ----------
 let weeklyChartObj = null;
 
@@ -861,5 +905,18 @@ $('pubBtn').onclick = async () => {
     msg.className = 'plan-msg ok';
   } catch (e) { msg.textContent = '실패: ' + e.message; msg.className = 'plan-msg err'; }
 };
+
+// ---- 나머지 탭 엑셀 다운로드 — export-tables.js의 downloadTablesAsExcel 공용 헬퍼 사용 ----
+// (브랜드 대시보드·매장 일별은 위에 전용 함수가 있음 — 브랜드는 매장×일자 매트릭스라 테이블 모양이 달라서,
+// 매장 일별은 캘린더가 표가 아니라서 커스텀으로 뺐다)
+document.getElementById('weeklyExportBtn')?.addEventListener('click', () => {
+  downloadTablesAsExcel(document.getElementById('view-weekly'), `주차별매출_${$('wkStore').value || '전체'}_${$('wkYear').value || ''}`);
+});
+document.getElementById('accExportBtn')?.addEventListener('click', () => {
+  downloadTablesAsExcel(document.getElementById('view-acc'), `정확도피드백_${$('accMonth').value || ''}`);
+});
+document.getElementById('adminExportBtn')?.addEventListener('click', () => {
+  downloadTablesAsExcel(document.getElementById('view-admin'), '발행이력');
+});
 
 init();

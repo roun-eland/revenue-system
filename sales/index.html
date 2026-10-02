@@ -81,6 +81,7 @@
         <label class="fld" style="min-width:200px">매장<select id="dailyStore"></select></label>
         <label class="fld" style="min-width:150px">월<select id="dailyMonth"></select></label>
         <a id="toPlanBtn" class="btn btn-sm" style="display:inline-flex;align-items:center;text-decoration:none;align-self:flex-end">이 예측으로 TO 계획 →</a>
+        <button id="dailyExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div class="kpis" id="dailyKpis"></div>
       <div class="card">
@@ -96,6 +97,7 @@
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:200px">매장<select id="wkStore"></select></label>
         <label class="fld" style="min-width:120px">연도<select id="wkYear"></select></label>
+        <button id="weeklyExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div class="card" style="margin-bottom:14px">
         <h3 style="margin:0 0 10px" id="wkChartTitle">주차별 매출 (백만원)</h3>
@@ -113,6 +115,7 @@
       <p class="view-sub">확정 예측이 얼마나 맞았는지, 어디서·왜 틀렸는지 — 원인 태그가 쌓이면 다음 버전 모델(날씨·이벤트 계수)의 근거가 됩니다. 태그는 매장 관리자 계정도 저장할 수 있습니다.</p>
       <div class="plan-actions" style="margin:0 0 14px">
         <label class="fld" style="min-width:160px">조회 월<select id="accMonth"></select></label>
+        <button id="accExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div class="kpis" id="accKpis"></div>
       <div class="card" style="margin-bottom:14px">
@@ -157,6 +160,9 @@
       </div>
       <div class="card">
         <h3 style="margin:0 0 8px">발행 이력</h3>
+        <div class="plan-actions" style="margin:0 0 8px">
+          <button id="adminExportBtn" class="btn btn-sm" type="button">엑셀 다운로드 ⬇</button>
+        </div>
         <div class="tblwrap" id="runsTable"></div>
       </div>
     </section>
@@ -167,7 +173,8 @@
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
+<script src="../export-tables.js?v=202610021415"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
-<script src="../sales.js?v=202609221130"></script>
+<script src="../sales.js?v=202610021415"></script>
 </body>
 </html>
