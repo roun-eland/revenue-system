@@ -184,25 +184,62 @@ function stdAdaptiveCurve(code, k, A) {
             nFt: st.nFt, nMate, shapeCode: bestCode, shapeName: OT_DATA[bestCode]?.name || bestCode, idealTotMH, targetProd: base.prod };
 }
 
-// 상세·시프트판은 (곡선이 아니라) 선임점장이 준 실제 이름 있는 블록을 그대로 보여주는 화면이라, 조정은
-// "그 블록의 끝 시간을 늘이거나 줄인다"로 최대한 단순하게 한다(시작시간·몇 명인지는 안 바꿈 — 인원을
-// 통째로 추가/삭제하면 어느 자리를 새로 만들지 판단이 더 불확실해지므로, 이번 버전은 시간 조정까지만).
-function stdScaleMateBlock(b, ratio) {
-  if (!b.slots.length || Math.abs(ratio - 1) < 0.02) return b;
-  const slots = b.slots.slice().sort((x, y) => x - y);
-  const start = slots[0], end = slots[slots.length - 1];
-  const origLen = end - start + 1;
-  const newLen = Math.max(1, Math.min(32 - start + 1, Math.round(origLen * ratio)));
-  if (newLen === origLen) return b;
-  const nb = { ...b, taskAt: { ...b.taskAt } };
-  if (newLen > origLen) {
-    const lastTask = b.taskAt[end] || b.r;
-    for (let i = end + 1; i <= start + newLen - 1; i++) nb.taskAt[i] = lastTask;
-  } else {
-    for (let i = start + newLen; i <= end; i++) delete nb.taskAt[i];
+// 상세·시프트판 조정 — 처음엔 "기존 사람들 교대 끝시간을 늘이거나 줄이는" 방식으로 했는데, 그 사람의
+// 교대 끝자락이 꼭 바쁜 시간이라는 보장이 없어 "바쁠 때 증원"이 아니라 "한산할 때 그 사람 시간만 늘어나는"
+// 문제가 있다는 피드백(2026-10-02) — 그래서 시간 늘리기 대신 사람 수 자체를 조정하는 방식으로 바꿨다.
+// 적응형 필요곡선(need, stdAdaptiveCurve의 mateCurve)에서 기존 인원으로 못 덮는 구간을 찾아, 그 구간
+// 그대로 파트타임 1명을 새로 추가하고(최소 1시간 미만은 오차로 무시, 한 번에 최대 3명), 반대로 기존
+// 인원이 필요보다 많이 남으면 가장 짧은(=가장 지원적인) 교대부터 통째로 뺀다. 남아있는 사람들의 교대
+// 시간 자체는 건드리지 않는다.
+const STD_MIN_ADJUST_MH = 1;
+function stdAdjustHeadcount(origBlocks, adaptive) {
+  if (!adaptive) return origBlocks;
+  const cellOf = (b, i) => b.slots.includes(i) ? (b.taskAt[i] || b.r) : null;
+  const mateBlocks = origBlocks.filter(b => !b.ft);
+  const cov0 = new Array(34).fill(0);
+  for (let i = 1; i <= 32; i++) for (const b of mateBlocks) { const t = cellOf(b, i); if (t && t !== "밥차") cov0[i]++; }
+  const need = adaptive.mateCurve;
+
+  // 부족 구간 — 연속 구간별로 모아 각각 파트타임 1명 후보로 만든다.
+  const gap = []; for (let i = 1; i <= 32; i++) gap[i] = Math.max(0, (need[i] || 0) - cov0[i]);
+  const added = [];
+  const rawRuns = []; let cur = null;
+  for (let i = 1; i <= 32; i++) {
+    if (gap[i] > 0.01) { if (!cur) cur = { start: i, end: i }; else cur.end = i; }
+    else if (cur) { rawRuns.push(cur); cur = null; }
   }
-  nb.slots = []; for (let i = start; i <= start + newLen - 1; i++) nb.slots.push(i);
-  return nb;
+  if (cur) rawRuns.push(cur);
+  // 부족 구간이 길면(8h 넘으면) 한 사람에게 몰아주지 않고 여러 파트타임으로 쪼갠다.
+  const MAX_BLOCK_SLOTS = 16;
+  const runs = [];
+  for (const r of rawRuns) {
+    const len = r.end - r.start + 1;
+    const nChunks = Math.ceil(len / MAX_BLOCK_SLOTS);
+    const chunkLen = Math.ceil(len / nChunks);
+    for (let c = 0; c < nChunks; c++) {
+      const cs = r.start + c * chunkLen, ce = Math.min(r.end, cs + chunkLen - 1);
+      if (ce >= cs) runs.push({ start: cs, end: ce });
+    }
+  }
+  runs.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+  for (const run of runs.slice(0, 3)) {
+    if ((run.end - run.start + 1) / 2 < STD_MIN_ADJUST_MH) continue;
+    const slots = []; for (let i = run.start; i <= run.end; i++) slots.push(i);
+    const taskAt = {}; slots.forEach(i => taskAt[i] = "증원(파트타임)");
+    const ref = origBlocks.find(b => b.slots.includes(run.start)) || origBlocks.find(b => b.slots.includes(run.end));
+    added.push({ p: ref ? ref.p : "", r: "증원(파트타임)", n: null, ft: false, slots, taskAt });
+  }
+
+  // 과잉 — 가장 짧은 교대부터, 빼도 목표(adaptive.mateMH) 밑으로 너무 많이 안 깎이는 선까지 통째로 제거.
+  const removed = new Set();
+  const blockMH = b => b.slots.filter(i => cellOf(b, i) !== "밥차").length / 2;
+  let runningMH = mateBlocks.reduce((t, b) => t + blockMH(b), 0) + added.reduce((t, b) => t + b.slots.length / 2, 0);
+  for (const b of mateBlocks.slice().sort((a, b2) => a.slots.length - b2.slots.length)) {
+    if (runningMH <= adaptive.mateMH + 0.1) break;
+    const bMH = blockMH(b);
+    if (runningMH - bMH >= adaptive.mateMH - 1) { removed.add(b); runningMH -= bMH; }
+  }
+  return [...origBlocks.filter(b => b.ft || !removed.has(b)), ...added];
 }
 
 // ot-std.js의 stdMonthMH(표 그대로, flat)를 대신해 월 합계도 요일별 매출에 맞춘 값으로 집계한다 — "목표생산성
@@ -464,7 +501,7 @@ async function renderDash() {
   } else if (dashActual.months.has(ym)) { // ---- 진행 중인 달: 누적 실적 ----
     await renderDashMTD(ym, myReq);
   } else { // ---- 계획 모드 ----
-    $('dashSub').textContent = `${ym} 계획 기준 — 확정 저장된 월 계획이 있으면 그 값을, 없으면 기본값(8월 매출·현재 정직원 구성)으로 계산합니다. 실적이 적재되면(M2) 자동으로 실측으로 전환됩니다.`;
+    $('dashSub').textContent = `${ym} 계획 기준 — 확정 저장된 월 계획이 있으면 그 값을, 없으면 매출 앱의 현재 예상매출(확정 예측 + 지금까지 실적)을, 그마저 없으면 8월 매출로 계산합니다. 실적이 적재되면(M2) 자동으로 실측으로 전환됩니다.`;
     $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">계획 계산 중…</p>';
     // 확정 저장된 계획 불러오기 (없거나 실패해도 기본값으로 진행)
     let saved = {};
@@ -473,17 +510,43 @@ async function renderDash() {
         .select('store_code,forecast_sales,staffing_snapshot,output').eq('ym', ym).eq('status', 'confirmed');
       (data || []).forEach(p => { saved[p.store_code] = p; });
     } catch (e) { /* 무시 */ }
+    // 매출 앱의 "현재 예상매출"(landing) — 확정 예측(sf_forecast_runs)의 남은 날짜 예측 + 이미 지난 날짜는
+    // 실적(ot_sales_daily)으로 대체. 매출 앱 브랜드 대시보드와 같은 계산(sales.js renderBrand)이라 숫자가 맞는다.
+    const fcRun = SF_RUNS.find(r => r.ym === ym && r.kind === '확정');
+    const actByCode = {};
+    if (fcRun) {
+      try {
+        const [fy, fm] = ym.split('-').map(Number);
+        const start = `${ym}-01`, endEx = fm === 12 ? `${fy + 1}-01-01` : `${fy}-${String(fm + 1).padStart(2, '0')}-01`;
+        const { data } = await sb.from('ot_sales_daily').select('store_code,sales_date,total,is_closed')
+          .gte('sales_date', start).lt('sales_date', endEx).limit(1000);
+        (data || []).forEach(r2 => {
+          if (r2.is_closed || !(+r2.total > 0)) return;
+          (actByCode[r2.store_code] = actByCode[r2.store_code] || {})[r2.sales_date] = +r2.total;
+        });
+      } catch (e) { /* 실패 시 확정 예측만 사용 */ }
+    }
     if (myReq !== dashReqId) return; // 그 사이 더 최신 조회로 바뀜 — 이 결과는 버린다
+    function landingFor(code) {
+      if (!fcRun || !fcRun.daily?.stores?.[code]) return null;
+      const f = fcRun.daily.stores[code], act = actByCode[code] || {};
+      let landing = 0;
+      for (const d of Object.keys(f.daily)) landing += (act[d] != null ? act[d] : (f.daily[d] || 0));
+      for (const d of Object.keys(act)) if (!(d in f.daily)) landing += act[d];
+      return landing;
+    }
     const rows = sortDashRows(Object.entries(OT_DATA).map(([code, s]) => {
       const p = saved[code];
-      const M = p ? Number(p.forecast_sales) : s.augM;
+      const live = landingFor(code);
+      const M = p ? Number(p.forecast_sales) : (live != null ? live : s.augM);
       const nfull = p?.staffing_snapshot?.nfull ?? s.nfull;
       const fullpay = p?.staffing_snapshot?.fullpay ?? s.fullpay;
       const plan = computeMonthPlan(code, ym, M, nfull, fullpay);
       const prod = M / plan.totMH;
       const stdTag = plan.std ? (plan.capped ? '<br>표준표·상한 적용' : '<br>표준표') : '';
+      const srcBase = p ? '확정 계획' : (live != null ? '매출예측 연동' : '8월 매출(기본값)');
       return { code, name: s.name, sales: M, mh: plan.totMH, prod,
-               ratio: plan.std ? plan.ratio : (p?.output?.ratio ?? plan.ratio), src: (p ? '확정 계획' : '기본값') + stdTag };
+               ratio: plan.std ? plan.ratio : (p?.output?.ratio ?? plan.ratio), src: srcBase + stdTag };
     }));
     const tSales = rows.reduce((t, r) => t + r.sales, 0);
     const tMH = rows.reduce((t, r) => t + r.mh, 0);
@@ -1063,9 +1126,8 @@ function renderStdDetail(std, s, fullpay, stdAvg) {
   const plan = std[stdDetDay], st0 = plan.stats;
   const A = stdAvg ? stdAvg[stdDetDay] : null;
   const adaptive = A ? stdAdaptiveCurve(s.code, stdDetDay, A) : null;
-  const ratio = adaptive && st0.mateMH ? Math.max(0.3, Math.min(3, adaptive.mateMH / st0.mateMH)) : 1;
   let blocks = plan.blocks.slice().sort((a, b) => (b.ft - a.ft) || (a.p === b.p ? a.slots[0] - b.slots[0] : (a.p === "홀" ? -1 : 1)));
-  if (ratio !== 1) blocks = blocks.map(b => b.ft ? b : stdScaleMateBlock(b, ratio));
+  if (adaptive) blocks = stdAdjustHeadcount(blocks, adaptive);
   const cellText = (b, i) => b.slots.includes(i) ? stdShort(b.taskAt[i] || b.r) : "";
 
   let h = '<table class="dtable dtable-emp"><thead>' +
@@ -1104,11 +1166,12 @@ function renderStdDetail(std, s, fullpay, stdAvg) {
   const box = $('dtable'); box.innerHTML = "";
   box.appendChild(stdToggle(stdDetDay, k => { stdDetDay = k; renderStdDetail(std, s, fullpay, stdAvg); }));
   const wrap = document.createElement("div"); wrap.innerHTML = h; box.appendChild(wrap);
+  const nMateNow = blocks.filter(b => !b.ft).length;
   $('dsum').innerHTML = `<span>${stdDayLabel(stdDetDay)} 표준안</span><span>정직원 <b>${st0.nFt}자리 · ${st0.ftMH.toFixed(1)}h</b></span>` +
-    `<span>메이트 <b>${st0.nMate}명 · ${mateMH.toFixed(1)}h</b></span><span>식사(밥차, 근무 제외) <b>${st0.mealMH.toFixed(1)}h</b></span>` +
-    (adaptive ? `<span>목표생산성 유지 기준 조정됨 (${(ratio * 100).toFixed(0)}%)</span>` : "");
+    `<span>메이트 <b>${nMateNow}명 · ${mateMH.toFixed(1)}h</b></span><span>식사(밥차, 근무 제외) <b>${st0.mealMH.toFixed(1)}h</b></span>` +
+    (adaptive ? `<span>목표생산성 ${won(adaptive.targetProd)}원/MH 유지 기준 조정됨 (원표 ${st0.nMate}명 → ${nMateNow}명)</span>` : "");
   $('dNote').textContent = adaptive
-    ? `열 = 직원 1명(왼쪽부터 정직원·홀·주방, 시작시간 순 — 시프트판 탭과 동일 순서). 셀 = 그 시간 구체 업무(없으면 기본 역할). 밥차 = 직원 식사시간으로 근무·인건비에서 제외. 메이트 칸의 끝 시간은 이 매장의 목표생산성(${won(adaptive.targetProd)}원/MH)을 유지하도록 늘이거나 줄였습니다(시작 시간·인원수는 원표 그대로). 성명·인원번호는 개인정보라 표시하지 않고 순번으로만 표기합니다.`
+    ? `열 = 직원 1명(왼쪽부터 정직원·홀·주방, 시작시간 순 — 시프트판 탭과 동일 순서). 셀 = 그 시간 구체 업무(없으면 기본 역할). 밥차 = 직원 식사시간으로 근무·인건비에서 제외. 메이트는 원표 사람들의 교대 시간은 그대로 두고, 이 매장의 목표생산성(${won(adaptive.targetProd)}원/MH)을 유지하도록 필요한 시간대에 파트타임 인원을 통째로 추가/제외했습니다("증원(파트타임)" 칸). 성명·인원번호는 개인정보라 표시하지 않고 순번으로만 표기합니다.`
     : "열 = 직원 1명(왼쪽부터 정직원·홀·주방, 시작시간 순 — 시프트판 탭과 동일 순서). 셀 = 그 시간 구체 업무(없으면 기본 역할). 밥차 = 직원 식사시간으로 근무·인건비에서 제외. 성명·인원번호는 개인정보라 표시하지 않고 순번으로만 표기합니다.";
 }
 function renderStdShift(std, s, fullpay, stdAvg) {
@@ -1122,9 +1185,8 @@ function renderStdShift(std, s, fullpay, stdAvg) {
   }
   const A = stdAvg[stdSfDay];
   const adaptive = A ? stdAdaptiveCurve(s.code, stdSfDay, A) : null;
-  const ratio = adaptive && st.mateMH ? Math.max(0.3, Math.min(3, adaptive.mateMH / st.mateMH)) : 1;
   let rows = plan.blocks.slice().sort((a, b) => (b.ft - a.ft) || (a.p === b.p ? a.slots[0] - b.slots[0] : (a.p === "홀" ? -1 : 1)));
-  if (ratio !== 1) rows = rows.map(b => b.ft ? b : stdScaleMateBlock(b, ratio));
+  if (adaptive) rows = stdAdjustHeadcount(rows, adaptive);
   let html = '<div class="gantt g30"><div class="ghead"></div>' +
     [...Array(16)].map((_, i) => `<div class="ghead" style="grid-column:span 2">${8 + i}</div>`).join("");
   for (const b of rows) {
@@ -1151,10 +1213,10 @@ function renderStdShift(std, s, fullpay, stdAvg) {
     `<span>생산성 <b>${won(A / stAdj.totMH)}원/MH</b></span>` +
     `<span>메이트 인건비 <b>${won(dcst.mate)}원</b></span>` +
     `<span>이날 예상 인건비율 <b${over ? ' style="color:var(--crit)"' : ""}>${dcst.ratio.toFixed(1)}%</b></span>` +
-    (adaptive ? `<span>목표생산성 유지 기준 조정됨 (${(ratio * 100).toFixed(0)}%)</span>` : "");
+    (adaptive ? `<span>목표생산성 ${won(adaptive.targetProd)}원/MH 유지 기준 조정됨 (원표 ${st.nMate}명 → ${rows.filter(b => !b.ft).length}명)</span>` : "");
   $('mixBox').innerHTML = "표준 계획표 적용 매장은 선임점장 표준안의 개인별 시프트를 그대로 보여드리며, 계약 형태(주5일·초단시간) 가이드는 표시하지 않습니다.";
   $('sfNote').textContent = adaptive
-    ? "한 줄 = 한 사람의 시프트. 진한 칸 = 정직원, 초록 = 메이트, 빗금 = 밥차(직원 식사시간 — 근무·인건비 제외). 메이트 시프트의 끝 시간은 목표생산성 유지를 위해 원표에서 늘이거나 줄였습니다(시작 시간·인원수는 그대로)."
+    ? "한 줄 = 한 사람의 시프트. 진한 칸 = 정직원, 초록 = 메이트, 빗금 = 밥차(직원 식사시간 — 근무·인건비 제외). 원표 사람들의 교대 시간은 그대로 두고, 목표생산성 유지를 위해 필요한 시간대에 파트타임 인원을 통째로 추가/제외했습니다(\"증원(파트타임)\" 줄)."
     : "한 줄 = 한 사람의 시프트. 진한 칸 = 정직원, 초록 = 메이트, 빗금 = 밥차(직원 식사시간 — 근무·인건비 제외).";
   $('sfLegend').hidden = false;
 }
