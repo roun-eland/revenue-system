@@ -4714,6 +4714,7 @@ function pivotVeryShortName(n) {
   return s;
 }
 const PIVOT_TIER_LABEL = { premium: '프리미엄', regular: '일반', value: '199-229' };
+const PIVOT_TIER_RANK = { premium: 0, regular: 1, value: 2 };
 function pivotDateRangeFromControls() {
   const unit = $('#pivotUnitSelect').value;
   if (unit === 's') {
@@ -4980,12 +4981,22 @@ function renderPivotCompare() {
       const saved = JSON.parse(localStorage.getItem('pivotStoreOrder') || 'null');
       // 저장된(드래그로 직접 조정한) 순서가 없으면, 손님수 순서 그대로는 등급이 뒤섞여 보이므로
       // 기본값은 등급(프리미엄→일반→199-229)으로 먼저 묶고 그 안에서 손님수 순으로 정렬한다.
-      const PIVOT_TIER_RANK = { premium: 0, regular: 1, value: 2 };
       pivotStoreOrder = saved
         ? saved.filter(c => allCodes.includes(c))
         : [...data.stores].sort((a, b) => (PIVOT_TIER_RANK[a.type] ?? 3) - (PIVOT_TIER_RANK[b.type] ?? 3) || b.guests - a.guests).map(s => s.code);
     }
-    data.stores.forEach(s => { if (!pivotStoreOrder.includes(s.code)) pivotStoreOrder.push(s.code); });
+    // 저장된 순서에 없는 매장(신규 오픈점 등)은 맨 끝이 아니라, 자기 등급 블록 안(다음 등급이 시작되기
+    // 전)에 끼워 넣는다 — 안 그러면 과거에 드래그로 순서를 저장해둔 사용자 화면에서 신규점이 등급과
+    // 무관하게 표 맨 끝(보통 199-229 뒤)에 붙어버린다(2026-10-06, 동부산 프리미엄 편입 때 발견).
+    data.stores.forEach(s => {
+      if (pivotStoreOrder.includes(s.code)) return;
+      const rank = PIVOT_TIER_RANK[s.type] ?? 3;
+      const insertAt = pivotStoreOrder.findIndex(c => {
+        const t = data.stores.find(x => x.code === c)?.type;
+        return (PIVOT_TIER_RANK[t] ?? 3) > rank;
+      });
+      if (insertAt === -1) pivotStoreOrder.push(s.code); else pivotStoreOrder.splice(insertAt, 0, s.code);
+    });
     pivotStoreOrder = pivotStoreOrder.filter(c => allCodes.includes(c));
     columns = [{ key: 'brand', label: '브랜드', codes: allCodes, brand: true }]
       .concat(pivotStoreOrder.map((c, i) => {
