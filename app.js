@@ -441,11 +441,62 @@ async function loadDashboard() {
   ]);
   state.seasonTarget = target || null;
   state.categorySummary = rows || [];
-  renderKpiRow();
-  renderDashboardTable();
+  if ($('#targetUnitSelect').value === 'wr') renderTargetWeekRangeOptions();
+  await loadTargetView();
   renderFeedback();
   loadCostTrend();
 }
+
+// ①목표 탭 "기준" 선택 — 시즌 전체(기본, 저장된 season_targets/category_summary 그대로) vs 주차구간
+// (헤더에서 고른 시즌을 관통하는 1~N주차 중 시작주~종료주, computeTargetRangeRollup으로 즉석 계산).
+async function loadTargetView() {
+  const unit = $('#targetUnitSelect')?.value || 's';
+  const hint = $('#targetRangeHint');
+  if (unit !== 'wr') {
+    if (hint) hint.textContent = '';
+    renderKpiRow();
+    renderDashboardTable();
+    return;
+  }
+  const fromVal = $('#targetWeekFromSelect').value, toVal = $('#targetWeekToSelect').value;
+  if (!fromVal || !toVal) return;
+  const [fStart] = fromVal.split('|');
+  const [, tEnd] = toVal.split('|');
+  const range = fStart <= tEnd ? { start: fStart, end: tEnd } : { start: tEnd, end: fStart };
+  if (hint) hint.textContent = '불러오는 중…';
+  const data = await loadPivotCompareData(range);
+  if (data.error) { if (hint) hint.textContent = data.error; return; }
+  const roll = computeTargetRangeRollup(data);
+  renderKpiRow(roll.rows, roll.actualRatio, roll.actualPricePerPerson);
+  renderDashboardTable(roll.rows, roll.actualRatio);
+  if (hint) hint.textContent = `${range.start} ~ ${range.end} 실적 기준`;
+}
+// 헤더에서 고른 시즌을 관통하는 주차 목록으로 시작주/종료주 드롭다운을 채운다 (②③의
+// renderPivotWeekRangeOptions와 같은 방식 — 대상 DOM만 다르다).
+function renderTargetWeekRangeOptions() {
+  const season = state.seasons.find(s => s.id === state.currentSeasonId);
+  const weeks = computeWeekOptionsForSeason(season);
+  const opts = weeks.map(w => `<option value="${w.periodStart}|${w.periodEnd}">${w.label}</option>`).join('');
+  const fromSel = $('#targetWeekFromSelect'), toSel = $('#targetWeekToSelect');
+  const keepFrom = fromSel.value, keepTo = toSel.value;
+  fromSel.innerHTML = opts;
+  toSel.innerHTML = opts;
+  if (!weeks.length) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const lastDone = [...weeks].reverse().find(w => w.periodEnd <= today) || weeks[weeks.length - 1];
+  fromSel.value = [...fromSel.options].some(o => o.value === keepFrom) ? keepFrom : `${weeks[0].periodStart}|${weeks[0].periodEnd}`;
+  toSel.value = [...toSel.options].some(o => o.value === keepTo) ? keepTo : `${lastDone.periodStart}|${lastDone.periodEnd}`;
+}
+function updateTargetUnitVisibility() {
+  const unit = $('#targetUnitSelect').value;
+  $('#targetWeekFromSelect').style.display = unit === 'wr' ? '' : 'none';
+  $('#targetWeekRangeSep').style.display = unit === 'wr' ? '' : 'none';
+  $('#targetWeekToSelect').style.display = unit === 'wr' ? '' : 'none';
+  if (unit === 'wr') renderTargetWeekRangeOptions();
+}
+$('#targetUnitSelect').addEventListener('change', () => { updateTargetUnitVisibility(); loadTargetView(); });
+$('#targetWeekFromSelect').addEventListener('change', loadTargetView);
+$('#targetWeekToSelect').addEventListener('change', loadTargetView);
 
 // 실적-목표 차이(%p)를 색깔 있는 셀로 보여준다. 원가율은 낮을수록 좋으므로 실적이 목표보다 높으면(초과) 경고색.
 function deltaCell(actualRatio, targetRatio) {
@@ -470,14 +521,19 @@ function weightedTotals(rows, prefix) {
   };
 }
 
-function renderKpiRow() {
+// rowsOverride/actualRatioOverride/actualPriceOverride: ①목표 탭 "주차구간" 모드에서, 시즌 전체
+// 저장값(state.categorySummary/seasonTarget) 대신 그 기간만 즉석 계산한 실적으로 "실적" 칸만 바꿔
+// 보여줄 때 쓴다 — 목표/설계는 시즌 단위 고정값이라 그대로 두고 실적만 교체.
+function renderKpiRow(rowsOverride, actualRatioOverride, actualPriceOverride) {
   const t = state.seasonTarget;
   const targetPrice = t?.target_price_per_person ?? null;
+  const rows = rowsOverride || state.categorySummary;
   const brandTarget = weightedTotals(state.categorySummary, 'target');
-  const brandActual = weightedTotals(state.categorySummary, 'actual');
-  const brandActualExclWater = state.categorySummary.reduce((a, r) => a + (Number(r.actual_consumption_per_person_excl_water) || 0), 0);
+  const brandActual = weightedTotals(rows, 'actual');
+  const brandActualExclWater = rows.reduce((a, r) => a + (Number(r.actual_consumption_per_person_excl_water) || 0), 0);
   const targetRatio = computeCostRatio(brandTarget.costPerGram, brandTarget.consumption, targetPrice);
-  const actualRatio = t?.actual_cost_ratio_brand ?? null; // 자재실사용액 / (총매출/1.1), 실적 반영 버튼으로 계산됨
+  const actualRatio = actualRatioOverride !== undefined ? actualRatioOverride : (t?.actual_cost_ratio_brand ?? null); // 자재실사용액 / (총매출/1.1)
+  const actualPricePerPerson = actualPriceOverride !== undefined ? actualPriceOverride : (t?.actual_price_per_person ?? null);
   const wrap = $('#kpiRow');
   const gap = (targetRatio !== null && actualRatio !== null) ? (actualRatio - targetRatio) : null;
   // 목표 대비 갭(%p) 기준 — 1%p 이내 연두, 1~2%p 주황, 2%p 이상 빨강 (2026-10-02 수정)
@@ -495,7 +551,7 @@ function renderKpiRow() {
     </div>
     <div class="kpi-tile">
       <div class="kpi-label">객단가 (실적 기준)</div>
-      <div class="kpi-value">${t?.actual_price_per_person != null ? fmtNum(t.actual_price_per_person, 0) + '원' : '미반영'}</div>
+      <div class="kpi-value">${actualPricePerPerson != null ? fmtNum(actualPricePerPerson, 0) + '원' : '미반영'}</div>
     </div>
     <div class="kpi-tile">
       <div class="kpi-label">인당소비량 (목표 / 실적)</div>
@@ -504,18 +560,21 @@ function renderKpiRow() {
   `;
 }
 
-function renderDashboardTable() {
+// rowsOverride/actualRatioOverride: renderKpiRow과 동일한 "주차구간" 모드용 — 목표/설계 칸은 항상
+// state.categorySummary(시즌 전체) 기준으로 두고, 실적 칸만 rowsOverride로 교체한다.
+function renderDashboardTable(rowsOverride, actualRatioOverride) {
   const body = $('#dashboardBody');
-  const rows = state.categorySummary;
+  const rows = rowsOverride || state.categorySummary;
   const t = state.seasonTarget;
   const targetPrice = t?.target_price_per_person ?? null;
-  const byCategory = Object.fromEntries(rows.map(r => [r.category, r]));
-  const target = weightedTotals(rows, 'target');
-  const design = weightedTotals(rows, 'design');
+  const byCategory = Object.fromEntries(state.categorySummary.map(r => [r.category, r]));
+  const actualByCategory = Object.fromEntries(rows.map(r => [r.category, r]));
+  const target = weightedTotals(state.categorySummary, 'target');
+  const design = weightedTotals(state.categorySummary, 'design');
   const actual = weightedTotals(rows, 'actual');
   const targetRatio = computeCostRatio(target.costPerGram, target.consumption, targetPrice);
   const designRatio = computeCostRatio(design.costPerGram, design.consumption, targetPrice);
-  const actualRatio = t?.actual_cost_ratio_brand ?? null;
+  const actualRatio = actualRatioOverride !== undefined ? actualRatioOverride : (t?.actual_cost_ratio_brand ?? null);
   const actualExclWaterTotal = rows.reduce((a, r) => a + (Number(r.actual_consumption_per_person_excl_water) || 0), 0);
 
   const brandRow = `
@@ -529,9 +588,10 @@ function renderDashboardTable() {
 
   const catRows = DASHBOARD_CATEGORIES.map(cat => {
     const r = byCategory[cat] || { category: cat };
+    const ar = actualByCategory[cat] || {};
     const catTargetRatio = computeCostRatio(r.target_cost_per_gram, r.target_consumption_per_person, targetPrice);
     const catDesignRatio = computeCostRatio(r.design_cost_per_gram, r.design_consumption_per_person, targetPrice);
-    const catActualRatio = computeCostRatio(r.actual_cost_per_gram, r.actual_consumption_per_person, targetPrice);
+    const catActualRatio = computeCostRatio(ar.actual_cost_per_gram, ar.actual_consumption_per_person, targetPrice);
     return `
       <tr data-category="${cat}">
         <td>${cat}</td>
@@ -541,10 +601,10 @@ function renderDashboardTable() {
         ${deltaCell(catActualRatio, catTargetRatio)}
         <td class="computed-ratio">${fmtNum(r.target_cost_per_gram, 1)}${r.target_cost_per_gram != null ? 'g' : ''}</td>
         <td>${fmtNum(r.design_cost_per_gram, 1)}${r.design_cost_per_gram != null ? 'g' : ''}</td>
-        <td>${fmtNum(r.actual_cost_per_gram, 1)}${r.actual_cost_per_gram != null ? 'g' : ''}</td>
+        <td>${fmtNum(ar.actual_cost_per_gram, 1)}${ar.actual_cost_per_gram != null ? 'g' : ''}</td>
         <td class="computed-ratio">${fmtNum(r.target_consumption_per_person, 0)}</td>
         <td>${fmtNum(r.design_consumption_per_person, 0)}</td>
-        <td>${fmtWithExclWater(r.actual_consumption_per_person, r.actual_consumption_per_person_excl_water)}</td>
+        <td>${fmtWithExclWater(ar.actual_consumption_per_person, ar.actual_consumption_per_person_excl_water)}</td>
       </tr>`;
   }).join('');
 
@@ -2978,6 +3038,46 @@ async function rebuildCategoryActualRollupFromMenus(seasonId, targetPrice, total
   }
 }
 
+// ①목표 탭 "주차구간" 모드 — loadPivotCompareData(range)가 돌려준 데이터로, rebuildCategoryActualRollupFromMenus와
+// 같은 기준(피벗과 동일: 매장별로 실제 쓴 돈만 더함, 근거 없는 매장/자재는 0)으로 카테고리별 실적을 즉석
+// 계산한다. DB에는 쓰지 않는다 — 저장된 시즌 전체 실적(season_targets/category_summary)은 그대로 두고,
+// 화면에만 그 주차구간 실적을 보여주는 용도(2026-10-06).
+function computeTargetRangeRollup(data) {
+  const allCodes = data.stores.map(s => s.code);
+  const totalSales = data.stores.reduce((a, s) => a + s.sales, 0);
+  const totalCustomers = data.stores.reduce((a, s) => a + s.guests, 0);
+  const resultByMenu = new Map(data.results.map(r => [r.menu_name, r]));
+  const byCat = {};
+  data.designByMenu.forEach((d, menuName) => {
+    const category = d.category;
+    const r = resultByMenu.get(menuName);
+    const consumptionForRollup = r?.consumption_per_person_brand ?? d.consumption_per_person;
+    if (!category || consumptionForRollup == null) return;
+    const costByStoreForMenu = data.costByMenuStore.get(menuName);
+    const { amt } = pivotGroupAmount(r, allCodes, costByStoreForMenu);
+    (byCat[category] = byCat[category] || []).push({ amt, consumption_per_person: consumptionForRollup });
+  });
+  let brandAmt = 0;
+  const rows = DASHBOARD_CATEGORIES.filter(c => byCat[c]).map(category => {
+    const list = byCat[category];
+    const totalC = list.reduce((a, r) => a + r.consumption_per_person, 0);
+    const totalAmt = list.reduce((a, r) => a + r.amt, 0);
+    brandAmt += totalAmt;
+    return {
+      category,
+      actual_cost_per_gram: totalC ? totalAmt / totalC : null,
+      actual_consumption_per_person: totalC,
+      actual_consumption_per_person_excl_water: totalC,
+    };
+  });
+  const netSales = totalSales / 1.1;
+  return {
+    rows,
+    actualRatio: netSales ? (brandAmt / netSales * 100) : null,
+    actualPricePerPerson: totalCustomers ? totalSales / totalCustomers : null,
+  };
+}
+
 $('#computeConsumptionBtn').addEventListener('click', async () => {
   const btn = $('#computeConsumptionBtn');
   const originalLabel = btn.textContent;
@@ -3660,6 +3760,30 @@ function computeWeekOptionsForMonth(year, month) {
   weeks.forEach((w, i) => {
     w.label = `${i + 1}주차 (${w.periodStart.slice(5)} ~ ${w.periodEnd.slice(5)})`;
   });
+  return weeks;
+}
+
+// 시즌 전체를 관통하는 주차 번호(1주차~N주차) — computeWeekOptionsForMonth를 시즌 시작~종료월까지
+// 달마다 돌려서 이어붙인다(달 경계에서 겹치는 주는 중복 제거). "주차구간"(시작주~종료주) 선택용.
+function computeWeekOptionsForSeason(season) {
+  if (!season?.start_month || !season?.end_month) return [];
+  const [sy, sm] = season.start_month.split('-').map(Number);
+  const [ey, em] = season.end_month.split('-').map(Number);
+  const seen = new Set();
+  const weeks = [];
+  for (let y = sy, m = sm; ; ) {
+    computeWeekOptionsForMonth(y, m).forEach(w => {
+      if (w.periodEnd < season.start_month || w.periodStart > season.end_month) return;
+      const key = `${w.periodStart}|${w.periodEnd}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      weeks.push({ periodStart: w.periodStart, periodEnd: w.periodEnd });
+    });
+    if (y === ey && m === em) break;
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  weeks.sort((a, b) => (a.periodStart < b.periodStart ? -1 : a.periodStart > b.periodStart ? 1 : 0));
+  weeks.forEach((w, i) => { w.label = `${i + 1}주차 (${w.periodStart.slice(5)}~${w.periodEnd.slice(5)})`; });
   return weeks;
 }
 
@@ -4681,12 +4805,31 @@ function renderPivotSeasonOptions() {
   if (withRange.some(s => String(s.id) === cur)) sel.value = cur;
   else if (state.currentSeasonId && withRange.some(s => s.id === state.currentSeasonId)) sel.value = state.currentSeasonId;
 }
+// "주차구간" 모드 — 선택된(헤더) 시즌을 관통하는 주차 1~N 중 시작주/종료주를 각각 고른다.
+function renderPivotWeekRangeOptions() {
+  const season = state.seasons.find(s => s.id === state.currentSeasonId);
+  const weeks = computeWeekOptionsForSeason(season);
+  const opts = weeks.map(w => `<option value="${w.periodStart}|${w.periodEnd}">${w.label}</option>`).join('');
+  const fromSel = $('#pivotWeekFromSelect'), toSel = $('#pivotWeekToSelect');
+  const keepFrom = fromSel.value, keepTo = toSel.value;
+  fromSel.innerHTML = opts;
+  toSel.innerHTML = opts;
+  if (!weeks.length) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const lastDone = [...weeks].reverse().find(w => w.periodEnd <= today) || weeks[weeks.length - 1];
+  fromSel.value = [...fromSel.options].some(o => o.value === keepFrom) ? keepFrom : `${weeks[0].periodStart}|${weeks[0].periodEnd}`;
+  toSel.value = [...toSel.options].some(o => o.value === keepTo) ? keepTo : `${lastDone.periodStart}|${lastDone.periodEnd}`;
+}
 function updatePivotUnitVisibility() {
   const unit = $('#pivotUnitSelect').value;
-  $('#pivotMonthInput').style.display = unit === 's' ? 'none' : '';
+  $('#pivotMonthInput').style.display = (unit === 's' || unit === 'wr') ? 'none' : '';
   $('#pivotWeekSelect').style.display = unit === 'w' ? '' : 'none';
   $('#pivotSeasonSelect').style.display = unit === 's' ? '' : 'none';
+  $('#pivotWeekFromSelect').style.display = unit === 'wr' ? '' : 'none';
+  $('#pivotWeekRangeSep').style.display = unit === 'wr' ? '' : 'none';
+  $('#pivotWeekToSelect').style.display = unit === 'wr' ? '' : 'none';
   if (unit === 's') renderPivotSeasonOptions();
+  if (unit === 'wr') renderPivotWeekRangeOptions();
 }
 (() => {
   const now = new Date();
@@ -4697,6 +4840,8 @@ function updatePivotUnitVisibility() {
 $('#pivotMonthInput').addEventListener('change', renderPivotWeekOptions);
 $('#pivotUnitSelect').addEventListener('change', updatePivotUnitVisibility);
 $('#pivotSeasonSelect').addEventListener('change', loadPivotCompareView);
+$('#pivotWeekFromSelect').addEventListener('change', loadPivotCompareView);
+$('#pivotWeekToSelect').addEventListener('change', loadPivotCompareView);
 
 // ---- ①비교 ②전매장 공용 엔진 ----
 // 매장군: storeType()의 value/regular/premium을 그대로 재사용.
@@ -4724,6 +4869,14 @@ function pivotDateRangeFromControls() {
     // 시즌 단위는 그 시즌의 시작~끝을 그대로 쓴다 — 월별처럼 달력 경계로 자르면 다른 시즌의
     // 레시피가 섞여 들어가는 문제(예: 7월 조회가 26년초여름/26년여름 레시피를 뒤섞음)가 생기지 않는다.
     return { start: season.start_month, end: season.end_month, seasonId };
+  }
+  if (unit === 'wr') {
+    const fromVal = $('#pivotWeekFromSelect').value, toVal = $('#pivotWeekToSelect').value;
+    if (!fromVal || !toVal) return null;
+    const [fStart] = fromVal.split('|');
+    const [, tEnd] = toVal.split('|');
+    // 시작주를 종료주보다 뒤로 골랐으면 뒤집어서 보정한다.
+    return fStart <= tEnd ? { start: fStart, end: tEnd } : { start: tEnd, end: fStart };
   }
   const monthValue = $('#pivotMonthInput').value;
   if (!monthValue) return null;
@@ -4799,16 +4952,18 @@ function unionDesignByMenu(designByMenu, categoryByMenu) {
   return out;
 }
 
-async function loadPivotCompareData() {
-  const dateRange = pivotDateRangeFromControls();
+// explicitRange가 있으면 ①목표 탭(주차구간 모드)처럼 ②③과 무관한 화면에서 재사용하는 호출 —
+// ②③의 #pivotUnitSelect 등 DOM 컨트롤은 건드리지 않고 넘겨받은 기간만 그대로 쓴다.
+async function loadPivotCompareData(explicitRange) {
+  const dateRange = explicitRange || pivotDateRangeFromControls();
   if (!dateRange) return { error: '기간을 선택해주세요.' };
   // range.start 기준 판정 이유는 computeMenuConsumption 쪽 주석 참고 — 월별 보기가 시즌 경계를 걸치면
   // range.end(달력 월말)로는 아직 시작도 안 한 다음 시즌이 걸려 "자재사용량 데이터가 없습니다" 오류가 난다.
   const seasonId = findSeasonIdForDate(dateRange.start);
   if (!seasonId) return { error: '해당 기간을 포함하는 시즌이 없습니다.' };
   const season = state.seasons.find(s => s.id === seasonId);
-  const unit = $('#pivotUnitSelect').value;
-  const periodUnit = unit === 's' ? 'season' : unit === 'w' ? 'week' : 'month';
+  const unit = explicitRange ? 'wr' : $('#pivotUnitSelect').value;
+  const periodUnit = unit === 's' ? 'season' : unit === 'w' ? 'week' : unit === 'wr' ? 'range' : 'month';
   const closed = isSeasonClosed(season);
 
   // 캐시 확인은 가벼운 단건 조회라 먼저 해보고, 없을 때만 느린 계산(computeMenuConsumption)을

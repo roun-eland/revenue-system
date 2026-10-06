@@ -90,6 +90,15 @@
 
       <div id="pivotPanelTarget" style="display:none">
         <div class="pivot-ctl">
+          <label>기준:</label>
+          <select id="targetUnitSelect">
+            <option value="s">시즌 전체</option>
+            <option value="wr">주차구간</option>
+          </select>
+          <select id="targetWeekFromSelect" style="display:none"></select>
+          <span id="targetWeekRangeSep" style="display:none">~</span>
+          <select id="targetWeekToSelect" style="display:none"></select>
+          <span class="pivot-d" id="targetRangeHint"></span>
           <button id="exportDashTBtn" class="btn btn-sm btn-ghost excel-dl-btn" type="button">⬇ 엑셀 다운로드</button>
         </div>
         <div class="kpi-row" id="kpiRow"></div>
@@ -171,12 +180,16 @@
         <select id="pivotUnitSelect">
           <option value="w">주차별</option>
           <option value="m">월별</option>
+          <option value="wr">주차구간</option>
           <option value="s">시즌별</option>
         </select>
         <label>연월:</label>
         <input type="month" id="pivotMonthInput">
         <select id="pivotWeekSelect"></select>
         <select id="pivotSeasonSelect" style="display:none"></select>
+        <select id="pivotWeekFromSelect" style="display:none"></select>
+        <span id="pivotWeekRangeSep" style="display:none">~</span>
+        <select id="pivotWeekToSelect" style="display:none"></select>
         <label>구분:</label>
         <select id="pivotModeSelect">
           <option value="pg">인당금액 원/객</option>
@@ -836,6 +849,6 @@
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../export-tables.js?v=202610021405"></script>
-<script src="../app.js?v=202610061200"></script>
+<script src="../app.js?v=202610061330"></script>
 </body>
 </html>
