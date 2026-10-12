@@ -3063,9 +3063,11 @@ function computeTargetRangeRollup(data) {
     const totalC = list.reduce((a, r) => a + r.consumption_per_person, 0);
     const totalAmt = list.reduce((a, r) => a + r.amt, 0);
     brandAmt += totalAmt;
+    // totalAmt는 기간 전체 총액(원)이고 totalC는 인당(g)이라, 손님수로 나눠 단위를 맞춘 뒤에야 g당원가가 된다
+    // (rebuildCategoryActualRollupFromMenus와 같은 역산식 — 안 나누면 g당원가가 손님수배 부풀어 원가율이 수십만 %로 나옴).
     return {
       category,
-      actual_cost_per_gram: totalC ? totalAmt / totalC : null,
+      actual_cost_per_gram: (totalC && totalCustomers) ? totalAmt / (totalC * totalCustomers) : null,
       actual_consumption_per_person: totalC,
       actual_consumption_per_person_excl_water: totalC,
     };
