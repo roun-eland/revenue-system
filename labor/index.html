@@ -156,7 +156,7 @@
         <b>계산</b> — 요일별 일매출 = 월매출 × 매장 요일지수 · 공휴일 별도 지수 · 정기 휴점일(청량리 2째주 월 / 동탄 2·4째주 일 / 의정부 2·4째주 수 / 해운대 2·4째주 월)과 명절 당일 제외 · 시간분포는 요일별 런치/디너 비중(17시 경계, 8월 실측) 보정 · 정직원 시프트 = 8월 실제 출퇴근대, 주5일, 월 1일 연차(메이트 8h 대체) ·
         시간대 인원 = 시간매출 ÷ 72,000원/MH (최소 2명, 0.5명 단위) ·
         인건비율 = (메이트 인시×실질시급 + 정직원급여 + 연차수당 + 퇴직 0.6%) ÷ 순매출(외형÷1.1) · 4대보험 회사부담분 미포함(별도 계정과목)<br>
-        <b>정직원 급여</b> = Σ(직급별 인원 × 직급 표준 인건비) + 매장 보정(8월 실제 급여합 기준) — 직급 단가는 기준정보에서 수정
+        <b>정직원 급여</b> = Σ(직급별 인원 × (직급 표준 인건비 + 직책수당(점장 월 30만원 등))) + 매장 보정(8월 실제 급여합 기준, 8월 구성이 가진 수당만큼 보정에서 차감해 이중 계산 방지) — 직급 단가·수당은 기준정보에서 수정 · 직급별 인원은 실적 입력 ④ 정직원 맨파워(업로드)를 우선 사용
       </div>
     </section>
 
@@ -198,6 +198,17 @@
           <p class="dnote" style="margin:0 0 10px">일별·시간대별 투입 MH를 계산합니다. 날짜는 파일에서 읽으므로 주차 선택이 필요 없습니다. 성명은 저장되지 않습니다 (매장×일 합계만). 없으면 피드백은 주/월 합계까지만 제공됩니다.</p>
           <input type="file" id="acAttFile" accept=".xlsx,.xls,.csv">
           <p class="plan-msg" id="acAttMsg" style="margin-top:8px"></p>
+        </div>
+        <div class="card" style="grid-column:1/-1">
+          <h3 style="margin:0 0 6px">④ 정직원 맨파워 (월 1회 — 직급별 인원)</h3>
+          <p class="dnote" style="margin:0 0 10px">"로운 N월 맨파워 현황" 엑셀 그대로. 매장별로 직급(점장·GM·매니저·캡틴·헤드·ST·HIT)에 적힌 인원수만 읽고, <b>이름·전화번호는 저장하지 않습니다</b>. 선택한 월부터 다음 업로드 전까지 계획 시뮬레이션의 정직원 구성과 전사 인건비 계산에 이어서 적용되며, 급여는 기준정보의 직급별 단가(+점장수당 등 직책수당)로 계산됩니다. 점장 칸이 선임점장 본인이면 선임점장 단가, 한 사람이 여러 매장 점장으로 적혀 있으면 인원수 칸 기준으로 한 곳에만 반영합니다.</p>
+          <div class="plan-actions" style="margin:0 0 10px">
+            <label class="fld" style="min-width:150px">적용 시작월<select id="acRosterYm"></select></label>
+          </div>
+          <input type="file" id="acRosterFile" accept=".xlsx,.xls,.csv">
+          <p class="plan-msg" id="acRosterMsg" style="margin-top:8px"></p>
+          <div id="acRosterPreview"></div>
+          <div class="plan-actions" style="margin:10px 0 0"><button id="acRosterSave" class="btn btn-sm" type="button" hidden>저장</button></div>
         </div>
         <div class="card">
           <h3 style="margin:0 0 6px">적재 현황</h3>
@@ -258,7 +269,8 @@
 <script src="../export-tables.js?v=202610021415"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
 <script src="../ot-std.js?v=202609231500"></script>
-<script src="../ot.js?v=202610021619"></script>
-<script src="../ot-actuals.js?v=202610021415"></script>
+<script src="../ot-roster.js?v=202610141200"></script>
+<script src="../ot.js?v=202610141200"></script>
+<script src="../ot-actuals.js?v=202610141200"></script>
 </body>
 </html>

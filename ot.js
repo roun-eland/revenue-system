@@ -20,8 +20,55 @@ const ENGINE_VERSION = 'ot-m1-v8';
 // 직급 단가는 기밀 — 클라이언트 코드에 없음. planner 로그인 시에만 DB(ot_grades)에서 로드,
 // 비-planner는 매장 급여 총액 기반 평균 단가로 폴백(직급별 단가 미노출).
 let gradeCost = null;
+// 직급별 월 직책수당(점장수당 등) — std_monthly_cost와 같은 테이블(ot_grades)이라 기획자만 조회된다.
+let gradeAllow = null;
 // 매장별 직급 구성 상태 (시뮬레이션 입력)
 let staffCnt = {};
+let staffSrcYm = null; // 지금 입력칸에 채워진 구성의 출처 맨파워 월(없으면 null = 8월 실측 기본값)
+
+// ---------- 정직원 맨파워 (월별·매장별·직급별 인원, ot_staff_roster) ----------
+// 올린 달부터 다음 업로드 전까지 이어서 적용 — 조회월 이하의 가장 최근 맨파워를 쓰고, 없으면 8월 실측 시드(OT_STAFF0).
+let ROSTER = {}; // ym -> { 매장코드 -> { 직급: 인원 } }
+async function loadRoster() {
+  ROSTER = {};
+  try {
+    const { data } = await sb.from('ot_staff_roster').select('ym,store_code,grade,headcount').limit(5000);
+    for (const r of data || []) {
+      const byStore = (ROSTER[r.ym] = ROSTER[r.ym] || {});
+      (byStore[r.store_code] = byStore[r.store_code] || {})[r.grade] = r.headcount;
+    }
+  } catch (e) { /* 테이블 접근 실패 시 시드 구성만 사용 */ }
+}
+function rosterFor(code, ym) {
+  const k = Object.keys(ROSTER).filter(m => m <= ym && ROSTER[m][code]).sort().pop();
+  return k ? { ym: k, counts: ROSTER[k][code] } : null;
+}
+// 직급 구성 → 인원·월 정직원 급여. 직책수당(점장 30만원 등)은 8월 실제 급여합(payOff의 기준)에 이미 들어 있으므로,
+// 8월 시드 구성이 가진 수당만큼을 매장 보정에서 빼서 이중 계산을 막는다 → 시드 구성이면 기존 값 그대로, 점장 수가
+// 시드와 달라질 때만 ±수당이 반영된다.
+function calcStaffPay(code, counts) {
+  const s0 = OT_DATA[code];
+  const nf = GRADE_ORDER.reduce((t, g) => t + (counts[g] || 0), 0);
+  let fullpay;
+  if (gradeCost) { // planner: 직급별 단가 정밀 계산
+    const allow = g => (gradeAllow && gradeAllow[g]) || 0;
+    const base = GRADE_ORDER.reduce((t, g) => t + (counts[g] || 0) * ((gradeCost[g] || 0) + allow(g)), 0);
+    const seed = OT_STAFF0[code] || {};
+    const seedAllow = GRADE_ORDER.reduce((t, g) => t + (seed[g] || 0) * allow(g), 0);
+    fullpay = Math.max(0, base + (s0.payOff || 0) - seedAllow);
+  } else { // 비-planner: 직급 단가 비공개 — 매장 실적 급여합 + 인원 증감×평균 단가
+    const avg = s0.fullpay / s0.nfull;
+    fullpay = Math.max(0, s0.fullpay + (Math.max(1, nf) - s0.nfull) * avg);
+  }
+  return { nf: Math.max(1, nf), fullpay };
+}
+// 매장×월의 정직원 인원·급여 — 맨파워가 있으면 그것으로, 없으면 기존(8월 실측) 값 그대로
+function staffFor(code, ym) {
+  const r = rosterFor(code, ym);
+  if (!r) { const s0 = OT_DATA[code]; return { nfull: s0.nfull, fullpay: s0.fullpay, counts: { ...(OT_STAFF0[code] || {}) }, srcYm: null }; }
+  const t = calcStaffPay(code, r.counts);
+  return { nfull: t.nf, fullpay: t.fullpay, counts: { ...r.counts }, srcYm: r.ym };
+}
 
 // 계획 시뮬레이션의 "예상 월매출"을 매출 앱의 확정 예측(sf_forecast_runs)과 연동하기 위한 캐시 —
 // 같은 매장×월에 발행된 확정 예측이 있으면 그 값을, 없으면 8월 실측(OT_DATA[code].augM)으로 폴백한다.
@@ -37,11 +84,37 @@ function forecastSales(code, ym) {
   const run = SF_RUNS.find(r => r.ym === ym && r.kind === '확정');
   return run?.daily?.stores?.[code]?.total ?? null;
 }
-function syncMsalesFromForecast() {
+// 선택한 매장×월의 "최선의 예상매출". 실적이 쌓인 달(dashActual.months)이면 지난 날짜는 실적
+// (ot_sales_daily), 아직 안 지난 날짜(월 진행중일 때)는 확정 예측으로 채워 합산(=landing) — 전사
+// 대시보드 계획 모드의 landingFor()와 같은 계산이라 월이 끝나면 자동으로 100% 실적이 된다.
+// 실적이 전혀 없는 미래 달은 확정 예측 총합을 그대로 쓴다.
+// (2026-10-08 피드백: 계획 시뮬레이션 탭이 월초 확정 예측에 고정돼 있던 버그 수정)
+async function bestSalesEstimate(code, ym) {
+  if (!dashActual.months.has(ym)) return forecastSales(code, ym);
+  const [y, m] = ym.split('-').map(Number);
+  const start = `${ym}-01`, endEx = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  const act = {};
+  try {
+    const { data } = await sb.from('ot_sales_daily').select('sales_date,total,is_closed')
+      .eq('store_code', code).gte('sales_date', start).lt('sales_date', endEx).limit(1000);
+    (data || []).forEach(r => { if (!r.is_closed && +r.total > 0) act[r.sales_date] = +r.total; });
+  } catch (e) { /* 실적 조회 실패 시 예측만 사용 */ }
+  const fcRun = SF_RUNS.find(r => r.ym === ym && r.kind === '확정');
+  const f = fcRun?.daily?.stores?.[code];
+  const days = new Set([...(f ? Object.keys(f.daily) : []), ...Object.keys(act)]);
+  if (!days.size) return null;
+  let landing = 0;
+  for (const d of days) landing += (act[d] != null ? act[d] : (f?.daily?.[d] || 0));
+  return landing;
+}
+async function syncMsalesFromForecast() {
   const code = sel.value, ym = msel.value;
-  const fc = forecastSales(code, ym);
+  const fc = await bestSalesEstimate(code, ym);
   $('msales').value = fc ?? OT_DATA[code].augM;
-  $('msalesSrc').textContent = fc != null ? `매출 앱 확정 예측(${ym}) 연동` : `예측 미발행 — 8월 실측 대체`;
+  if (fc == null) { $('msalesSrc').textContent = '예측 미발행 — 8월 실측 대체'; return; }
+  if (!dashActual.months.has(ym)) { $('msalesSrc').textContent = `매출 앱 확정 예측(${ym}) 연동`; return; }
+  const now = new Date(), curYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  $('msalesSrc').textContent = ym < curYm ? `실적 확정(${ym} 마감 누적)` : `실적+잔여예측 블렌드(${ym} 진행중)`;
 }
 
 // ---------- 인증 ----------
@@ -67,10 +140,14 @@ async function enterApp(user) {
   // 직급 단가: planner만 DB에서 로드 (RLS가 비-planner 조회 차단)
   if (isPlanner) {
     try {
-      const { data } = await sb.from('ot_grades').select('grade,std_monthly_cost');
-      if (data && data.length) { gradeCost = {}; for (const g of data) gradeCost[g.grade] = g.std_monthly_cost; }
+      const { data } = await sb.from('ot_grades').select('grade,std_monthly_cost,allowance');
+      if (data && data.length) {
+        gradeCost = {}; gradeAllow = {};
+        for (const g of data) { gradeCost[g.grade] = g.std_monthly_cost; gradeAllow[g.grade] = g.allowance || 0; }
+      }
     } catch (e) { /* 실패 시 평균 단가 폴백 */ }
   }
+  await loadRoster();
   await loadStandardPlans();
   await loadStdBaselines();
   await loadActualCoverage();
@@ -80,7 +157,7 @@ async function enterApp(user) {
   document.querySelector('#otNav button[data-view="actual"]').hidden = !isPlanner;
   renderDash();
   if (isPlanner) renderRef();
-  buildPlanInputs(); render();
+  await buildPlanInputs(); render();
   showView('dash');
 }
 // 표준 사용 계획표(F4) 로드 — 평일·주말이 모두 있는 매장만 유효, 없거나 실패하면 임시 기준(엔진)으로 폴백
@@ -390,7 +467,8 @@ function otMtdRows(ym, salesRows, laborRows) {
     }
     if (!n) continue;
     const frac = +last.slice(8) / dim; // 정직원 급여·연차수당은 경과일수 비례 안분
-    const labor = mate * s0.eff + (s0.fullpay + s0.nfull * 100000) * frac + sales / 1.1 * 0.006;
+    const sf = staffFor(code, ym); // 업로드된 정직원 맨파워(없으면 8월 실측 구성)
+    const labor = mate * s0.eff + (sf.fullpay + sf.nfull * 100000) * frac + sales / 1.1 * 0.006;
     const mh = mate + ft;
     // 목표생산성 = 그 매장 표준표(평일/주말, 없으면 72,000원/MH 엔진)를 9월 실제 매출에 그대로 적용했을 때
     // 나왔을 생산성(=매출÷필요MH) — "메이트 초과시간"도 이 기준(필요MH) 대비로 재정의한다(값은 동일, 관점만 전환:
@@ -539,11 +617,12 @@ async function renderDash() {
       const p = saved[code];
       const live = landingFor(code);
       const M = p ? Number(p.forecast_sales) : (live != null ? live : s.augM);
-      const nfull = p?.staffing_snapshot?.nfull ?? s.nfull;
-      const fullpay = p?.staffing_snapshot?.fullpay ?? s.fullpay;
+      const sf = staffFor(code, ym); // 업로드된 정직원 맨파워(없으면 8월 실측 구성)
+      const nfull = p?.staffing_snapshot?.nfull ?? sf.nfull;
+      const fullpay = p?.staffing_snapshot?.fullpay ?? sf.fullpay;
       const plan = computeMonthPlan(code, ym, M, nfull, fullpay);
       const prod = M / plan.totMH;
-      const stdTag = plan.std ? (plan.capped ? '<br>표준표·상한 적용' : '<br>표준표') : '';
+      const stdTag = (plan.std ? (plan.capped ? '<br>표준표·상한 적용' : '<br>표준표') : '') + (!p && sf.srcYm ? '<br>정직원 맨파워' : '');
       const srcBase = p ? '확정 계획' : (live != null ? '매출예측 연동' : '8월 매출(기본값)');
       return { code, name: s.name, sales: M, mh: plan.totMH, prod,
                ratio: plan.std ? plan.ratio : (p?.output?.ratio ?? plan.ratio), src: srcBase + stdTag };
@@ -573,10 +652,10 @@ async function renderDash() {
   }
 
   $('dashTable').querySelectorAll('tr.rowlink').forEach(tr => {
-    tr.onclick = () => {
-      sel.value = tr.dataset.code; onStoreChange();
+    tr.onclick = async () => {
+      sel.value = tr.dataset.code; await onStoreChange();
       const mv = $('dashMonth') ? $('dashMonth').value : null;
-      if (mv && [...msel.options].some(o => o.value === mv)) { msel.value = mv; render(); }
+      if (mv && [...msel.options].some(o => o.value === mv)) { msel.value = mv; await syncMsalesFromForecast(); render(); }
       showView('plan');
     };
   });
@@ -585,12 +664,17 @@ async function renderDash() {
 // ---------- S5 기준정보 ----------
 function renderRef() {
   if (!gradeCost) return; // 단가 미로드(비-planner) 방어
-  let gh = '<table><colgroup><col><col style="width:130px"></colgroup><thead><tr><th>직급</th><th>월 표준 인건비(원)</th></tr></thead><tbody>';
+  let gh = '<table><colgroup><col><col style="width:130px"><col style="width:120px"></colgroup><thead><tr><th>직급</th><th>월 표준 인건비(원)</th><th>월 직책수당(원)</th></tr></thead><tbody>';
   for (const g of GRADE_ORDER)
-    gh += `<tr><td>${g}</td><td><input type="number" step="10000" data-grade="${g}" value="${gradeCost[g]}"></td></tr>`;
+    gh += `<tr><td>${g}</td><td><input type="number" step="10000" data-grade="${g}" value="${gradeCost[g]}"></td>` +
+      `<td><input type="number" step="10000" data-allow="${g}" value="${(gradeAllow && gradeAllow[g]) || 0}"></td></tr>`;
   $('gradeTable').innerHTML = gh + '</tbody></table>';
   $('gradeTable').querySelectorAll('input').forEach(inp => {
-    inp.oninput = () => { gradeCost[inp.dataset.grade] = +inp.value || 0; updateStaffSum(); render(); };
+    inp.oninput = () => {
+      if (inp.dataset.allow) { gradeAllow = gradeAllow || {}; gradeAllow[inp.dataset.allow] = +inp.value || 0; }
+      else gradeCost[inp.dataset.grade] = +inp.value || 0;
+      updateStaffSum(); render();
+    };
   });
   let ch = '<table><colgroup><col style="width:110px"><col style="width:90px"><col style="width:80px"><col></colgroup>' +
     '<thead><tr><th>매장</th><th>실질시급</th><th>공휴일지수</th><th>정직원 구성(8월)</th></tr></thead><tbody>';
@@ -604,7 +688,7 @@ function renderRef() {
 $('saveGradesBtn').onclick = async () => {
   if (!gradeCost) return;
   const msg = $('gradeMsg'); msg.className = 'plan-msg'; msg.textContent = '저장 중…';
-  const rows = GRADE_ORDER.map((g, i) => ({ grade: g, std_monthly_cost: gradeCost[g], sort: i }));
+  const rows = GRADE_ORDER.map((g, i) => ({ grade: g, std_monthly_cost: gradeCost[g], allowance: (gradeAllow && gradeAllow[g]) || 0, sort: i }));
   const { error } = await sb.from('ot_grades').upsert(rows);
   if (error) { msg.className = 'plan-msg err'; msg.textContent = 'DB 저장 실패(' + error.message + ') — 이 세션에는 반영됨'; }
   else { msg.className = 'plan-msg ok'; msg.textContent = '저장됨'; }
@@ -612,7 +696,7 @@ $('saveGradesBtn').onclick = async () => {
 
 // ---------- S2 계획: 입력 구성 ----------
 const sel = $('store'), msel = $('month');
-function buildPlanInputs() {
+async function buildPlanInputs() {
   sel.innerHTML = '';
   for (const [code, s] of Object.entries(OT_DATA)) {
     const o = document.createElement('option'); o.value = code; o.textContent = '로운 ' + s.name + '점'; sel.appendChild(o);
@@ -625,15 +709,17 @@ function buildPlanInputs() {
   }
   sel.value = 'RU019'; msel.value = defaultYm();
   loadStaff('RU019');
-  syncMsalesFromForecast();
+  await syncMsalesFromForecast();
 }
 function defaultYm() { // 이번 달 (2026-10-02 사용자 피드백 — 처음 열면 다음 달이 아니라 지금 달로)
   const d = new Date();
   const v = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   return [...msel.options].some(o => o.value === v) ? v : msel.options[0].value;
 }
-function loadStaff(code) {
-  staffCnt = { ...(OT_STAFF0[code] || {}) };
+function loadStaff(code, ym) {
+  const r = rosterFor(code, ym || msel.value);
+  staffCnt = r ? { ...r.counts } : { ...(OT_STAFF0[code] || {}) };
+  staffSrcYm = r ? r.ym : null;
   const grid = $('staffGrid'); grid.innerHTML = '';
   for (const g of GRADE_ORDER) {
     const v = staffCnt[g] || 0;
@@ -650,29 +736,27 @@ function loadStaff(code) {
   updateStaffSum();
 }
 function staffTotals(code) {
-  const s0 = OT_DATA[code];
-  const nf = GRADE_ORDER.reduce((t, g) => t + (staffCnt[g] || 0), 0);
-  let fullpay;
-  if (gradeCost) { // planner: 직급별 단가 정밀 계산
-    const base = GRADE_ORDER.reduce((t, g) => t + (staffCnt[g] || 0) * (gradeCost[g] || 0), 0);
-    fullpay = Math.max(0, base + (s0.payOff || 0));
-  } else { // 비-planner: 직급 단가 비공개 — 매장 실적 급여합 + 인원 증감×평균 단가
-    const avg = s0.fullpay / s0.nfull;
-    fullpay = Math.max(0, s0.fullpay + (Math.max(1, nf) - s0.nfull) * avg);
-  }
-  return { nf: Math.max(1, nf), fullpay };
+  return calcStaffPay(code, staffCnt);
 }
 function updateStaffSum() {
   // 합계·월급여 문구는 화면이 번잡하다는 피드백으로 제거 (2026-10-02) — staffTotals()는 render()가
-  // 계속 그대로 쓰므로 계산에는 영향 없음.
-  $('staffSum').innerHTML = '';
+  // 계속 그대로 쓰므로 계산에는 영향 없음. 구성의 출처(맨파워 업로드 vs 8월 실측 기본값)만 한 줄로 알려준다.
+  $('staffSum').innerHTML = staffSrcYm
+    ? `${staffSrcYm.replace('-', '년 ')}월 맨파워(업로드) 기준 구성 — 값을 고치면 이 시뮬레이션에만 반영됩니다`
+    : '8월 근태 실측 기본 구성 — 실적 입력에서 정직원 맨파워를 올리면 그 값으로 채워집니다';
 }
-function onStoreChange() {
-  syncMsalesFromForecast();
+async function onStoreChange() {
+  await syncMsalesFromForecast();
   loadStaff(sel.value); render();
 }
 sel.onchange = onStoreChange;
-msel.onchange = () => { syncMsalesFromForecast(); render(); };
+msel.onchange = async () => {
+  await syncMsalesFromForecast();
+  // 월을 바꿨을 때 적용되는 맨파워가 달라지면(다른 업로드 월 또는 기본값) 그 구성으로 다시 채운다. 같은 출처면 입력값 유지.
+  const r = rosterFor(sel.value, msel.value);
+  if ((r ? r.ym : null) !== staffSrcYm) loadStaff(sel.value);
+  render();
+};
 $('msales').oninput = () => render();
 
 // ---------- 엔진 (프로토타입 v8 이관 — PRD §5) ----------
@@ -1245,7 +1329,7 @@ $('savePlanBtn').onclick = async () => {
   const r = lastResult;
   const row = {
     store_code: r.store_code, ym: r.ym, forecast_sales: r.forecast_sales,
-    staffing_snapshot: { staffing: r.staffing, nfull: r.nfull, fullpay: r.fullpay, grade_cost: gradeCost },
+    staffing_snapshot: { staffing: r.staffing, nfull: r.nfull, fullpay: r.fullpay, grade_cost: gradeCost, grade_allow: gradeAllow },
     standard_plan_id: r.std ? r.std.weekday_id : null, // null = 임시 기준(엔진); 표준표 적용 시 평일표 id(주말표 id는 output.std)
     coeff_ym: '2026-08', engine_version: r.std ? ENGINE_VERSION + '-std' : ENGINE_VERSION,
     output: { ratio: r.ratio, mate_mh: r.mate_mh, mate_cost: r.mate_cost, total_cost: r.total_cost, ...(r.std ? { std: r.std } : {}) },

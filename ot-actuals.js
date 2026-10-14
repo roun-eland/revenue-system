@@ -88,8 +88,9 @@ async function loadFeedback() {
   // ---- 계획(목표) — 확정 계획 있으면 그 값, 없으면 기본값(8월 매출·현 구성) = 임시 기준 ----
   const p = plans.data;
   const planM = p ? Number(p.forecast_sales) : s.augM;
-  const nfull = p?.staffing_snapshot?.nfull ?? s.nfull;
-  const fullpay0 = p?.staffing_snapshot?.fullpay ?? s.fullpay;
+  const sfp = staffFor(code, ym); // 업로드된 정직원 맨파워(없으면 8월 실측 구성)
+  const nfull = p?.staffing_snapshot?.nfull ?? sfp.nfull;
+  const fullpay0 = p?.staffing_snapshot?.fullpay ?? sfp.fullpay;
   const plan = computeMonthPlan(code, ym, planM, nfull, fullpay0);
   const planRatio = p?.output?.ratio ?? plan.ratio;
   // 기간 계획 매출: 월 계획을 요일지수로 일할해 기간(월초~완결 주차 끝)만큼만 비교 — 월 중에도 달성률 100% 기준이 됨
@@ -485,14 +486,96 @@ async function uploadAtt(file) {
   } catch (e) { report('acAttMsg', 'err', '실패: ' + e.message); }
 }
 
+// ④ 정직원 맨파워 (월 1회) — "맨파워 현황" 엑셀을 직급별 인원수로만 접어 저장 (ot_staff_roster).
+// 개인정보 비저장: 이름·전화번호는 파서 안에서 인원수를 세는 데만 쓰고 결과·DB에 남기지 않는다(ot-roster.js).
+let rosterDraft = null;
+function buildRosterYm() {
+  const mo = $('acRosterYm');
+  if (!mo || mo.options.length) return;
+  for (let y = 2026, m = 8;;) {
+    const v = `${y}-${String(m).padStart(2, '0')}`;
+    const o = document.createElement('option'); o.value = v; o.textContent = `${y}년 ${m}월`; mo.appendChild(o);
+    m++; if (m > 12) { m = 1; y++; } if (y === 2028) break;
+  }
+  const now = new Date();
+  const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  mo.value = [...mo.options].some(o => o.value === cur) ? cur : '2026-10';
+  mo.onchange = () => { if (rosterDraft) renderRosterPreview(rosterDraft); };
+}
+async function readRosterFile(file) {
+  report('acRosterMsg', '', '읽는 중…');
+  $('acRosterSave').hidden = true;
+  try {
+    const rows = await sheetRows(file);
+    const res = parseRoster(rows, new Set(Object.keys(OT_DATA)));
+    if (res.errors.length) throw new Error(res.errors.join(' '));
+    rosterDraft = res;
+    renderRosterPreview(res);
+    report('acRosterMsg', 'ok', `${res.stores.length}개 매장을 읽었습니다 — 아래 미리보기를 확인하고 <b>저장</b>을 눌러주세요 (아직 저장 전)`);
+    $('acRosterSave').hidden = false;
+  } catch (e) {
+    rosterDraft = null; $('acRosterPreview').innerHTML = '';
+    report('acRosterMsg', 'err', '실패: ' + e.message);
+  }
+}
+function renderRosterPreview(res) {
+  const ym = $('acRosterYm').value;
+  const cols = ROSTER_GRADES.filter(g => res.stores.some(s => s.counts[g]));
+  let h = '<div class="tblwrap"><table><thead><tr><th>매장</th>' + cols.map(g => `<th>${g}</th>`).join('') +
+    `<th>합계</th><th>기존</th>${gradeCost ? '<th>월 급여 변화</th>' : ''}<th style="text-align:left">확인 사항</th></tr></thead><tbody>`;
+  let dPay = 0;
+  for (const s of res.stores) {
+    const old = staffFor(s.code, ym);
+    const cur = calcStaffPay(s.code, s.counts);
+    const d = cur.fullpay - old.fullpay; dPay += d;
+    h += `<tr><td>${OT_DATA[s.code].name}</td>` + cols.map(g => `<td>${s.counts[g] || ''}</td>`).join('') +
+      `<td><b>${s.total}</b></td><td>${old.nfull}${old.srcYm ? '' : '*'}</td>` +
+      (gradeCost ? `<td style="color:${d > 0 ? 'var(--crit)' : d < 0 ? 'var(--good)' : 'inherit'}">${d > 0 ? '+' : ''}${won(d / 10000)}만</td>` : '') +
+      `<td style="text-align:left;white-space:normal;font-size:11px;color:var(--warn)">${s.warnings.join('<br>')}</td></tr>`;
+  }
+  h += '</tbody></table></div>';
+  h += `<p class="dnote">* 기존 = 8월 근태 실측 기본 구성. ${gradeCost ? `전사 정직원 월 급여 합계 변화 <b>${dPay > 0 ? '+' : ''}${won(dPay / 10000)}만원</b> (직급 표준 인건비+직책수당 기준). ` : ''}` +
+    `선택한 <b>${ym.replace('-', '년 ')}월</b>부터 다음 업로드 전까지 이어서 적용됩니다.</p>`;
+  if (res.notes.length) h += `<p class="dnote" style="color:var(--warn)">${res.notes.join('<br>')}</p>`;
+  $('acRosterPreview').innerHTML = h;
+}
+async function saveRoster() {
+  if (!rosterDraft) return;
+  const btn = $('acRosterSave'); btn.disabled = true;
+  report('acRosterMsg', '', '저장 중…');
+  try {
+    const ym = $('acRosterYm').value;
+    const rows = rosterToDbRows(ym, rosterDraft.stores);
+    if (!rows.length) throw new Error('저장할 인원이 없습니다.');
+    try { const { data: u } = await sb.auth.getUser(); const uid = u?.user?.id; if (uid) rows.forEach(r => { r.updated_by = uid; }); } catch (e) { /* 선택 정보 */ }
+    await upsertChunks('ot_staff_roster', rows, 'ym,store_code,grade');
+    // 같은 달·같은 매장에 예전에 올린 직급 중 이번 파일에 없는 직급(인원 0이 된 직급)은 정리
+    const codes = rosterDraft.stores.map(s => s.code);
+    const { data: prev } = await sb.from('ot_staff_roster').select('store_code,grade').eq('ym', ym).in('store_code', codes);
+    const keep = new Set(rows.map(r => r.store_code + '|' + r.grade));
+    for (const p of prev || []) if (!keep.has(p.store_code + '|' + p.grade))
+      await sb.from('ot_staff_roster').delete().eq('ym', ym).eq('store_code', p.store_code).eq('grade', p.grade);
+    await loadRoster();
+    const n = rosterDraft.stores.length;
+    rosterDraft = null; $('acRosterPreview').innerHTML = ''; btn.hidden = true;
+    report('acRosterMsg', 'ok', `저장됨: <b>${ym.replace('-', '년 ')}월</b>부터 ${n}개 매장 직급별 인원 — 계획 시뮬레이션·전사 대시보드에 반영됩니다 · 성명·전화번호는 저장되지 않았습니다`);
+    loadStaff(sel.value); render(); renderDash();
+  } catch (e) { report('acRosterMsg', 'err', '실패: ' + e.message); }
+  btn.disabled = false;
+}
+
 // ---------- 초기화 (ot.js showView에서 진입 시 호출) ----------
 function initActualViews() {
   buildFbControls();
   buildAcControls();
+  buildRosterYm();
+  const rsave = $('acRosterSave');
+  if (rsave && !rsave.dataset.bound) { rsave.dataset.bound = '1'; rsave.onclick = saveRoster; }
   const bind = (id, fn) => { const el = $(id); if (el && !el.dataset.bound) { el.dataset.bound = '1'; el.addEventListener('change', e => { if (e.target.files[0]) fn(e.target.files[0]); e.target.value = ''; }); } };
   bind('acSalesFile', uploadSales);
   bind('acPayFile', uploadPayroll);
   bind('acAttFile', uploadAtt);
+  bind('acRosterFile', readRosterFile);
 }
 
 // ---- 탭 단위 엑셀 다운로드 — export-tables.js의 downloadTablesAsExcel 공용 헬퍼 사용 ----
