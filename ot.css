@@ -216,3 +216,6 @@ select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent-sof
 .gantt.g30{grid-template-columns:200px repeat(32,minmax(0,1fr));min-width:720px}
 .gantt .gc.meal{background:repeating-linear-gradient(45deg,#8fdf46,#8fdf46 3px,#d9f3bd 3px,#d9f3bd 6px)}
 .gantt .gc.fmeal{background:repeating-linear-gradient(45deg,#2f3030,#2f3030 3px,#7a7a7a 3px,#7a7a7a 6px)}
+/* 정직원/홀/주방 묶음 구분선 */
+.dtable-emp th.gs,.dtable-emp td.gs{border-left:2px solid var(--dark)}
+.dtable-emp th.grp{text-align:center;font-weight:700;letter-spacing:.05em}

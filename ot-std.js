@@ -41,6 +41,25 @@ function stdShort(t) {
   return /^(DMO|디엠오|디에모)$/.test(s) ? "DMO" : s;
 }
 
+// 파트(홀/주방) — 원본에 파트가 없는 매장(해운대 등)은 그 사람이 한 업무 구성으로 정한다 (사용자 정의 2026-10-14:
+// 홀 = 프리버싱·홀오픈·폴리싱·샐바 등, 주방 = 핫·콜·육절기·프랩·DMO·야채). 업무가 홀/주방으로 안 갈리면(마감·관리자 등) 역할명으로.
+const STD_HALL_RE = /샐바|샐러드|프리버싱|버싱|홀|폴리싱|사이드|쇼케이스|캐셔|러너|컨타|베버|디저트/;
+const STD_KITCHEN_RE = /핫|콜|육절|프랩|프렙|DMO|디엠오|디에모|야채|육수|토핑|고기/;
+function stdPartOf(taskAt, slots, role) {
+  const pick = t => (!t || t.includes("밥차")) ? null : STD_HALL_RE.test(t) ? "홀" : STD_KITCHEN_RE.test(t) ? "주방" : null;
+  let h = 0, k = 0;
+  slots.forEach(i => { const p = pick(taskAt[i] || role); if (p === "홀") h++; else if (p === "주방") k++; });
+  if (h === k) return pick(role) || "";
+  return h > k ? "홀" : "주방";
+}
+// 화면 정렬 키 — 홀 관리자 → 홀 메이트 → 주방 관리자 → 주방 메이트 (파트 미분류 정직원은 맨 앞, 미분류 메이트는 맨 뒤)
+const stdBlockRank = b => {
+  const base = b.p === "홀" ? 0 : b.p === "주방" ? 2 : null;
+  if (base === null) return b.ft ? -1 : 4;
+  return base + (b.ft ? 0 : 1);
+};
+const stdBlockSort = (a, b) => (stdBlockRank(a) - stdBlockRank(b)) || (a.slots[0] - b.slots[0]);
+
 // DB 레코드 1건(평일 또는 주말) → 파싱 + 통계
 function stdPrepare(rec) {
   const blocks = (rec.blocks || []).map(b => {
@@ -49,7 +68,8 @@ function stdPrepare(rec) {
       const [name, rng] = seg.split("@");
       stdSlotsOf(rng).forEach(i => { taskAt[i] = name; });
     });
-    return { p: b.p, r: b.r, n: b.n, ft: !!b.ft, slots: stdSlotsOf(b.s), taskAt };
+    const slots = stdSlotsOf(b.s);
+    return { p: b.p || (b.ft ? "" : stdPartOf(taskAt, slots, b.r)), r: b.r, n: b.n, ft: !!b.ft, slots, taskAt };
   });
   const cnt = { all: Array(34).fill(0), ft: Array(34).fill(0), mate: Array(34).fill(0) };
   const cat = {}; STD_CATS.forEach(c => { cat[c] = Array(34).fill(0); });

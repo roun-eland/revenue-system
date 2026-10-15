@@ -35,10 +35,14 @@ function parseRoster(rows, validCodes) {
   const cLead = hdr.findIndex((c, i) => c === '점장' && i > Math.max(cName, cCnt));
   if (cLead < 0) { out.errors.push("'점장' 열을 찾지 못했습니다."); return out; }
   // 2) 직급 열: 점장 열 + 그 오른쪽으로 '전화'가 나오기 전까지(FOH·BOH 양쪽에 같은 직급이 반복됨)
-  const gradeCols = [{ col: cLead, grade: '점장' }];
+  // FOH/BOH 그룹 행(헤더 바로 위): BOH 열부터가 주방. 점장 열은 FOH. 그룹 행이 없으면 홀/주방 구분은 계산하지 않는다.
+  const grp = hi > 0 ? rows[hi - 1].map(norm) : [];
+  const cBoh = grp.indexOf('BOH');
+  const sideOf = col => (cBoh >= 0 ? (col >= cBoh ? 'boh' : 'foh') : null);
+  const gradeCols = [{ col: cLead, grade: '점장', side: sideOf(cLead) }];
   for (let i = cLead + 1; i < hdr.length; i++) {
     if (hdr[i].includes('전화') || hdr[i].includes('선임관리자')) break;
-    if (ROSTER_GRADES.includes(hdr[i])) gradeCols.push({ col: i, grade: hdr[i] });
+    if (ROSTER_GRADES.includes(hdr[i])) gradeCols.push({ col: i, grade: hdr[i], side: sideOf(i) });
     else if (hdr[i]) out.notes.push(`인식하지 못한 직급 열 '${rows[hi][i]}' 은(는) 건너뜁니다.`);
   }
   if (gradeCols.length < 2) { out.errors.push('직급 열(GM·매니저·캡틴·헤드 등)을 찾지 못했습니다.'); return out; }
@@ -63,17 +67,19 @@ function parseRoster(rows, validCodes) {
     if (seen.has(code)) { out.notes.push(`${code}가 파일에 두 번 있어 뒤의 행은 건너뜁니다.`); continue; }
     seen.add(code);
     const counts = {}; let total = 0;
+    const side = { foh: 0, boh: 0 }; // 홀 관리자(FOH)·주방 관리자(BOH) 인원 — 이름은 세기만 하고 버린다
     const names = {}; // 직급 → 이름 목록 (겸직 판별용, 임시)
-    for (const { col, grade } of gradeCols) {
+    for (const { col, grade, side: sd } of gradeCols) {
       const ns = rosterSplitNames(row[col]);
       if (!ns.length) continue;
+      if (sd) side[sd] += ns.length;
       counts[grade] = (counts[grade] || 0) + ns.length;
       (names[grade] = names[grade] || []).push(...ns);
       total += ns.length;
     }
     const seniorNames = cSenior >= 0 ? rosterSplitNames(row[cSenior]) : [];
     const cell = cCnt >= 0 ? Math.round(Number(String(row[cCnt]).replace(/,/g, ''))) : NaN;
-    parsed.push({ code, name: rawName, counts, total, names, seniorNames, headcountCell: isFinite(cell) ? cell : null, warnings: fix ? [fix] : [] });
+    parsed.push({ code, name: rawName, counts, total, side: cBoh >= 0 ? side : null, names, seniorNames, headcountCell: isFinite(cell) ? cell : null, warnings: fix ? [fix] : [] });
   }
   if (!parsed.length) { out.errors.push('매장 행을 찾지 못했습니다.'); return out; }
 
@@ -100,6 +106,7 @@ function parseRoster(rows, validCodes) {
       p.counts[g] = (p.counts[g] || 0) - 1;
       if (p.counts[g] <= 0) delete p.counts[g];
       p.total -= 1;
+      if (p.side) p.side.foh = Math.max(0, p.side.foh - 1); // 점장 열은 FOH
       p.warnings.push(`같은 사람이 ${ps.length}개 매장 점장으로 적혀 있어 이 매장에서는 제외(인원수 칸 기준, 급여 이중 계산 방지)`);
     }
   }
@@ -121,4 +128,9 @@ function rosterToDbRows(ym, parsedStores) {
   return rows;
 }
 
-if (typeof module !== 'undefined') module.exports = { parseRoster, rosterToDbRows, rosterSplitNames, rosterNormCode, ROSTER_GRADES };
+// 홀/주방 관리자 인원 저장용 행: {ym, store_code, foh, boh}
+function rosterToSideRows(ym, parsedStores) {
+  return parsedStores.filter(s => s.side).map(s => ({ ym, store_code: s.code, foh: s.side.foh, boh: s.side.boh }));
+}
+
+if (typeof module !== 'undefined') module.exports = { parseRoster, rosterToDbRows, rosterToSideRows, rosterSplitNames, rosterNormCode, ROSTER_GRADES };

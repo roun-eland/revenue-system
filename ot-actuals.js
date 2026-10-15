@@ -549,6 +549,12 @@ async function saveRoster() {
     if (!rows.length) throw new Error('저장할 인원이 없습니다.');
     try { const { data: u } = await sb.auth.getUser(); const uid = u?.user?.id; if (uid) rows.forEach(r => { r.updated_by = uid; }); } catch (e) { /* 선택 정보 */ }
     await upsertChunks('ot_staff_roster', rows, 'ym,store_code,grade');
+    // 홀 관리자(FOH)·주방 관리자(BOH) 인원 — 표준표 상세 화면의 관리자 홀/주방 구분용 (인원수만, 이름 없음)
+    const sideRows = rosterToSideRows(ym, rosterDraft.stores);
+    if (sideRows.length) {
+      try { const { data: u } = await sb.auth.getUser(); const uid = u?.user?.id; if (uid) sideRows.forEach(r => { r.updated_by = uid; }); } catch (e) { /* 선택 정보 */ }
+      await upsertChunks('ot_staff_roster_side', sideRows, 'ym,store_code');
+    }
     // 같은 달·같은 매장에 예전에 올린 직급 중 이번 파일에 없는 직급(인원 0이 된 직급)은 정리
     const codes = rosterDraft.stores.map(s => s.code);
     const { data: prev } = await sb.from('ot_staff_roster').select('store_code,grade').eq('ym', ym).in('store_code', codes);
