@@ -4956,7 +4956,137 @@ function unionDesignByMenu(designByMenu, categoryByMenu) {
 
 // explicitRange가 있으면 ①목표 탭(주차구간 모드)처럼 ②③과 무관한 화면에서 재사용하는 호출 —
 // ②③의 #pivotUnitSelect 등 DOM 컨트롤은 건드리지 않고 넘겨받은 기간만 그대로 쓴다.
+// 기간이 시즌 경계를 걸치면(예: 5월 = 26년 봄 5/1~5/18 + 26년 초여름 5/19~5/31) 시즌별 구간으로 쪼갠다.
+// 예전엔 기간 시작일의 시즌 하나로 전체를 계산해서, 뒤쪽 시즌에만 있는 메뉴·자재가 레시피에 없어 통째로 빠졌다
+// (5월 원가율이 실제보다 약 1%p 낮게 나옴). 시즌 밖 날짜는 예전 방식(시작일 기준 대체 시즌)으로 한 구간에 묶는다.
+function splitRangeBySeason(start, end) {
+  const ss = state.seasons.filter(x => x.start_month && x.end_month).slice().sort((a, b) => a.start_month.localeCompare(b.start_month));
+  const segs = [];
+  let cur = start;
+  while (cur && cur <= end) {
+    const s = ss.find(x => x.start_month <= cur && cur <= x.end_month);
+    if (!s) { segs.push({ start: cur, end }); break; }
+    const segEnd = s.end_month < end ? s.end_month : end;
+    segs.push({ start: cur, end: segEnd, seasonName: s.name });
+    cur = nextDay(segEnd);
+  }
+  return segs.length ? segs : [{ start, end }];
+}
+const _mapUnion = (maps) => { const out = new Map(); maps.forEach(m => (m || new Map()).forEach((v, k) => { if (!out.has(k)) out.set(k, v); })); return out; };
+// 시즌별로 따로 계산한 피벗 데이터(②③ 공통 번들)들을 하나로 합친다 — 같은 메뉴의 매장별 그램은 더하고, 매장별 g당단가는
+// 그램 가중평균, 매장 매출·객수는 합산. 목표(targetByCategory/targetPrice)는 첫 구간 시즌 기준을 그대로 쓴다.
+function mergePivotCompareData(dateRange, parts) {
+  const first = parts[0];
+  const storeMap = new Map();
+  parts.forEach(p => p.stores.forEach(st => {
+    if (!storeMap.has(st.code)) storeMap.set(st.code, { ...st, sales: 0, guests: 0 });
+    const e = storeMap.get(st.code); e.sales += st.sales; e.guests += st.guests;
+  }));
+  const stores = [...storeMap.values()].sort((a, b) => b.guests - a.guests);
+
+  const menuAcc = new Map(); // menu -> { base, per: Map(store -> entry) }
+  parts.forEach(p => (p.results || []).forEach(r => {
+    if (!menuAcc.has(r.menu_name)) menuAcc.set(r.menu_name, { base: r, per: new Map() });
+    const m = menuAcc.get(r.menu_name);
+    (r.per_store || []).forEach(ps => {
+      const e = m.per.get(ps.store_code) || { ...ps, grams: null, store_customers: 0 };
+      if (ps.grams != null) e.grams = (e.grams ?? 0) + ps.grams;
+      e.store_customers = (e.store_customers || 0) + (ps.store_customers || 0);
+      m.per.set(ps.store_code, e);
+    });
+  }));
+  const results = [...menuAcc.values()].map(m => ({ ...m.base, per_store: [...m.per.values()] }));
+
+  // 그램 가중 평균단가 계산용 — 구간별 (메뉴|매장) 그램
+  const gramsOf = parts.map(p => {
+    const g = new Map();
+    (p.results || []).forEach(r => (r.per_store || []).forEach(ps => { if (ps.grams != null) g.set(r.menu_name + '|' + ps.store_code, ps.grams); }));
+    return g;
+  });
+  const costByMenuStore = new Map();
+  const menusForCost = new Set(); parts.forEach(p => (p.costByMenuStore || new Map()).forEach((_, mn) => menusForCost.add(mn)));
+  menusForCost.forEach(menu => {
+    const perStore = new Map();
+    const storeCodes = new Set(); parts.forEach(p => (p.costByMenuStore.get(menu) || new Map()).forEach((_, sc) => storeCodes.add(sc)));
+    storeCodes.forEach(sc => {
+      let num = 0, den = 0, firstObj = null, firstCost = null;
+      parts.forEach((p, i) => {
+        const o = p.costByMenuStore.get(menu)?.get(sc);
+        const c = o?.actual_cost_per_gram;
+        if (c == null) return;
+        if (firstObj == null) { firstObj = o; firstCost = c; }
+        const g = gramsOf[i].get(menu + '|' + sc) || 0;
+        num += c * g; den += g;
+      });
+      if (firstObj) perStore.set(sc, { ...firstObj, actual_cost_per_gram: den > 0 ? num / den : firstCost });
+    });
+    costByMenuStore.set(menu, perStore);
+  });
+  const costByMenu = new Map();
+  const menusBrand = new Set(); parts.forEach(p => (p.costByMenu || new Map()).forEach((_, mn) => menusBrand.add(mn)));
+  menusBrand.forEach(menu => {
+    let num = 0, den = 0, firstCost = null;
+    parts.forEach((p, i) => {
+      const c = p.costByMenu.get(menu);
+      if (c == null) return;
+      if (firstCost == null) firstCost = c;
+      let g = 0; gramsOf[i].forEach((v, k) => { if (k.startsWith(menu + '|')) g += v; });
+      num += c * g; den += g;
+    });
+    costByMenu.set(menu, den > 0 ? num / den : firstCost);
+  });
+
+  const flat = { ...first.flat };
+  ['flatByMenu', 'cookedWeightByMenu', 'rawMaterialNameByCode', 'availabilityPatternByMenu', 'categoryByMenu'].forEach(k => {
+    flat[k] = _mapUnion(parts.map(p => p.flat?.[k]));
+  });
+  const fm = parts.map(p => p.flat?.finalMenus);
+  flat.finalMenus = Array.isArray(first.flat?.finalMenus) ? [...new Set(fm.flatMap(x => [...(x || [])]))] : new Set(fm.flatMap(x => [...(x || [])]));
+
+  const usageByStoreRawCode = new Map();
+  parts.forEach(p => (p.usageByStoreRawCode || new Map()).forEach((codes, sc) => {
+    if (!usageByStoreRawCode.has(sc)) usageByStoreRawCode.set(sc, new Map());
+    const dst = usageByStoreRawCode.get(sc);
+    codes.forEach((v, code) => {
+      const e = dst.get(code) || { grams: 0, amount: 0 };
+      e.grams += v.grams || 0; e.amount += v.amount || 0; dst.set(code, e);
+    });
+  }));
+
+  return {
+    dateRange, seasonId: first.seasonId, results, stores, flat,
+    designByMenu: _mapUnion(parts.map(p => p.designByMenu)),
+    costByMenu, costByMenuStore,
+    targetByCategory: first.targetByCategory, targetPrice: first.targetPrice,
+    fromCache: parts.every(p => p.fromCache),
+    rawCodePricePerGram: _mapUnion(parts.map(p => p.rawCodePricePerGram)),
+    clusterMembers: _mapUnion(parts.map(p => p.clusterMembers)),
+    aliasNameByCode: _mapUnion(parts.map(p => p.aliasNameByCode)),
+    findMaterial: first.findMaterial,
+    usageByStoreRawCode,
+    splitInfo: parts.map(p => `${state.seasons.find(x => x.id === p.seasonId)?.name || ''} ${p.dateRange.start.slice(5)}~${p.dateRange.end.slice(5)}`),
+  };
+}
 async function loadPivotCompareData(explicitRange) {
+  const dateRange = explicitRange || pivotDateRangeFromControls();
+  if (!dateRange) return { error: '기간을 선택해주세요.' };
+  const unitSel = explicitRange ? 'wr' : $('#pivotUnitSelect').value;
+  if (unitSel !== 's') {
+    const segs = splitRangeBySeason(dateRange.start, dateRange.end);
+    if (segs.length > 1) {
+      // 구간 계산은 한 번에 하나씩(병렬로 돌리면 서로 자원을 잡아먹어 몇 분씩 느려진다).
+      const parts = [];
+      for (const sg of segs) {
+        const d = await loadPivotCompareDataOne({ start: sg.start, end: sg.end });
+        if (d.error) return d;
+        parts.push(d);
+      }
+      return mergePivotCompareData(dateRange, parts);
+    }
+  }
+  return loadPivotCompareDataOne(explicitRange);
+}
+async function loadPivotCompareDataOne(explicitRange) {
   const dateRange = explicitRange || pivotDateRangeFromControls();
   if (!dateRange) return { error: '기간을 선택해주세요.' };
   // range.start 기준 판정 이유는 computeMenuConsumption 쪽 주석 참고 — 월별 보기가 시즌 경계를 걸치면
@@ -5114,7 +5244,7 @@ function renderPivotCompare() {
   const cacheHint = $('#pivotCacheHint');
   if (!data) { tbl.innerHTML = '<tbody><tr><td style="padding:24px;color:var(--muted)">불러오는 중...</td></tr></tbody>'; if (cacheHint) cacheHint.textContent = ''; return; }
   if (data.error) { tbl.innerHTML = `<tbody><tr><td style="padding:24px;color:var(--crit)">${esc(data.error)}</td></tr></tbody>`; return; }
-  if (cacheHint) cacheHint.textContent = data.fromCache ? '· 저장된 값(즉시 로드)' : '';
+  if (cacheHint) cacheHint.textContent = (data.splitInfo ? `· 시즌 경계 — ${data.splitInfo.join(' + ')} 레시피로 나눠 계산 ` : '') + (data.fromCache ? '· 저장된 값(즉시 로드)' : '');
 
   const mode = $('#pivotModeSelect').value;
   const allCodes = data.stores.map(s => s.code);
@@ -5489,9 +5619,10 @@ async function loadPivotTimeSeriesData() {
   const designsBySeasonId = new Map();
   const periodUnit = unit === 's' ? 'season' : unit === 'w' ? 'week' : 'month';
   const out = [];
-  for (const p of periods) {
+  const buildRecord = async (p) => {
     // range.start 기준 판정 이유는 computeMenuConsumption 쪽 주석 참고 — 달력 월말(p.end)로 판정하면
-    // 시즌 경계를 걸친 달에서 아직 시작 안 한 다음 시즌이 걸려버린다.
+    // 시즌 경계를 걸친 달에서 아직 시작 안 한 다음 시즌이 걸려버린다. (시즌 경계를 걸친 기간은
+    // 아래 for문에서 시즌별 구간으로 쪼개 이 함수를 구간마다 호출하고 합친다.)
     const seasonId = findSeasonIdForDate(p.start);
     const season = state.seasons.find(s => s.id === seasonId);
     if (targetCode === 'brand') {
@@ -5536,14 +5667,14 @@ async function loadPivotTimeSeriesData() {
         gramsByMenu = new Map();
         cachedRows.forEach(r => gramsByMenu.set(r.menu_name, (gramsByMenu.get(r.menu_name) || 0) + (Number(r.grams) || 0)));
       } else if (closed) {
-        if (consumption.error) { out.push({ ...p, seasonName: season?.name }); continue; }
+        if (consumption.error) return { ...p, seasonName: season?.name };
         savePivotSnapshotFromResults(seasonId, periodUnit, p.start, p.end, consumption.results);
         gramsByMenu = new Map();
         consumption.results.forEach(r => {
           gramsByMenu.set(r.menu_name, (r.per_store || []).reduce((a, s) => a + (s.grams || 0), 0));
         });
       } else {
-        if (consumption.error || !consumption.brandOnly) { out.push({ ...p, seasonName: season?.name }); continue; }
+        if (consumption.error || !consumption.brandOnly) return { ...p, seasonName: season?.name };
         gramsByMenu = consumption.gramsProducedByMenu;
       }
 
@@ -5560,8 +5691,8 @@ async function loadPivotTimeSeriesData() {
         menuAmt[menu] = amt; menuGrams[menu] = grams; menuCategory[menu] = d.category;
         if (d.category === '축산') meatAmt += amt;
       });
-      out.push({ ...p, seasonName: season?.name, totalAmt, meatAmt, zoneAmt, zoneGrams, menuAmt, menuGrams, menuCategory,
-        totalCustomers, netSales: totalSales / 1.1 });
+      return { ...p, seasonName: season?.name, totalAmt, meatAmt, zoneAmt, zoneGrams, menuAmt, menuGrams, menuCategory,
+        totalCustomers, netSales: totalSales / 1.1 };
     } else {
       // 매장 대상: 합계·축산은 실측(자재·매출), 존·메뉴 분해는 스냅샷(매장×메뉴 그램)이 있는 기간만.
       // 스냅샷은 종료 시즌은 자동 생성, 진행 중 시즌은 "주차 정확 계산" 버튼으로 생성한다.
@@ -5605,8 +5736,30 @@ async function loadPivotTimeSeriesData() {
         });
         Object.assign(rec, { zoneAmt, zoneGrams, menuAmt, menuGrams, menuCategory });
       }
-      out.push(rec);
+      return rec;
     }
+  };
+  // 시즌 경계를 걸친 기간(예: 5월)은 시즌별로 쪼개 각 시즌 레시피로 계산한 뒤 합산한다.
+  const sumObj = (list, key) => { const o = {}; list.forEach(r => Object.entries(r[key] || {}).forEach(([k, v]) => { o[k] = (o[k] || 0) + v; })); return o; };
+  for (const p of periods) {
+    const segs = unit === 's' ? [{ start: p.start, end: p.end }] : splitRangeBySeason(p.start, p.end);
+    if (segs.length === 1) { out.push(await buildRecord(p)); continue; }
+    const recs = [];
+    for (const sg of segs) recs.push(await buildRecord({ ...p, start: sg.start, end: sg.end }));
+    const base = { ...p, seasonName: recs[0].seasonName };
+    // 구간 중 하나라도 계산에 실패했으면(총액이 없는 빈 기록) 합산하면 틀린 값이 되므로 그 기간은 비워 둔다.
+    if (recs.some(r => r.totalAmt == null)) { out.push(base); continue; }
+    const merged = { ...base,
+      totalAmt: recs.reduce((a, r) => a + r.totalAmt, 0), meatAmt: recs.reduce((a, r) => a + (r.meatAmt || 0), 0),
+      totalCustomers: recs.reduce((a, r) => a + (r.totalCustomers || 0), 0), netSales: recs.reduce((a, r) => a + (r.netSales || 0), 0),
+      splitSeasons: recs.map(r => r.seasonName).filter(Boolean) };
+    // 존·메뉴 분해는 모든 구간에 있을 때만 합산(매장 대상은 스냅샷이 있는 구간만 있음)
+    if (recs.every(r => r.zoneAmt)) {
+      merged.zoneAmt = sumObj(recs, 'zoneAmt'); merged.zoneGrams = sumObj(recs, 'zoneGrams');
+      merged.menuAmt = sumObj(recs, 'menuAmt'); merged.menuGrams = sumObj(recs, 'menuGrams');
+      merged.menuCategory = Object.assign({}, ...recs.map(r => r.menuCategory || {}));
+    }
+    out.push(merged);
   }
   return { periods: out, targetCode };
 }
