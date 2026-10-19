@@ -153,7 +153,7 @@ async function fillCost() {
   const d = pratio == null ? null : ratio - pratio;
   const body = metric('누적 원가율', ratio.toFixed(1) + '%', `${from.slice(5).replace('-', '/')}~${to.slice(5).replace('-', '/')} 마감 주차 기준`)
     + metric('전월 원가율', pratio == null ? '—' : pratio.toFixed(1) + '%', d == null ? '' : `이번 달 <b style="color:${d > 0 ? 'var(--crit)' : 'var(--good)'}">${sgn(d)}%p</b>`);
-  setCard('cost', card('../cost/?v=pivot', '원가', `${+ym.slice(5)}월 누적`, body, '원가율 = 자재 실사용액 ÷ 순매출(외형÷1.1) · 주차 마감 기준이라 최신 주차까지만 반영 · 메뉴·자재 신호등은 다음 단계'));
+  setCard('cost', card('../cost/?v=pivot', '원가', `${+ym.slice(5)}월 누적`, body, ''));
 }
 
 // ================= 생산성: 현재월 누적 인건비율 · 생산성 (ot.js otMtdRows와 같은 계산) =================
@@ -226,7 +226,7 @@ async function fillLabor() {
   const pcol = prod >= 72000 ? 'var(--good)' : prod >= 60000 ? 'var(--warn)' : 'var(--crit)';
   const body = metric('누적 인건비율', ratio.toFixed(1) + '%', '근사 인건비 ÷ 순매출', rcol)
     + metric('누적 생산성', won(prod) + '<span class="mu">원/MH</span>', `목표 72,000 대비 ${(prod / 72000 * 100).toFixed(0)}%`, pcol);
-  setCard('labor', card('../labor/?v=dash', '생산성', `${+ym.slice(5)}월 누적 · ${first.slice(5).replace('-', '/')}~${last.slice(5).replace('-', '/')} · ${n}개점`, body, '인건비율 24% 이하 정상 · 28% 이하 주의 / 생산성 72,000 이상 정상 · 60,000 이상 주의'));
+  setCard('labor', card('../labor/?v=dash', '생산성', `${+ym.slice(5)}월 누적 · ${first.slice(5).replace('-', '/')}~${last.slice(5).replace('-', '/')} · ${n}개점`, body, ''));
 }
 
 // ================= 고객: 최근 7일 리뷰 =================
