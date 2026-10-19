@@ -5540,7 +5540,8 @@ const SIGNAL_CFG = {
   consOver: 0.20,                         // 인당소비량: 설계보다 20% 이상 많이 먹으면 주의(많이 먹는 건 기본적으로 좋음)
   consLow: -0.10,                         //            설계보다 10% 이상 적게 먹으면 주의(저조)
   mat: { red: 0.10, warn: 0.05, minAmount: 100000, minRise: 0.01, top: 15 },  // 자재: 전월 평균 단가 대비 상승률, 기간 사용액 10만원 미만은 제외
-  saladExclude: ['축산', '야채', '월남쌈', '죽', '육수', '토핑', '소스']          // ② 샐러드바 표에서 뺄 존 (사용자 지정 2026-10-20)
+  saladExclude: ['축산', '야채', '월남쌈', '죽', '육수', '토핑', '소스'],         // ② 샐러드바 표에서 뺄 존 (사용자 지정 2026-10-20)
+  salad: { band: 0.20 }                                                          // ② 샐러드바: 존 평균보다 20% 이상 높으면 🔴
 };
 let signalCache = null;
 const sigLv = v => (v === 'r' ? '위험' : v === 'y' ? '주의' : v === 'g' ? '정상' : '보류');
@@ -5607,6 +5608,28 @@ function computeSignalData(data, prevUsageByCode, effDays) {
     menus.push(m);
   }
 
+  // ---- 샐러드바 메뉴: 핫/콜/음료/디저트처럼 "메뉴"로 보는 존만 (축산·야채·월남쌈·죽·육수·토핑·소스 제외, 존별 표에는 그대로 나온다) ----
+  // 신호등·등급은 "같은 존 메뉴 평균 대비"로 판정한다 (사용자 변경 2026-10-20). GAP(설계)·월예상액은 설계 대비 그대로.
+  const saladMenus = menus.filter(m => !C.saladExclude.includes(m.zone));
+  const zoneAvg = {};
+  saladMenus.filter(m => !m.hold).forEach(m => {
+    const z = (zoneAvg[m.zone] = zoneAvg[m.zone] || { n: 0, ratio: 0, cpg: 0, cons: 0 });
+    z.n++; z.ratio += m.ratio; z.cpg += m.cpg; z.cons += m.cons;
+  });
+  Object.values(zoneAvg).forEach(z => { z.ratio /= z.n; z.cpg /= z.n; z.cons /= z.n; });
+  saladMenus.forEach(m => {
+    if (m.hold) return;
+    const a = zoneAvg[m.zone];
+    m.aRatio = a.ratio; m.aCpg = a.cpg; m.aCons = a.cons;
+    // 원가율·g당원가: 평균 이하 🟢 / 평균 초과 🟠 / 평균보다 20% 이상 높으면 🔴.  인당소비량: 평균 이상 🟢 / 평균 미만 🟠
+    const costSig = (v, avg) => (!(avg > 0) || v <= avg) ? 'g' : v / avg - 1 >= C.salad.band ? 'r' : 'y';
+    m.sigP = costSig(m.ratio, a.ratio);
+    m.sigG = costSig(m.cpg, a.cpg);
+    m.sigC = m.cons >= a.cons ? 'g' : 'y';
+    const consHigh = m.cons >= a.cons, gHigh = m.cpg > a.cpg, ratioHigh = m.ratio > a.ratio;
+    m.grade = (consHigh && !gHigh) ? (ratioHigh ? 'B' : 'A') : (!consHigh && !gHigh) ? 'C' : (consHigh && gHigh) ? 'C' : 'D';
+  });
+
   // ---- 존 ----
   const zonesPresent = [...new Set(menus.map(m => m.zone).filter(Boolean))]
     .sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b));
@@ -5665,13 +5688,11 @@ function computeSignalData(data, prevUsageByCode, effDays) {
   const matCount = { r: mats.filter(x => x.sig === 'r').length, y: mats.filter(x => x.sig === 'y').length, g: mats.filter(x => x.sig === 'g').length };
   mats = mats.slice(0, C.mat.top);
 
-  // 샐러드바 표·등급 집계는 핫/콜/음료/디저트처럼 "메뉴"로 보는 존만 — 축산·야채·월남쌈·죽·육수·토핑·소스는 제외(존별 표에는 그대로 나온다)
-  const saladMenus = menus.filter(m => !C.saladExclude.includes(m.zone));
   const gradeCount = { A: 0, B: 0, C: 0, D: 0, hold: 0 };
   saladMenus.forEach(m => { if (m.hold) gradeCount.hold++; else gradeCount[m.grade]++; });
   const zoneCount = { r: 0, y: 0, g: 0, n: 0 };
   zones.forEach(z => zoneCount[z.sig]++);
-  return { zones, brand, menus, saladMenus, mats, matTotal, matCount, gradeCount, zoneCount, netSales, guests, effDays, monthFactor };
+  return { zones, brand, menus, saladMenus, zoneAvg, mats, matTotal, matCount, gradeCount, zoneCount, netSales, guests, effDays, monthFactor };
 }
 
 // ---- 화면 ----
@@ -5744,16 +5765,17 @@ function renderSignalView() {
   const graded = shown.filter(m => !m.hold).sort((a, c) => GRADE_ORDER_DESC[a.grade] - GRADE_ORDER_DESC[c.grade] || c.monthWon - a.monthWon);
   const holds = shown.filter(m => m.hold);
   H += '<div class="card"><div class="card-head"><h3>② 샐러드바 — 어떤 메뉴가 문제인가</h3>' +
-    `<span class="hint">설계 대비 · 등급 D → A 순, 같은 등급에선 월 추가비용 큰 순</span></div>` +
+    `<span class="hint">같은 존 메뉴 평균 대비 · 등급 D → A 순, 같은 등급에선 월 추가비용 큰 순</span></div>` +
     `<div class="sig-filter"><label>존:</label><select id="sigZoneFilter"><option value="">전체</option>${zonesAvail.map(z => `<option value="${esc(z)}"${z === zf ? ' selected' : ''}>${esc(z)}</option>`).join('')}</select>` +
-    `<span class="pivot-d">등급 기준 — A: 소비↑·g당원가↓·원가율↓ / B: 소비↑·g당원가↓·원가율↑ / C: 소비↓·g당원가↓ 또는 소비↑·g당원가↑ / D: 소비↓·g당원가↑ · 소비↑ = 설계의 ${Math.round((1 + C.consLow) * 100)}% 이상, g당원가↑ = 설계 +${Math.round(C.gram.warn * 100)}% 초과, 원가율↑ = 설계 +${C.menuGap.warn.toFixed(2)}%p 초과</span></div>` +
+    `<span class="pivot-d">등급 기준 — A: 소비↑·g당원가↓·원가율↓ / B: 소비↑·g당원가↓·원가율↑ / C: 소비↓·g당원가↓ 또는 소비↑·g당원가↑ / D: 소비↓·g당원가↑ · 높음/낮음 = 같은 존 메뉴 평균 대비 (소비는 평균 이상이면 높음, g당원가·원가율은 평균 초과면 높음)</span></div>` +
+    `<div class="pivot-d" style="margin:0 0 8px">존 평균(판정 가능한 메뉴 기준) — ${Object.entries(calc.zoneAvg).sort((a, c) => CATEGORY_ORDER.indexOf(a[0]) - CATEGORY_ORDER.indexOf(c[0])).map(([z, a]) => `<b>${esc(z)}</b> ${a.n}개 · 원가율 ${a.ratio.toFixed(2)}% · g당 ${fmtNum(a.cpg, 1)}원 · 인당 ${fmtNum(a.cons, 0)}g`).join(' &nbsp;|&nbsp; ') || '없음'}</div>` +
     '<div class="table-scroll"><table class="data-table sig-table"><colgroup><col style="width:230px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:60px"><col style="width:90px"><col style="width:100px"></colgroup>' +
-    '<thead><tr><th>메뉴</th><th>원가율(실제 / 설계)</th><th>g당원가(실제 / 설계)</th><th>인당소비량(실제 / 설계)</th><th>등급</th><th>GAP(설계)</th><th>월예상액</th></tr></thead><tbody>';
+    '<thead><tr><th>메뉴</th><th>원가율(실제 / 존평균)</th><th>g당원가(실제 / 존평균)</th><th>인당소비량(실제 / 존평균)</th><th>등급</th><th>GAP(설계)</th><th>월예상액</th></tr></thead><tbody>';
   graded.forEach(m => {
     H += `<tr><td style="text-align:left">${esc(m.name)} <span class="pivot-d">${esc(m.zone || '')}</span></td>` +
-      `<td>${m.ratio.toFixed(2)}% <span class="pivot-d">/ ${m.dRatio.toFixed(2)}%</span> ${sigDot(m.sigP)}</td>` +
-      `<td>${fmtNum(m.cpg, 1)}원 <span class="pivot-d">/ ${fmtNum(m.dCpg, 1)}원</span> ${sigDot(m.sigG)}</td>` +
-      `<td>${fmtNum(m.cons, 0)}g <span class="pivot-d">/ ${fmtNum(m.dCons, 0)}g</span> ${sigDot(m.sigC)}</td>` +
+      `<td>${m.ratio.toFixed(2)}% <span class="pivot-d">/ ${m.aRatio.toFixed(2)}%</span> ${sigDot(m.sigP)}</td>` +
+      `<td>${fmtNum(m.cpg, 1)}원 <span class="pivot-d">/ ${fmtNum(m.aCpg, 1)}원</span> ${sigDot(m.sigG)}</td>` +
+      `<td>${fmtNum(m.cons, 0)}g <span class="pivot-d">/ ${fmtNum(m.aCons, 0)}g</span> ${sigDot(m.sigC)}</td>` +
       `<td><span class="sig-grade g${m.grade}">${m.grade}</span></td>` +
       `<td><b class="${m.gap >= C.menuGap.warn ? 'sig-bad' : m.gap < 0 ? 'sig-good' : ''}">${sigSigned(m.gap, 2)}%p</b></td>` +
       `<td><b class="${m.monthWon > 0 ? 'sig-bad' : 'sig-good'}">${sigWon(m.monthWon)}</b></td></tr>`;
@@ -5761,7 +5783,7 @@ function renderSignalView() {
   if (!graded.length) H += '<tr><td colspan="7" style="padding:18px;color:var(--muted)">등급을 매길 메뉴가 없습니다.</td></tr>';
   H += '</tbody></table></div>';
   if (holds.length) H += `<p class="pivot-d" style="margin:8px 4px 0">판정 보류 ${holds.length}개 — ${holds.slice(0, 12).map(m => `${esc(m.name)}(${esc(m.hold)})`).join(', ')}${holds.length > 12 ? ' …' : ''}</p>`;
-  H += `<p class="pivot-d" style="margin:6px 4px 0">월예상액 = (실제 원가율 − 설계 원가율) × 월 환산 순매출(${fmtNum(calc.netSales * calc.monthFactor / 1e8, 1)}억) · + 추가비용 / − 절감. 인당소비량 신호는 설계보다 ${Math.round(C.consOver * 100)}% 이상 많거나 ${Math.round(-C.consLow * 100)}% 이상 적으면 주의입니다.</p></div>`;
+  H += `<p class="pivot-d" style="margin:6px 4px 0">월예상액 = (실제 원가율 − 설계 원가율) × 월 환산 순매출(${fmtNum(calc.netSales * calc.monthFactor / 1e8, 1)}억) · + 추가비용 / − 절감 (GAP·월예상액은 설계 대비). 신호등: 원가율·g당원가는 존 평균 이하 🟢 / 초과 🟠 / 평균보다 ${Math.round(C.salad.band * 100)}% 이상 높으면 🔴, 인당소비량은 존 평균 이상 🟢 / 미만 🟠.</p></div>`;
 
   // ③ 자재
   H += '<div class="card"><div class="card-head"><h3>③ 자재별 — 단가 상승으로 얼마나 더 나가는가</h3>' +
