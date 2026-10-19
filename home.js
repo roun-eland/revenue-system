@@ -166,9 +166,10 @@ async function fillLabor() {
   const ls = a.data && a.data[0] && a.data[0].sales_date, ll = b.data && b.data[0] && b.data[0].work_date;
   if (!ls || !ll) { setCard('labor', noData('../labor/', '생산성', '현재월 누적', '매출·근태 실적이 없습니다.')); return; }
   const ym = (ls < ll ? ls : ll).slice(0, 7);
-  const [sr, lr, rosterRows, gradeRes] = await Promise.all([
+  const [sr, lr, perRows, rosterRows, gradeRes] = await Promise.all([
     fetchRows(() => sb.from('ot_sales_daily').select('store_code,sales_date,total,is_closed').gte('sales_date', ym + '-01').lt('sales_date', endExclusive(ym)).order('sales_date').order('store_code')),
     fetchRows(() => sb.from('ot_labor_daily').select('store_code,work_date,mate_mh,ft_mh').gte('work_date', ym + '-01').lt('work_date', endExclusive(ym)).order('work_date').order('store_code')),
+    fetchRows(() => sb.from('ot_labor_periods').select('store_code,period_start,period_end,mate_pay,mate_mh').gte('period_start', ym + '-01').lt('period_start', endExclusive(ym)).order('period_start').order('store_code')),
     fetchRows(() => sb.from('ot_staff_roster').select('ym,store_code,grade,headcount').order('ym').order('store_code').order('grade')).catch(() => []),
     isPlanner ? sb.from('ot_grades').select('grade,std_monthly_cost,allowance') : Promise.resolve({ data: null })
   ]);
@@ -199,34 +200,41 @@ async function fillLabor() {
   const sBy = {}, lBy = {};
   sr.forEach(r => { (sBy[r.store_code] = sBy[r.store_code] || {})[r.sales_date] = r; });
   lr.forEach(r => { (lBy[r.store_code] = lBy[r.store_code] || {})[r.work_date] = r; });
+  const pBy = {};
+  perRows.forEach(r => { (pBy[r.store_code] = pBy[r.store_code] || []).push(r); });
   const dim = daysIn(ym);
-  let tSales = 0, tMH = 0, tLabor = 0, n = 0, first = null, last = null;
+  let tSales = 0, tMH = 0, tLabor = 0, n = 0, nEst = 0, first = null, last = null;
   for (const [code, s0] of Object.entries(OT_DATA)) {
     const S = sBy[code], L = lBy[code];
     if (!S || !L) continue;
     let sales = 0, mate = 0, ft = 0, days = 0, sFirst = null, sLast = null;
+    const dayRows = [];
     for (const iso of monthDates(ym)) {
       const x = S[iso], y = L[iso];
       if (!x || !y || x.is_closed || !(+x.total > 0)) continue;
       sales += +x.total; mate += +y.mate_mh || 0; ft += +y.ft_mh || 0; days++;
+      dayRows.push({ iso, mate_mh: +y.mate_mh || 0 });
       if (!sFirst) sFirst = iso;
       sLast = iso;
     }
     if (!days) continue;
-    const frac = +sLast.slice(8) / dim;
-    const sf = staffFor(code);
-    tLabor += mate * s0.eff + (sf.fullpay + sf.nfull * 100000) * frac + sales / 1.1 * 0.006;
+    const attByDate = {};
+    for (const iso of Object.keys(L)) attByDate[iso] = +L[iso].mate_mh || 0;
+    const lc = lcStoreCost({ dim, asOfIso: sLast, eff: s0.eff, staff: staffFor(code), dayRows, attByDate, periods: pBy[code] });
+    tLabor += lc.labor;
+    if (lc.estDays > 0) nEst++;
     tSales += sales; tMH += mate + ft; n++;
     if (!first || sFirst < first) first = sFirst;
     if (!last || sLast > last) last = sLast;
   }
   if (!n) { setCard('labor', noData('../labor/', '생산성', '현재월 누적', '이 달에 적재된 실적이 없습니다.')); return; }
+  tLabor += lcHqCost(dim, last);   // 본부 인건비 안분(월 6,500만원 × 경과일 비율) — 전사 합계에만
   const ratio = tLabor / (tSales / 1.1) * 100, prod = tSales / tMH;
   const rcol = ratio <= 24 ? 'var(--good)' : ratio <= 28 ? 'var(--warn)' : 'var(--crit)';
   const pcol = prod >= 72000 ? 'var(--good)' : prod >= 60000 ? 'var(--warn)' : 'var(--crit)';
-  const body = metric('누적 인건비율', ratio.toFixed(1) + '%', '근사 인건비 ÷ 순매출', rcol)
+  const body = metric('누적 인건비율', ratio.toFixed(1) + '%', '본부 인건비 안분 포함', rcol)
     + metric('누적 생산성', won(prod) + '<span class="mu">원/MH</span>', `목표 72,000 대비 ${(prod / 72000 * 100).toFixed(0)}%`, pcol);
-  setCard('labor', card('../labor/?v=dash', '생산성', `${+ym.slice(5)}월 누적 · ${first.slice(5).replace('-', '/')}~${last.slice(5).replace('-', '/')} · ${n}개점`, body, ''));
+  setCard('labor', card('../labor/?v=dash', '생산성', `${+ym.slice(5)}월 누적 · ${first.slice(5).replace('-', '/')}~${last.slice(5).replace('-', '/')} · ${n}개점`, body, nEst ? `<span style="color:var(--crit)">급여대장 대신 추정으로 계산한 매장 ${nEst}곳 — 급여대장 업로드 확인 필요</span>` : ''));
 }
 
 // ================= 고객: 최근 7일 리뷰 =================
