@@ -279,13 +279,19 @@ async function fillVoc() {
 // 인건비율 = 카드와 같은 계산(laborMonth). 인건비율은 근태 자료가 있는 8월부터만 나온다.
 let trendChart = null;
 async function renderTrend() {
-  const months = Array.from({ length: 6 }, (_, i) => shiftYm(CUR_YM, i - 5));
+  // 2026-01부터 현재월까지 (최대 12개월)
+  const start = shiftYm(CUR_YM, -11) > '2026-01' ? shiftYm(CUR_YM, -11) : '2026-01';
+  const months = [];
+  for (let m = start; m <= CUR_YM; m = shiftYm(m, 1)) months.push(m);
   const from = months[0] + '-01', endEx = endExclusive(CUR_YM);
-  const [sRows, ssRows, usageRes] = await Promise.all([
+  const [sRows, ssRows, usageRes, manualRes] = await Promise.all([
     fetchRows(() => sb.from('ot_sales_daily').select('sales_date,total').gte('sales_date', from).lt('sales_date', endEx).order('sales_date').order('store_code')),
     fetchRows(() => sb.from('store_sales').select('sales_date,sales_total').gte('sales_date', from).lt('sales_date', endEx).order('id')),
-    sb.rpc('material_usage_monthly_totals')
+    sb.rpc('material_usage_monthly_totals'),
+    sb.from('ot_labor_ratio_actual').select('ym,ratio')   // 사용자 제공 월 인건비율 실적(확정치) — 있는 달은 계산 대신 이 값
   ]);
+  const manual = {};
+  (manualRes.data || []).forEach(r => { manual[r.ym] = Number(r.ratio); });
   const sumBy = (rows, dk, vk) => { const o = {}; for (const r of rows) { const m = r[dk].slice(0, 7); o[m] = (o[m] || 0) + (Number(r[vk]) || 0); } return o; };
   const salesBy = sumBy(sRows, 'sales_date', 'total');       // 외형 매출
   const netBy = sumBy(ssRows, 'sales_date', 'sales_total');   // 원가율 분모 (외형, 아래서 ÷1.1)
@@ -303,7 +309,8 @@ async function renderTrend() {
   });
   const labor = [];
   for (const m of months) {
-    if (m < '2026-08') { labor.push(null); continue; }          // 근태·급여 자료는 8월부터
+    if (manual[m] != null) { labor.push(manual[m]); continue; } // 확정 실적이 있는 달(1~8월)
+    if (m < '2026-08') { labor.push(null); continue; }          // 확정 실적도 근태·급여 자료도 없는 달
     let R = TREND.labor[m];
     if (!R) { try { R = await laborMonth(m); } catch (e) { R = null; } }
     labor.push(R ? R.ratio : null);
@@ -340,7 +347,7 @@ async function renderTrend() {
       }
     }
   });
-  $('trendNote').textContent = `${+CUR_YM.slice(5)}월은 진행 중(매출=현재 예상, 원가율·인건비율=누적)이라 점선·빈 점으로 표시합니다. 인건비율은 근태 자료가 있는 8월부터이고, 급여대장이 없는 달은 추정입니다.`;
+  $('trendNote').textContent = `${+CUR_YM.slice(5)}월은 진행 중(매출=현재 예상, 원가율·인건비율=누적)이라 점선·빈 점으로 표시합니다. 인건비율은 1~8월은 제공받은 월 실적, 9월부터는 급여대장 기준 계산값입니다.`;
 }
 
 init();
