@@ -6,7 +6,7 @@
 <title>로운 원가설계판</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700;800&family=Noto+Sans+KR:wght@400;500;700&display=swap">
 <!-- v8 스킨 (매출·생산성과 통일). 롤백: 아래 한 줄을 ../style.css?v=202609081940 으로 되돌리면 이전 디자인 -->
-<link rel="stylesheet" href="../cost-v8.css?v=202610021111">
+<link rel="stylesheet" href="../cost-v8.css?v=202610200030">
 <link rel="stylesheet" href="../nav.css?v=202610191900">
 </head>
 <body>
@@ -60,6 +60,7 @@
 
       <div class="pivot-tabs">
         <button class="pivot-tab-btn is-on" data-pivot-tab="M" type="button">대시보드</button>
+        <button class="pivot-tab-btn" data-pivot-tab="S" type="button">신호등</button>
         <button class="pivot-tab-btn" data-pivot-tab="T" type="button">① 목표</button>
         <button class="pivot-tab-btn" data-pivot-tab="A" type="button">② 모델별 비교</button>
         <button class="pivot-tab-btn" data-pivot-tab="B" type="button">③ 전 매장</button>
@@ -192,13 +193,13 @@
         <select id="pivotWeekFromSelect" style="display:none"></select>
         <span id="pivotWeekRangeSep" style="display:none">~</span>
         <select id="pivotWeekToSelect" style="display:none"></select>
-        <label>구분:</label>
+        <span id="pivotModeBox"><label>구분:</label>
         <select id="pivotModeSelect">
           <option value="pg">인당금액 원/객</option>
           <option value="g">인당소비량 g/객</option>
           <option value="pp">원가율 %(순매출)</option>
           <option value="amt">금액(백만)</option>
-        </select>
+        </select></span>
         <span id="pivotStoreSelectBox"><label>매장 열:</label><select id="pivotStoreSelect"></select></span>
         <button id="pivotResetOrderBtn" class="pivot-btn" type="button" style="display:none">매장 순서 초기화</button>
         <button id="pivotRefreshBtnAB" class="pivot-btn" type="button" title="메뉴별 소비액에서 새로 계산한 값을 이 표에 다시 반영합니다">↻ 피벗 최신화</button>
@@ -222,9 +223,11 @@
       </div>
       <div id="pivotVeSummary"></div>
 
-      <div class="pivot-wrap"><table class="pivot-table" id="pivotTable">
+      <div class="pivot-wrap" id="pivotTableWrap"><table class="pivot-table" id="pivotTable">
         <tbody><tr><td style="padding:24px;color:var(--muted)">준비 중입니다 — 다음 단계에서 데이터가 채워집니다.</td></tr></tbody>
       </table></div>
+      <!-- 신호등 탭(S): 존 → 샐러드바 메뉴 → 자재. 롤백: 위 탭 버튼 한 줄 제거 -->
+      <div id="pivotSignalBody" style="display:none"></div>
       </div>
     </section>
 
@@ -852,6 +855,6 @@
 <script src="../nav.js?v=202610191900"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../export-tables.js?v=202610021405"></script>
-<script src="../app.js?v=202610161400"></script>
+<script src="../app.js?v=202610200030"></script>
 </body>
 </html>

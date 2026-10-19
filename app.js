@@ -4531,7 +4531,11 @@ function setPivotTab(t) {
   $('#pivotPanelStoreDash').style.display = t === 'M' ? '' : 'none';
   $('#pivotPanelTarget').style.display = t === 'T' ? '' : 'none';
   $('#pivotPanelMain').style.display = (t === 'T' || t === 'M') ? 'none' : '';
-  $('#pivotCtlAB').style.display = (t === 'A' || t === 'B') ? '' : 'none';
+  $('#pivotCtlAB').style.display = (t === 'A' || t === 'B' || t === 'S') ? '' : 'none';
+  // S(신호등)는 ②와 같은 기간 컨트롤을 쓰되, 표 대신 신호등 영역을 보이고 "구분(인당금액/소비량…)" 선택은 숨긴다
+  $('#pivotTableWrap').style.display = t === 'S' ? 'none' : '';
+  $('#pivotSignalBody').style.display = t === 'S' ? '' : 'none';
+  $('#pivotModeBox').style.display = t === 'S' ? 'none' : '';
   $('#pivotCtlC').style.display = t === 'C' ? '' : 'none';
   $('#pivotCtlD').style.display = t === 'D' ? '' : 'none';
   $('#pivotVeSummary').style.display = t === 'D' ? '' : 'none';
@@ -4540,6 +4544,7 @@ function setPivotTab(t) {
   if (t === 'M') loadStoreDash();
   if (t === 'T') loadDashboard();
   if (t === 'A' || t === 'B') loadPivotCompareView();
+  if (t === 'S') loadSignalView();
   if (t === 'C') loadPivotTimeSeriesView();
   if (t === 'D') loadPivotVEView();
 }
@@ -4549,7 +4554,7 @@ $$('.pivot-tab-btn[data-pivot-tab]').forEach(btn => {
 
 // ---- 탭/서브탭 단위 엑셀 다운로드 버튼 (export-tables.js의 downloadTablesAsExcel 공용 헬퍼 사용) ----
 // 파일명 앞에 시즌명을 붙여 어느 시즌 걸 받았는지 구분되게 한다.
-const PIVOT_MAIN_TAB_LABEL = { A: '모델별비교', B: '전매장', C: '시계열', D: 'VE' };
+const PIVOT_MAIN_TAB_LABEL = { S: '신호등', A: '모델별비교', B: '전매장', C: '시계열', D: 'VE' };
 function seasonTag() { return (currentSeason()?.name || '').replace(/\s+/g, ''); }
 [
   ['#exportDashMBtn', '#pivotPanelStoreDash', () => `${seasonTag()}_대시보드_매장요약`],
@@ -5491,6 +5496,7 @@ async function refreshPivotFromLatest(ev) {
   try {
     await invalidateSeasonCalcCaches();
     if (pivotTab === 'A' || pivotTab === 'B') await loadPivotCompareView();
+    else if (pivotTab === 'S') await loadSignalView();
     else if (pivotTab === 'C') await loadPivotTimeSeriesView();
   } finally {
     btn.disabled = false;
@@ -5501,6 +5507,7 @@ $('#pivotRefreshBtnAB')?.addEventListener('click', refreshPivotFromLatest);
 $('#pivotRefreshBtnC')?.addEventListener('click', refreshPivotFromLatest);
 
 async function loadPivotCompareView() {
+  if (pivotTab === 'S') return loadSignalView();   // 신호등 탭은 같은 기간 컨트롤을 공유 — 기간을 바꾸면 신호등을 다시 계산
   const myToken = ++pivotLoadToken;
   const tbl = $('#pivotTable');
   tbl.innerHTML = '<tbody><tr><td style="padding:24px;color:var(--muted)">불러오는 중...</td></tr></tbody>';
@@ -5520,6 +5527,255 @@ $('#pivotMonthInput').addEventListener('change', loadPivotCompareView);
 $('#pivotWeekSelect').addEventListener('change', loadPivotCompareView);
 $('#pivotModeSelect').addEventListener('change', renderPivotCompare);
 $('#pivotStoreSelect').addEventListener('change', renderPivotCompare);
+
+// =====================================================================
+// 대시보드 › 신호등 (2026-10-19) — 브랜드장 요청: 존(어떤 지표가 문제) → 샐러드바 메뉴(등급·설계 대비) → 자재(단가 상승 추가비용)를 한 화면에서.
+// ② 모델별 비교와 같은 계산 결과(loadPivotCompareData)를 그대로 재사용한다 — 숫자가 ②와 어긋나지 않게.
+// 신호 기준값은 아래 SIGNAL_CFG 한곳에서 고친다.
+// =====================================================================
+const SIGNAL_CFG = {
+  zone: { red: 0.5, warn: 0.2 },          // 존: 목표 원가율 대비 +%p 이상이면 위험/주의
+  menuGap: { red: 0.10, warn: 0.03 },     // 메뉴: 설계 원가율(기여 %p) 대비 +%p 이상이면 위험/주의
+  gram: { red: 0.10, warn: 0.05 },        // 메뉴: g당원가가 설계보다 +10%/+5% 이상이면 위험/주의
+  consOver: 0.20,                         // 인당소비량: 설계보다 20% 이상 많이 먹으면 주의(많이 먹는 건 기본적으로 좋음)
+  consLow: -0.10,                         //            설계보다 10% 이상 적게 먹으면 주의(저조)
+  gradeTol: 0.05,                         // 등급 판정: g당원가·소비량이 설계 ±5% 이내면 설계 수준으로 본다
+  mat: { red: 0.10, warn: 0.05, minAmount: 100000, minRise: 0.01, top: 15 }  // 자재: 전월 평균 단가 대비 상승률, 기간 사용액 10만원 미만은 제외
+};
+let signalCache = null;
+const sigLv = v => (v === 'r' ? '위험' : v === 'y' ? '주의' : v === 'g' ? '정상' : '보류');
+const sigDot = lv => `<span class="sig-dot ${lv}" title="${sigLv(lv)}"></span>`;
+const sigSigned = (v, d = 1) => (v >= 0 ? '+' : '') + v.toFixed(d);
+
+// 선택 기간의 월 환산 일수 — 진행 중인 달은 어제까지만 센다
+function signalEffDays(range) {
+  const t = new Date(); t.setDate(t.getDate() - 1);
+  const yest = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  const end = range.end < yest ? range.end : yest;
+  const a = new Date(range.start + 'T00:00:00'), b = new Date(end + 'T00:00:00');
+  return Math.max(1, Math.round((b - a) / 86400000) + 1);
+}
+
+// 전월 평균 단가 비교용 — 선택 기간 시작일이 속한 달의 "전달" 전체 구간
+function signalPrevMonthRange(startDate) {
+  let [y, m] = startDate.split('-').map(Number);
+  const endExcl = `${y}-${String(m).padStart(2, '0')}-01`;
+  m -= 1; if (m < 1) { m = 12; y -= 1; }
+  return { start: `${y}-${String(m).padStart(2, '0')}-01`, endExcl };
+}
+
+// 순수 계산 — 화면(렌더)과 분리해 테스트하기 쉽게 한다.
+function computeSignalData(data, prevUsageByCode, effDays) {
+  const C = SIGNAL_CFG;
+  const allCodes = data.stores.map(s => s.code);
+  const guests = data.stores.reduce((a, s) => a + s.guests, 0);
+  const netSales = data.stores.reduce((a, s) => a + s.sales, 0) / 1.1;
+  const monthFactor = 30 / effDays;
+  const resultByMenu = new Map(data.results.map(r => [r.menu_name, r]));
+
+  // ---- 메뉴 ----
+  const menus = [];
+  for (const d of data.designByMenu.values()) {
+    const r = resultByMenu.get(d.menu_name);
+    const gv = pivotGroupValue(r, allCodes);
+    const pa = pivotGroupAmount(r, allCodes, data.costByMenuStore.get(d.menu_name));
+    const actualCpg = data.costByMenu.get(d.menu_name);   // 실제 g당원가 — 근거가 부족하면 null (설계값으로 대체하지 않는다)
+    const dCpg = Number(d.cost_per_gram), dCons = Number(d.consumption_per_person);
+    const dRatio = d.cost_ratio != null ? Number(d.cost_ratio) : computeCostRatio(dCpg, dCons, data.targetPrice);
+    const m = { name: d.menu_name, zone: d.category, hold: null, amt: pa.amt || 0, grams: gv.grams };
+    if (!r || gv.grams == null || !guests) m.hold = '소비 추정 없음';
+    else if (actualCpg == null || pa.grams == null) m.hold = '원가 근거 부족';
+    else if (!(dCpg > 0) || !(dCons > 0) || dRatio == null) m.hold = '설계 없음';
+    if (!m.hold) {
+      Object.assign(m, {
+        cpg: actualCpg, dCpg, cons: gv.grams / guests, dCons, ratio: pa.amt / netSales * 100, dRatio
+      });
+      m.gap = m.ratio - m.dRatio;                               // %p
+      const gChg = m.cpg / m.dCpg - 1, cChg = m.cons / m.dCons - 1;
+      m.gChg = gChg; m.cChg = cChg;
+      m.sigG = gChg >= C.gram.red ? 'r' : gChg >= C.gram.warn ? 'y' : 'g';
+      m.sigC = (cChg >= C.consOver || cChg <= C.consLow) ? 'y' : 'g';
+      m.sigP = m.gap >= C.menuGap.red ? 'r' : m.gap >= C.menuGap.warn ? 'y' : 'g';
+      // 등급: 인당소비 높음/낮음 × g당원가 높음/낮음, A/B는 원가율로 갈린다 (사용자 기준 2026-10-19)
+      const consHigh = m.cons >= m.dCons * (1 - C.gradeTol);
+      const gHigh = m.cpg > m.dCpg * (1 + C.gradeTol);
+      const ratioHigh = m.gap > C.menuGap.warn;
+      m.grade = (consHigh && !gHigh) ? (ratioHigh ? 'B' : 'A') : (!consHigh && !gHigh) ? 'C' : (consHigh && gHigh) ? 'C' : 'D';
+      m.monthWon = m.gap / 100 * netSales * monthFactor;       // 설계 대비 월 추가(+)/절감(−) 비용
+    }
+    menus.push(m);
+  }
+
+  // ---- 존 ----
+  const zonesPresent = [...new Set(menus.map(m => m.zone).filter(Boolean))]
+    .sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b));
+  const buildZone = (label, ms, target) => {
+    let amt = 0, grams = 0, gramsCost = 0;
+    ms.forEach(m => {
+      if (m.grams != null) grams += m.grams;
+      amt += m.amt;
+      if (m.grams != null && !m.hold) gramsCost += m.grams;      // 원가 근거가 있는 메뉴의 그램
+    });
+    const z = { zone: label, ratio: netSales ? amt / netSales * 100 : null, cpg: gramsCost > 0 ? amt / gramsCost : null, cons: guests ? grams / guests : null };
+    const tCpg = target?.costPerGram ?? null, tCons = target?.consumption ?? null;
+    z.tCpg = tCpg; z.tCons = tCons;
+    z.tRatio = computeCostRatio(tCpg, tCons, data.targetPrice);
+    if (z.tRatio == null || z.ratio == null) { z.sig = 'n'; return z; }
+    z.gap = z.ratio - z.tRatio;
+    z.sig = z.gap >= C.zone.red ? 'r' : z.gap >= C.zone.warn ? 'y' : 'g';
+    z.gChg = (z.cpg != null && tCpg > 0) ? z.cpg / tCpg - 1 : null;
+    z.cChg = (z.cons != null && tCons > 0) ? z.cons / tCons - 1 : null;
+    // 원가율 차이를 g당원가 효과·취식량 효과로 쪼갠다 (남는 부분 = 객단가 차이)
+    const pNet = guests ? netSales / guests : null;
+    if (pNet && z.cpg != null && z.cons != null && tCpg != null && tCons != null) {
+      z.gEff = (z.cpg - tCpg) * tCons / pNet * 100;
+      z.cEff = z.cpg * (z.cons - tCons) / pNet * 100;
+    }
+    return z;
+  };
+  const zones = zonesPresent.map(zone => {
+    const cat = data.targetByCategory.get(zone);
+    const target = cat ? { costPerGram: cat.target_cost_per_gram, consumption: cat.target_consumption_per_person } : null;
+    return buildZone(zone, menus.filter(m => m.zone === zone), target);
+  });
+  const brandTarget = weightedTotals([...data.targetByCategory.values()], 'target');
+  const brand = buildZone('로운 전체', menus, { costPerGram: brandTarget.costPerGram, consumption: brandTarget.consumption });
+
+  // ---- 자재: 이번 기간 평균 단가 vs 전월 평균 단가 ----
+  const cur = new Map();
+  data.usageByStoreRawCode.forEach(sm => sm.forEach((u, code) => {
+    const e = cur.get(code) || { grams: 0, amount: 0 };
+    e.grams += u.grams; e.amount += u.amount; cur.set(code, e);
+  }));
+  let mats = [], matTotal = 0;
+  cur.forEach((u, code) => {
+    const p = prevUsageByCode.get(code);
+    if (!p || !(p.grams > 0) || !(u.grams > 0) || u.amount < C.mat.minAmount) return;
+    const pc = u.amount / u.grams, pp = p.amount / p.grams;
+    if (!(pp > 0)) return;
+    const rise = pc / pp - 1;
+    if (rise < C.mat.minRise) return;
+    const name = data.flat?.rawMaterialNameByCode?.get(code) || data.aliasNameByCode?.get(code) || code;
+    const monthWon = (pc - pp) * u.grams * monthFactor;
+    matTotal += monthWon;
+    mats.push({ code, name, rise, prevKg: pp * 1000, curKg: pc * 1000, amount: u.amount, monthWon, sig: rise >= C.mat.red ? 'r' : rise >= C.mat.warn ? 'y' : 'g' });
+  });
+  mats.sort((a, b) => b.amount - a.amount);
+  const matCount = { r: mats.filter(x => x.sig === 'r').length, y: mats.filter(x => x.sig === 'y').length, g: mats.filter(x => x.sig === 'g').length };
+  mats = mats.slice(0, C.mat.top);
+
+  const gradeCount = { A: 0, B: 0, C: 0, D: 0, hold: 0 };
+  menus.forEach(m => { if (m.hold) gradeCount.hold++; else gradeCount[m.grade]++; });
+  const zoneCount = { r: 0, y: 0, g: 0, n: 0 };
+  zones.forEach(z => zoneCount[z.sig]++);
+  return { zones, brand, menus, mats, matTotal, matCount, gradeCount, zoneCount, netSales, guests, effDays, monthFactor };
+}
+
+// ---- 화면 ----
+const GRADE_ORDER_DESC = { D: 0, C: 1, B: 2, A: 3 };
+async function loadSignalView() {
+  const myToken = ++pivotLoadToken;
+  const box = $('#pivotSignalBody');
+  box.innerHTML = '<div class="pivot-d" style="padding:24px">불러오는 중... (②모델별 비교와 같은 계산을 쓰므로 처음엔 시간이 걸릴 수 있습니다)</div>';
+  const data = await loadPivotCompareData();
+  if (myToken !== pivotLoadToken) return;               // 그 사이 다른 탭/필터로 넘어감
+  if (data.error) { box.innerHTML = `<div style="padding:24px;color:var(--crit)">${esc(data.error)}</div>`; return; }
+  const pm = signalPrevMonthRange(data.dateRange.start);
+  const prevRes = await fetchAllRpcPages('material_usage_totals_for_range_by_store', { p_start: pm.start, p_end: pm.endExcl });
+  if (myToken !== pivotLoadToken) return;
+  const prevByCode = new Map();
+  (prevRes.data || []).forEach(r => {
+    if (!r.material_code) return;
+    const e = prevByCode.get(r.material_code) || { grams: 0, amount: 0 };
+    e.grams += Number(r.total_grams) || 0; e.amount += Number(r.total_amount) || 0;
+    prevByCode.set(r.material_code, e);
+  });
+  const effDays = signalEffDays(data.dateRange);
+  signalCache = { data, calc: computeSignalData(data, prevByCode, effDays), prevRange: pm, zoneFilter: '' };
+  renderSignalView();
+}
+
+const sigWon = v => `${v >= 0 ? '+' : '−'}${fmtNum(Math.abs(v) / 10000, 0)}만`;
+const sigPctChip = (v, badWhenUp = true) => v == null ? '<span class="pivot-na">—</span>'
+  : `<span class="${(v > 0.0049) === badWhenUp ? 'sig-bad' : v < -0.0049 ? 'sig-good' : ''}">${v > 0.0049 ? '▲' : v < -0.0049 ? '▼' : ''} ${Math.abs(v * 100).toFixed(0)}%</span>`;
+
+function renderSignalView() {
+  const box = $('#pivotSignalBody');
+  if (!signalCache) return;
+  const { data, calc, prevRange } = signalCache;
+  const zf = signalCache.zoneFilter;
+  const C = SIGNAL_CFG;
+  const rng = data.dateRange;
+  const b = calc.brand;
+
+  // KPI
+  const kp = (l, v, s) => `<div class="sig-kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
+  const gc = calc.gradeCount;
+  let H = '<div class="sig-kpis">' +
+    kp('브랜드 원가율', b.ratio != null ? b.ratio.toFixed(1) + '%' : '—', b.tRatio != null ? `목표 ${b.tRatio.toFixed(1)}% · ${sigSigned(b.gap)}%p` : '목표 미설정') +
+    kp('존 신호', `${sigDot('r')}${calc.zoneCount.r} ${sigDot('y')}${calc.zoneCount.y} ${sigDot('g')}${calc.zoneCount.g}`, `${calc.zones.length}개 존${calc.zoneCount.n ? ` · 목표 없음 ${calc.zoneCount.n}` : ''}`) +
+    kp('메뉴 등급', `A ${gc.A} · B ${gc.B} · C ${gc.C} · D ${gc.D}`, `보류 ${gc.hold}개 (근거 부족)`) +
+    kp('자재 단가 상승', `${sigWon(calc.matTotal)}/월`, `전월(${prevRange.start.slice(0, 7)}) 평균 단가 대비 · 위험 ${calc.matCount.r} · 주의 ${calc.matCount.y}`) + '</div>';
+
+  // ① 존별
+  H += '<div class="card"><div class="card-head"><h3>① 존별 — 어디가, 어떤 지표가 문제인가</h3><span class="hint">목표 대비 · g당원가·인당취식은 목표보다 올랐으면 ▲(빨강). 주원인 = 원가율 차이를 g당원가 효과와 취식량 효과로 나눈 값(%p)</span></div>' +
+    '<div class="table-scroll"><table class="data-table sig-table"><colgroup><col style="width:130px"><col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:110px"><col style="width:110px"><col style="width:230px"><col style="width:80px"></colgroup>' +
+    '<thead><tr><th>존</th><th>목표 원가율</th><th>실제</th><th>차이</th><th>g당원가</th><th>인당취식</th><th>주원인</th><th>신호</th></tr></thead><tbody>';
+  const zoneRow = (z, strong) => {
+    let why = '—';
+    if (z.gEff != null) {
+      const parts = [['취식량', z.cEff], ['g당원가', z.gEff]].sort((a, c) => Math.abs(c[1]) - Math.abs(a[1]));
+      why = parts.map(([n, v]) => `${n} <b class="${v > 0.0499 ? 'sig-bad' : v < -0.0499 ? 'sig-good' : ''}">${sigSigned(v)}%p</b>`).join(' / ');
+    }
+    return `<tr${strong ? ' class="sig-total"' : ''}><td style="text-align:left">${strong ? '【' + esc(z.zone) + '】' : esc(z.zone)}</td>` +
+      `<td>${z.tRatio != null ? z.tRatio.toFixed(1) + '%' : '<span class="pivot-na">—</span>'}</td><td>${z.ratio != null ? z.ratio.toFixed(1) + '%' : '—'}</td>` +
+      `<td>${z.gap != null ? `<b class="${z.gap >= C.zone.warn ? 'sig-bad' : z.gap < 0 ? 'sig-good' : ''}">${sigSigned(z.gap)}%p</b>` : '—'}</td>` +
+      `<td>${sigPctChip(z.gChg)}</td><td>${sigPctChip(z.cChg)}</td><td style="text-align:left;font-size:12px">${why}</td>` +
+      `<td style="text-align:left">${sigDot(z.sig)} ${sigLv(z.sig)}</td></tr>`;
+  };
+  H += zoneRow(b, true) + calc.zones.map(z => zoneRow(z, false)).join('') + '</tbody></table></div></div>';
+
+  // ② 샐러드바 메뉴
+  const zonesAvail = [...new Set(calc.menus.map(m => m.zone).filter(Boolean))].sort((a, c) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(c));
+  const shown = calc.menus.filter(m => !zf || m.zone === zf);
+  const graded = shown.filter(m => !m.hold).sort((a, c) => GRADE_ORDER_DESC[a.grade] - GRADE_ORDER_DESC[c.grade] || c.monthWon - a.monthWon);
+  const holds = shown.filter(m => m.hold);
+  H += '<div class="card"><div class="card-head"><h3>② 샐러드바 — 어떤 메뉴가 문제인가</h3>' +
+    `<span class="hint">설계 대비 · 등급 D → A 순, 같은 등급에선 월 추가비용 큰 순</span></div>` +
+    `<div class="sig-filter"><label>존:</label><select id="sigZoneFilter"><option value="">전체</option>${zonesAvail.map(z => `<option value="${esc(z)}"${z === zf ? ' selected' : ''}>${esc(z)}</option>`).join('')}</select>` +
+    `<span class="pivot-d">등급 기준 — A: 소비↑·g당원가↓·원가율↓ / B: 소비↑·g당원가↓·원가율↑ / C: 소비↓·g당원가↓ 또는 소비↑·g당원가↑ / D: 소비↓·g당원가↑ (설계 ±${Math.round(C.gradeTol * 100)}% 이내는 설계 수준)</span></div>` +
+    '<div class="table-scroll"><table class="data-table sig-table"><colgroup><col style="width:230px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:60px"><col style="width:90px"><col style="width:100px"></colgroup>' +
+    '<thead><tr><th>메뉴</th><th>원가율(실제 / 설계)</th><th>g당원가(실제 / 설계)</th><th>인당소비량(실제 / 설계)</th><th>등급</th><th>GAP(설계)</th><th>월예상액</th></tr></thead><tbody>';
+  graded.forEach(m => {
+    H += `<tr><td style="text-align:left">${esc(m.name)} <span class="pivot-d">${esc(m.zone || '')}</span></td>` +
+      `<td>${m.ratio.toFixed(2)}% <span class="pivot-d">/ ${m.dRatio.toFixed(2)}%</span> ${sigDot(m.sigP)}</td>` +
+      `<td>${fmtNum(m.cpg, 1)}원 <span class="pivot-d">/ ${fmtNum(m.dCpg, 1)}원</span> ${sigDot(m.sigG)}</td>` +
+      `<td>${fmtNum(m.cons, 0)}g <span class="pivot-d">/ ${fmtNum(m.dCons, 0)}g</span> ${sigDot(m.sigC)}</td>` +
+      `<td><span class="sig-grade g${m.grade}">${m.grade}</span></td>` +
+      `<td><b class="${m.gap >= C.menuGap.warn ? 'sig-bad' : m.gap < 0 ? 'sig-good' : ''}">${sigSigned(m.gap, 2)}%p</b></td>` +
+      `<td><b class="${m.monthWon > 0 ? 'sig-bad' : 'sig-good'}">${sigWon(m.monthWon)}</b></td></tr>`;
+  });
+  if (!graded.length) H += '<tr><td colspan="7" style="padding:18px;color:var(--muted)">등급을 매길 메뉴가 없습니다.</td></tr>';
+  H += '</tbody></table></div>';
+  if (holds.length) H += `<p class="pivot-d" style="margin:8px 4px 0">판정 보류 ${holds.length}개 — ${holds.slice(0, 12).map(m => `${esc(m.name)}(${esc(m.hold)})`).join(', ')}${holds.length > 12 ? ' …' : ''}</p>`;
+  H += `<p class="pivot-d" style="margin:6px 4px 0">월예상액 = (실제 원가율 − 설계 원가율) × 월 환산 순매출(${fmtNum(calc.netSales * calc.monthFactor / 1e8, 1)}억) · + 추가비용 / − 절감. 인당소비량 신호는 설계보다 ${Math.round(C.consOver * 100)}% 이상 많거나 ${Math.round(-C.consLow * 100)}% 이상 적으면 주의입니다.</p></div>`;
+
+  // ③ 자재
+  H += '<div class="card"><div class="card-head"><h3>③ 자재별 — 단가 상승으로 얼마나 더 나가는가</h3>' +
+    `<span class="hint">전월(${prevRange.start.slice(0, 7)}) 평균 단가 대비 · 사용액 순 상위 ${C.mat.top}개 · 월예상액 = 단가 상승분 × 월 환산 사용량</span></div>` +
+    '<div class="table-scroll"><table class="data-table sig-table"><colgroup><col style="width:260px"><col style="width:110px"><col style="width:110px"><col style="width:90px"><col style="width:110px"><col style="width:100px"><col style="width:80px"></colgroup>' +
+    '<thead><tr><th>자재</th><th>전월 단가(원/kg)</th><th>이번 단가(원/kg)</th><th>상승률</th><th>기간 사용액</th><th>월예상액</th><th>신호</th></tr></thead><tbody>';
+  calc.mats.forEach(x => {
+    H += `<tr><td style="text-align:left" title="${esc(x.code)}">${esc(x.name)}</td><td>${fmtNum(x.prevKg, 0)}</td><td>${fmtNum(x.curKg, 0)}</td>` +
+      `<td><b class="${x.sig === 'r' ? 'sig-bad' : ''}">${sigSigned(x.rise * 100, 1)}%</b></td><td>${fmtNum(x.amount / 10000, 0)}만</td><td><b class="sig-bad">${sigWon(x.monthWon)}</b></td><td style="text-align:left">${sigDot(x.sig)} ${sigLv(x.sig)}</td></tr>`;
+  });
+  if (!calc.mats.length) H += '<tr><td colspan="7" style="padding:18px;color:var(--muted)">전월 대비 단가가 오른 자재가 없습니다.</td></tr>';
+  H += `</tbody></table></div><p class="pivot-d" style="margin:8px 4px 0">단가 상승 자재 전체 ${calc.matCount.r + calc.matCount.y + calc.matCount.g}개 · 월 추가비용 합계 ${sigWon(calc.matTotal)}. 같은 자재라도 공급처 코드가 다르면 따로 계산됩니다.</p></div>`;
+
+  box.innerHTML = H;
+  const sel = $('#sigZoneFilter');
+  if (sel) sel.addEventListener('change', () => { signalCache.zoneFilter = sel.value; renderSignalView(); });
+}
 
 // ---- ③ 시계열 ----
 // 매장별 IPF는 기간마다 반복하기엔 너무 느려서(매장당 반복계산), computeMenuConsumption의
