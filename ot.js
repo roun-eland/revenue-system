@@ -167,7 +167,7 @@ async function enterApp(user) {
   renderDash();
   if (isPlanner) renderRef();
   await buildPlanInputs(); render();
-  showView('dash');
+  showView(window.navStart ? navStart('dash') : 'dash');
 }
 // 표준 사용 계획표(F4) 로드 — 평일·주말이 모두 있는 매장만 유효, 없거나 실패하면 임시 기준(엔진)으로 폴백
 async function loadStandardPlans() {

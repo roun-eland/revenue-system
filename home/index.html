@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로운 홈</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="../ot.css?v=202610021614">
+<link rel="stylesheet" href="../nav.css?v=202610191830">
+<style>
+.hgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:900px){.hgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.hgrid{grid-template-columns:1fr}}
+a.hcard{display:block;border:1px solid #cfcfcf;border-radius:4px;padding:14px 16px;text-decoration:none;color:var(--ink)}
+a.hcard:hover{border-color:#82dc28;background:#f3fbe7}
+a.hcard.soon{background:var(--fill);border-style:dashed;color:var(--muted2);pointer-events:none}
+.hcard .t{display:flex;justify-content:space-between;align-items:baseline;font-weight:700;font-size:14px}
+.hcard .t span{font-size:11px;font-weight:400;color:var(--muted2)}
+.hcard .sg{display:flex;gap:16px;font-size:24px;font-weight:700;margin:10px 0 4px;font-variant-numeric:tabular-nums}
+.hcard .sg i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:2px}
+.hcard .sg .r i{background:#e24b4a}.hcard .sg .y i{background:#ef9f27}.hcard .sg .g i{background:#639922}
+.hcard .f{font-size:11px;color:var(--muted2);line-height:1.5}
+.hcard .big{font-size:20px;font-weight:700;margin:10px 0 4px}
+.hdesc{font-size:12px;color:var(--muted);margin:0 0 14px}
+</style>
+</head>
+<body>
+
+<div id="loginView" class="ot-login" hidden></div>
+
+<div id="appView" hidden>
+  <div class="gnav">
+    <span class="gnav-brand">로운</span>
+    <a class="gnav-item" href="../sales/">매출</a>
+    <a class="gnav-item" href="../labor/">생산성</a>
+    <a class="gnav-item" href="../cost/">원가</a>
+    <a class="gnav-item" href="../supply/">공급</a>
+    <a class="gnav-item" href="../voc/">고객</a>
+  </div>
+  <header class="ot-header">
+    <div class="ot-brand"><span class="mark">홈</span><span class="name">브랜드 점수판</span></div>
+    <div class="spacer"></div>
+    <span class="who"><span id="whoEmail"></span> <span class="role-chip" id="roleChip">기획자</span></span>
+    <button id="logoutBtn" class="btn btn-sm" type="button">로그아웃</button>
+  </header>
+
+  <main class="ot-main">
+    <h2>브랜드 점수판</h2>
+    <p class="hdesc">섹션별 신호를 한눈에 봅니다. 카드를 누르면 그 화면으로 이동합니다. 🔴 위험 · 🟠 주의 · 🟢 정상 — 기준은 카드의 설명과 각 화면을 참고하세요.</p>
+    <div class="hgrid" id="homeCards"></div>
+  </main>
+</div>
+
+<script src="../vendor/supabase.min.js"></script>
+<script src="../nav.js?v=202610191830"></script>
+<script src="../supply-core.js?v=202610191830"></script>
+<script src="../home.js?v=202610191830"></script>
+</body>
+</html>

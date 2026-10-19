@@ -209,7 +209,7 @@ async function enterApp(user) {
   renderBrand();
   renderDaily();
   if (isPlanner) renderRuns();
-  showView('brand');
+  showView(window.navStart ? navStart('brand') : 'brand');
 }
 $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace('../'); };
 

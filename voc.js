@@ -169,7 +169,7 @@ async function enterApp(user) {
   }
   buildSelectors();
   renderBrand();
-  showView('brand');
+  showView(window.navStart ? navStart('brand') : 'brand');
 }
 $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace('../'); };
 
