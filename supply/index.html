@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로운 공급</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="../ot.css?v=202610021614">
+<style>
+/* 공급(본부 재고) 전용 — v8 체계 위 보완 스타일 */
+.kpis>div,.card{border-color:#cfcfcf}
+.kpis.k5{grid-template-columns:repeat(5,1fr)}
+@media(max-width:900px){.kpis.k5{grid-template-columns:repeat(2,1fr)}}
+.sig{display:inline-block;font-size:11px;font-weight:700;border-radius:12px;padding:1px 9px}
+.sig.r{background:var(--hol-bg);color:var(--crit)}
+.sig.y{background:#fdf6e7;color:var(--warn)}
+.sig.g{background:var(--accent-bg,#f3fbe7);color:var(--good)}
+.chip{display:inline-block;font-size:11px;font-weight:700;border-radius:9px;padding:1px 8px;background:var(--fill);color:var(--muted)}
+.chip.t1{background:var(--dark);color:#fff}
+.chip.t2{background:#eef3fa;color:#3a5f8a}
+td.why{text-align:left;white-space:normal;min-width:200px;font-size:12px;color:var(--muted)}
+td.l{text-align:left}
+.neg{color:var(--crit);font-weight:700}
+.filters{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 12px;align-items:flex-end}
+.filters .fld select,.filters .fld input{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cfcfcf;border-radius:4px;background:#fff}
+textarea.paste{width:100%;min-height:90px;font:inherit;font-size:12px;padding:8px;border:1px solid #cfcfcf;border-radius:4px;box-sizing:border-box}
+.lock{padding:28px 20px;color:var(--muted);font-size:13px;line-height:1.7}
+</style>
+</head>
+<body>
+
+<div id="loginView" class="ot-login" hidden></div>
+
+<div id="appView" hidden>
+  <div class="gnav">
+    <span class="gnav-brand">로운</span>
+    <a class="gnav-item" href="../sales/">매출</a>
+    <a class="gnav-item" href="../labor/">생산성</a>
+    <a class="gnav-item" href="../cost/">원가</a>
+    <span class="gnav-item on">공급</span>
+    <a class="gnav-item" href="../voc/">고객</a>
+  </div>
+  <header class="ot-header">
+    <div class="ot-brand"><span class="mark">공급</span><span class="name">본부 재고 · 핵심 자재</span></div>
+    <div class="spacer"></div>
+    <span class="who"><span id="whoEmail"></span> <span class="role-chip" id="roleChip">기획자</span></span>
+    <button id="logoutBtn" class="btn btn-sm" type="button">로그아웃</button>
+  </header>
+
+  <nav class="ot-nav" id="spNav">
+    <button data-view="hq" class="on">본부 재고 현황</button>
+    <button data-view="upload">데이터 업로드</button>
+  </nav>
+
+  <main class="ot-main">
+
+    <!-- 접근 제한 안내 (기획자 외) -->
+    <section id="view-lock" class="view" hidden>
+      <div class="card lock"><b>본부 재고는 기획자(관리자) 계정에서만 볼 수 있습니다.</b><br>법인 물류창고에 비축한 자재 현황이라 매장 관리자 계정에는 공개하지 않습니다.</div>
+    </section>
+
+    <!-- S1 본부 재고 현황 -->
+    <section id="view-hq" class="view">
+      <h2>본부 재고 현황</h2>
+      <p class="view-sub">법인 물류창고에 비축 중인 자재 — 매장이 아직 발주하지 않은 재고입니다. <b>보관센터에 '일죽'이 들어간 재고 = 전략 비축분</b>이고, 핵심 자재는 <b>일죽 → 축산</b> 순으로 먼저 봅니다.</p>
+      <div class="plan-actions" style="margin:0 0 14px">
+        <label class="fld" style="min-width:200px">기준일<select id="hqSnap"></select></label>
+        <span class="plan-msg" id="hqSnapNote" style="align-self:flex-end"></span>
+      </div>
+      <div class="kpis k5" id="hqKpis"></div>
+
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 4px">핵심 자재 — 전략 비축(일죽) → 축산</h3>
+        <div class="plan-actions" style="margin:0 0 8px"><button id="coreExportBtn" class="btn btn-sm" type="button">엑셀 다운로드 ⬇</button></div>
+        <div class="tblwrap" id="coreTable"></div>
+        <p class="dnote">자재코드 단위로 센터·로트를 합친 값입니다. <b>합산 재고일수 = (본부 재고 + 매장 재고) ÷ 본부 일평균출고량</b> — 매장 재고는 최근 주차 마감 기준 전 매장 합입니다(같은 자재코드·같은 단위). 신호 기준: <span class="sig r">위험</span> 유통기한 내 소진불가·평가감·불용 보관비 청구·합산 3일 미만 / <span class="sig y">주의</span> 출고부진·유통기한 30일 이내·무출고·합산 7일 미만. 기준값은 화면 코드 상단에서 바꿀 수 있습니다.</p>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 4px">자재구분별 요약</h3>
+        <div class="plan-actions" style="margin:0 0 8px"><button id="catExportBtn" class="btn btn-sm" type="button">엑셀 다운로드 ⬇</button></div>
+        <div class="tblwrap" id="catTable"></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px">전체 재고 목록 (로트별)</h3>
+        <div class="filters">
+          <label class="fld">보관센터<select id="fCenter"></select></label>
+          <label class="fld">자재구분<select id="fCat"></select></label>
+          <label class="fld">신호<select id="fSig"><option value="">전체</option><option value="r">위험</option><option value="y">주의 이상</option></select></label>
+          <label class="fld">자재 검색<input id="fQ" type="text" placeholder="자재명·코드"></label>
+          <button id="lotExportBtn" class="btn btn-sm" type="button">엑셀 다운로드 ⬇</button>
+          <span class="plan-msg" id="lotCount"></span>
+        </div>
+        <div class="tblwrap" id="lotTable"></div>
+        <p class="dnote">같은 자재가 입고일·유통기한이 다르면 여러 줄로 나옵니다(로트). 재고일수는 그 로트 수량만 기준이며, 유통기한이 재고일수보다 짧으면(차이 음수) 유통기한 안에 소진이 어렵다는 뜻입니다.</p>
+      </div>
+    </section>
+
+    <!-- S2 업로드 -->
+    <section id="view-upload" class="view narrow" hidden>
+      <h2>데이터 업로드</h2>
+      <p class="view-sub">본부 재고 엑셀을 같은 양식으로 올리면 됩니다(주 1회 권장). 파일의 <b>'오늘날짜'</b>가 기준일이 되고, <b>같은 기준일을 다시 올리면 그 날짜분을 통째로 교체</b>합니다. 업로드는 기획자 계정만 가능합니다.</p>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 8px">① 파일 선택</h3>
+        <input type="file" id="hqFile" accept=".xlsx,.xls,.csv,.tsv,.txt">
+        <h3 style="margin:14px 0 6px">또는 엑셀에서 복사해 붙여넣기</h3>
+        <textarea id="hqPaste" class="paste" placeholder="머리글 행까지 포함해서 붙여넣으세요"></textarea>
+        <div class="plan-actions" style="margin:8px 0 0"><button id="hqParseBtn" class="btn btn-sm" type="button">붙여넣은 내용 읽기</button></div>
+        <p class="plan-msg" id="hqMsg" style="margin-top:8px"></p>
+      </div>
+      <div class="card" id="hqPreviewCard" hidden>
+        <h3 style="margin:0 0 8px">② 미리보기 후 저장</h3>
+        <div class="plan-actions" style="margin:0 0 10px">
+          <label class="fld" style="min-width:160px">기준일<input type="date" id="hqSnapDate"></label>
+        </div>
+        <div class="tblwrap" id="hqPreview"></div>
+        <div class="plan-actions" style="margin:10px 0 0"><button id="hqSave" class="btn btn-green" type="button">저장 (같은 기준일은 교체)</button><span class="plan-msg" id="hqSaveMsg"></span></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3 style="margin:0 0 8px">적재 현황</h3>
+        <div class="tblwrap" id="hqLoadStat"></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="../vendor/supabase.min.js"></script>
+<script src="../vendor/xlsx.full.min.js"></script>
+<script src="../export-tables.js?v=202610021415"></script>
+<script src="../supply.js?v=202610191200"></script>
+</body>
+</html>
