@@ -57,11 +57,16 @@ function renderCards() {
     ['voc', '../voc/', '고객', '최근 7일 리뷰']
   ];
   $('homeCards').innerHTML = defs.map(([k, h, t, s]) => `<div id="hc-${k}" style="display:contents">${pending(h, t, s)}</div>`).join('');
-  fillSales().catch(e => setCard('sales', failed('../sales/', '매출', '현재월', e)));
-  fillCost().catch(e => setCard('cost', failed('../cost/', '원가', '현재월 누적', e)));
-  fillLabor().catch(e => setCard('labor', failed('../labor/', '생산성', '현재월 누적', e)));
-  fillVoc().catch(e => setCard('voc', failed('../voc/', '고객', '최근 7일 리뷰', e)));
+  const jobs = [
+    fillSales().catch(e => setCard('sales', failed('../sales/', '매출', '현재월', e))),
+    fillCost().catch(e => setCard('cost', failed('../cost/', '원가', '현재월 누적', e))),
+    fillLabor().catch(e => setCard('labor', failed('../labor/', '생산성', '현재월 누적', e))),
+    fillVoc().catch(e => setCard('voc', failed('../voc/', '고객', '최근 7일 리뷰', e)))
+  ];
+  // 월별 추이 그래프는 세 카드의 현재월 값이 정해진 뒤 그린다 (현재월 점은 카드와 같은 값)
+  Promise.all(jobs).then(() => renderTrend()).catch(e => { $('trendNote').textContent = '추이 그래프를 불러오지 못했습니다: ' + (e && e.message || e); });
 }
+const TREND = { sales: null, cost: null, labor: {} }; // 카드가 채우는 현재월 값
 
 async function fetchRows(build, pageSize = 1000) {
   const acc = [];
@@ -121,6 +126,7 @@ async function fillSales() {
   const gcol = g => g < 0 ? 'var(--crit)' : g < 5 ? 'var(--warn)' : 'var(--good)';
   const body = metric('현재 예상 매출', eok1(landT), `월초 예측 대비 <b style="color:${vs >= 0 ? 'var(--good)' : 'var(--crit)'}">${sgn(vs)}%</b>`)
     + metric('동일매장 성장율', ssg == null ? '—' : sgn(ssg) + '%', ssg == null ? '실적 대기' : `전년 동기간 대비 · ${n}개점`, ssg == null ? '' : gcol(ssg));
+  TREND.sales = { ym, landT };
   setCard('sales', card('../sales/?v=brand', '매출', `${+ym.slice(5)}월` + (asOf ? ` · 실적 ~${asOf.slice(5).replace('-', '/')}` : ''), body, '현재 예상 = 지난 날은 실적 + 남은 날은 확정 예측 · 성장율은 요일 맞춤·공휴일 제외'));
 }
 
@@ -153,6 +159,7 @@ async function fillCost() {
   const d = pratio == null ? null : ratio - pratio;
   const body = metric('누적 원가율', ratio.toFixed(1) + '%', `${from.slice(5).replace('-', '/')}~${to.slice(5).replace('-', '/')} 마감 주차 기준`)
     + metric('전월 원가율', pratio == null ? '—' : pratio.toFixed(1) + '%', d == null ? '' : `이번 달 <b style="color:${d > 0 ? 'var(--crit)' : 'var(--good)'}">${sgn(d)}%p</b>`);
+  TREND.cost = { ym, ratio };
   setCard('cost', card('../cost/?v=pivot', '원가', `${+ym.slice(5)}월 누적`, body, ''));
 }
 
@@ -166,6 +173,19 @@ async function fillLabor() {
   const ls = a.data && a.data[0] && a.data[0].sales_date, ll = b.data && b.data[0] && b.data[0].work_date;
   if (!ls || !ll) { setCard('labor', noData('../labor/', '생산성', '현재월 누적', '매출·근태 실적이 없습니다.')); return; }
   const ym = (ls < ll ? ls : ll).slice(0, 7);
+  const R = await laborMonth(ym);
+  if (!R) { setCard('labor', noData('../labor/', '생산성', '현재월 누적', '이 달에 적재된 실적이 없습니다.')); return; }
+  TREND.labor[ym] = R;
+  const { ratio, prod, n, nEst, first, last, rCut } = R;
+  const rcol = ratio <= 24 ? 'var(--good)' : ratio <= 28 ? 'var(--warn)' : 'var(--crit)';
+  const pcol = prod >= 72000 ? 'var(--good)' : prod >= 60000 ? 'var(--warn)' : 'var(--crit)';
+  const body = metric('누적 인건비율', ratio.toFixed(1) + '%', `${first.slice(5).replace('-', '/')}~${rCut.slice(5).replace('-', '/')} 급여 등록일까지 · 본부 포함`, rcol)
+    + metric('누적 생산성', won(prod) + '<span class="mu">원/MH</span>', `${first.slice(5).replace('-', '/')}~${last.slice(5).replace('-', '/')} · 목표 72,000 대비 ${(prod / 72000 * 100).toFixed(0)}%`, pcol);
+  setCard('labor', card('../labor/?v=dash', '생산성', `${+ym.slice(5)}월 누적 · ${n}개점`, body, nEst ? `<span style="color:var(--crit)">급여대장이 없어 추정으로 계산한 매장 ${nEst}곳</span>` : ''));
+}
+
+// 한 달의 누적 인건비율·생산성 (카드와 월별 추이 그래프가 같이 쓴다) — ot.js otMtdRows와 같은 계산, 없으면 null
+async function laborMonth(ym) {
   const [sr, lr, perRows, rosterRows, gradeRes] = await Promise.all([
     fetchRows(() => sb.from('ot_sales_daily').select('store_code,sales_date,total,is_closed').gte('sales_date', ym + '-01').lt('sales_date', endExclusive(ym)).order('sales_date').order('store_code')),
     fetchRows(() => sb.from('ot_labor_daily').select('store_code,work_date,mate_mh,ft_mh').gte('work_date', ym + '-01').lt('work_date', endExclusive(ym)).order('work_date').order('store_code')),
@@ -229,14 +249,9 @@ async function fillLabor() {
     if (!first || sFirst < first) first = sFirst;
     if (!last || sLast > last) last = sLast;
   }
-  if (!n) { setCard('labor', noData('../labor/', '생산성', '현재월 누적', '이 달에 적재된 실적이 없습니다.')); return; }
-  tLabor += lcHqCost(dim, rCut);   // 본부 인건비(월 6,500만원)를 기준일÷월일수로 환산 — 전사 합계에만
-  const ratio = tLabor / (tRatioSales / 1.1) * 100, prod = tSales / tMH;
-  const rcol = ratio <= 24 ? 'var(--good)' : ratio <= 28 ? 'var(--warn)' : 'var(--crit)';
-  const pcol = prod >= 72000 ? 'var(--good)' : prod >= 60000 ? 'var(--warn)' : 'var(--crit)';
-  const body = metric('누적 인건비율', ratio.toFixed(1) + '%', `${first.slice(5).replace('-', '/')}~${rCut.slice(5).replace('-', '/')} 급여 등록일까지 · 본부 포함`, rcol)
-    + metric('누적 생산성', won(prod) + '<span class="mu">원/MH</span>', `${first.slice(5).replace('-', '/')}~${last.slice(5).replace('-', '/')} · 목표 72,000 대비 ${(prod / 72000 * 100).toFixed(0)}%`, pcol);
-  setCard('labor', card('../labor/?v=dash', '생산성', `${+ym.slice(5)}월 누적 · ${n}개점`, body, nEst ? `<span style="color:var(--crit)">급여대장이 없어 추정으로 계산한 매장 ${nEst}곳</span>` : ''));
+  if (!n) return null;
+  tLabor += lcHqCost(dim, rCut);   // 본부 인건비를 기준일÷월일수로 환산 — 전사 합계에만
+  return { ym, ratio: tLabor / (tRatioSales / 1.1) * 100, prod: tSales / tMH, n, nEst, first, last, rCut };
 }
 
 // ================= 고객: 최근 7일 리뷰 =================
@@ -257,6 +272,75 @@ async function fillVoc() {
     open = red.filter(r => !done.has(r.id)).length;
   }
   setCard('voc', card('../voc/?v=' + (open ? 'red' : 'brand'), '고객', `${start.slice(5)} ~ ${end.slice(5)} · 리뷰 ${rows.length}건`, sig(red.length, neg.length, ok), `🔴 레드플래그(미조치 ${open}건) · 🟠 그 외 불만(평점 3 이하·부정 요인) · 🟢 정상`));
+}
+
+// ================= 월별 추이 그래프: 매출(외형·막대) + 원가율·인건비율(선) =================
+// 매출 = 월 외형매출(ot_sales_daily 합, 현재월은 카드의 "현재 예상 매출"), 원가율 = 자재 실사용액 ÷ 순매출(월 전체, 현재월은 카드값),
+// 인건비율 = 카드와 같은 계산(laborMonth). 인건비율은 근태 자료가 있는 8월부터만 나온다.
+let trendChart = null;
+async function renderTrend() {
+  const months = Array.from({ length: 6 }, (_, i) => shiftYm(CUR_YM, i - 5));
+  const from = months[0] + '-01', endEx = endExclusive(CUR_YM);
+  const [sRows, ssRows, usageRes] = await Promise.all([
+    fetchRows(() => sb.from('ot_sales_daily').select('sales_date,total').gte('sales_date', from).lt('sales_date', endEx).order('sales_date').order('store_code')),
+    fetchRows(() => sb.from('store_sales').select('sales_date,sales_total').gte('sales_date', from).lt('sales_date', endEx).order('id')),
+    sb.rpc('material_usage_monthly_totals')
+  ]);
+  const sumBy = (rows, dk, vk) => { const o = {}; for (const r of rows) { const m = r[dk].slice(0, 7); o[m] = (o[m] || 0) + (Number(r[vk]) || 0); } return o; };
+  const salesBy = sumBy(sRows, 'sales_date', 'total');       // 외형 매출
+  const netBy = sumBy(ssRows, 'sales_date', 'sales_total');   // 원가율 분모 (외형, 아래서 ÷1.1)
+  const costBy = {};
+  (usageRes.data || []).forEach(r => { const m = (r.usage_month || '').slice(0, 7); if (m) costBy[m] = (costBy[m] || 0) + (Number(r.total_amount) || 0); });
+
+  const partial = months.map(m => m === CUR_YM);              // 진행 중인 달은 누적·예상이라 따로 표시
+  const sales = months.map(m => {
+    if (TREND.sales && TREND.sales.ym === m) return TREND.sales.landT / 1e8;   // 현재월 = 카드의 현재 예상 매출
+    return salesBy[m] ? salesBy[m] / 1e8 : null;
+  });
+  const cost = months.map(m => {
+    if (TREND.cost && TREND.cost.ym === m && m === CUR_YM) return TREND.cost.ratio;   // 현재월 = 카드의 누적 원가율
+    return costBy[m] && netBy[m] ? costBy[m] / (netBy[m] / 1.1) * 100 : null;
+  });
+  const labor = [];
+  for (const m of months) {
+    if (m < '2026-08') { labor.push(null); continue; }          // 근태·급여 자료는 8월부터
+    let R = TREND.labor[m];
+    if (!R) { try { R = await laborMonth(m); } catch (e) { R = null; } }
+    labor.push(R ? R.ratio : null);
+  }
+
+  const labels = months.map((m, i) => `${+m.slice(5)}월${partial[i] ? ' 누적' : ''}`);
+  const vals = [...cost, ...labor].filter(v => v != null);
+  if (!vals.length && !sales.some(v => v != null)) { $('trendNote').textContent = '표시할 월별 자료가 없습니다.'; return; }
+  const y2min = vals.length ? Math.floor(Math.min(...vals) - 3) : 0, y2max = vals.length ? Math.ceil(Math.max(...vals) + 3) : 50;
+  const dash = ctx => partial[ctx.p1DataIndex] ? [5, 4] : undefined;
+  const hollow = col => ctx => partial[ctx.dataIndex] ? '#fff' : col;
+  if (trendChart) trendChart.destroy();
+  trendChart = new Chart($('trendChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { type: 'bar', label: '매출(외형, 억)', data: sales, yAxisID: 'y', order: 3,
+          backgroundColor: ctx => partial[ctx.dataIndex] ? 'rgba(130,220,40,0.25)' : '#e6e6e6', borderColor: ctx => partial[ctx.dataIndex] ? '#82dc28' : '#c9c9c9', borderWidth: 1, borderRadius: 2, maxBarThickness: 46 },
+        { type: 'line', label: '원가율(%)', data: cost, yAxisID: 'y2', order: 1, borderColor: '#d9822b', backgroundColor: '#d9822b', borderWidth: 2.5, tension: 0, pointRadius: 4, pointBorderWidth: 2, pointBackgroundColor: hollow('#d9822b'), pointBorderColor: '#d9822b', spanGaps: false, segment: { borderDash: dash } },
+        { type: 'line', label: '인건비율(%)', data: labor, yAxisID: 'y2', order: 2, borderColor: '#3f9e12', backgroundColor: '#3f9e12', borderWidth: 2.5, tension: 0, pointRadius: 4, pointBorderWidth: 2, pointBackgroundColor: hollow('#3f9e12'), pointBorderColor: '#3f9e12', spanGaps: false, segment: { borderDash: dash } }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        y: { position: 'left', beginAtZero: true, grid: { color: '#f0f0f0' }, ticks: { callback: v => v + '억' }, title: { display: false } },
+        y2: { position: 'right', min: y2min, max: y2max, grid: { drawOnChartArea: false }, ticks: { callback: v => v + '%' } }
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 10 } },
+        tooltip: { callbacks: { label: c => c.raw == null ? `${c.dataset.label}: —` : (c.dataset.yAxisID === 'y' ? `${c.dataset.label}: ${c.raw.toFixed(1)}억` : `${c.dataset.label}: ${c.raw.toFixed(1)}%`) } }
+      }
+    }
+  });
+  $('trendNote').textContent = `${+CUR_YM.slice(5)}월은 진행 중(매출=현재 예상, 원가율·인건비율=누적)이라 점선·빈 점으로 표시합니다. 인건비율은 근태 자료가 있는 8월부터이고, 급여대장이 없는 달은 추정입니다.`;
 }
 
 init();

@@ -27,6 +27,7 @@ a.hcard:hover{border-color:#82dc28;background:#f3fbe7}
 .hcard .f{font-size:11px;color:var(--muted2);line-height:1.5}
 .hcard .big{font-size:20px;font-weight:700;margin:10px 0 4px}
 .hdesc{font-size:12px;color:var(--muted);margin:0 0 14px}
+.chartbox{position:relative;height:320px}
 </style>
 </head>
 <body>
@@ -53,13 +54,19 @@ a.hcard:hover{border-color:#82dc28;background:#f3fbe7}
     <h2>브랜드 점수판</h2>
     <p class="hdesc">섹션별 신호를 한눈에 봅니다. 카드를 누르면 그 화면으로 이동합니다. 🔴 위험 · 🟠 주의 · 🟢 정상 — 기준은 카드의 설명과 각 화면을 참고하세요.</p>
     <div class="hgrid" id="homeCards"></div>
+    <div class="card" style="margin-top:14px">
+      <h3 style="margin:0 0 8px">월별 추이 <span style="font-size:11px;font-weight:400;color:var(--muted2)">매출(외형) · 원가율 · 인건비율</span></h3>
+      <div class="chartbox"><canvas id="trendChart"></canvas></div>
+      <p class="dnote" id="trendNote"></p>
+    </div>
   </main>
 </div>
 
 <script src="../vendor/supabase.min.js"></script>
+<script src="../vendor/chart.umd.min.js"></script>
 <script src="../nav.js?v=202610191900"></script>
 <script src="../ot-seed.js?v=202609071640"></script>
 <script src="../labor-calc.js?v=202610192200"></script>
-<script src="../home.js?v=202610192200"></script>
+<script src="../home.js?v=202610192300"></script>
 </body>
 </html>
