@@ -236,7 +236,7 @@ async function fillLabor() {
   const pcol = prod >= 72000 ? 'var(--good)' : prod >= 60000 ? 'var(--warn)' : 'var(--crit)';
   const body = metric('누적 인건비율', ratio.toFixed(1) + '%', `${first.slice(5).replace('-', '/')}~${rCut.slice(5).replace('-', '/')} 급여 등록일까지 · 본부 포함`, rcol)
     + metric('누적 생산성', won(prod) + '<span class="mu">원/MH</span>', `${first.slice(5).replace('-', '/')}~${last.slice(5).replace('-', '/')} · 목표 72,000 대비 ${(prod / 72000 * 100).toFixed(0)}%`, pcol);
-  setCard('labor', card('../labor/?v=dash', '생산성', `${+ym.slice(5)}월 누적 · ${n}개점`, body, nEst ? `<span style="color:var(--crit)">급여대장 대신 추정으로 계산한 매장 ${nEst}곳 — 급여대장 업로드 확인 필요</span>` : ''));
+  setCard('labor', card('../labor/?v=dash', '생산성', `${+ym.slice(5)}월 누적 · ${n}개점`, body, nEst ? `<span style="color:var(--crit)">급여대장이 없어 추정으로 계산한 매장 ${nEst}곳</span>` : ''));
 }
 
 // ================= 고객: 최근 7일 리뷰 =================

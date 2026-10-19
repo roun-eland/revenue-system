@@ -4,14 +4,16 @@
 //   인건비 = 메이트 급여(급여대장 실제값) + 정직원 급여(맨파워 직급 구성 × 직급 단가 + 직책수당) + 연차수당 + 퇴직급여
 //   정직원 급여·연차·퇴직급여는 월 금액을 (기준일의 일 ÷ 그 달 일수)로 환산해 추정한다. 예) 10/10까지면 ÷31 × 10
 //   전사 합계에는 본부 인건비 안분액(월 6,500만원)도 같은 비율로 환산해 더한다. 4대보험 회사부담분은 포함하지 않는다.
-// 급여대장이 한 건도 믿을 수 없는 매장은(시간이 출퇴근 기록과 크게 어긋남) 그 매장만 근무시간×실질시급 추정으로 계산하고 화면에 표시한다.
+// 메이트 급여는 등록된 급여대장을 그대로 쓴다(출퇴근 기록으로 검증해 제외하지 않음 — 사용자 지시).
+// 급여대장 시간이 출퇴근 기록과 많이 어긋나는 구간은 계산엔 그대로 쓰되 warn으로만 알려준다.
+// 급여대장이 한 건도 없는 매장만 근무시간×실질시급 추정으로 계산하고 화면에 표시한다.
 
 const LC = {
   LEAVE_PER_FT: 100000,      // 연차수당 — 정직원 1인당 월
   RETIRE_PER_FT: 300000,     // 퇴직급여 — 정직원 1인당 월 (2026-10-19 사용자 지정, 기존 순매출 0.6% 대체)
   HQ_MONTHLY: 65000000,      // 본부 인건비 안분(본부 스태프·퇴직충당금 등) 월 합계 (2026-10-19 사용자 지정)
-  PAY_RATIO_MIN: 0.8,        // 급여대장 시간 ÷ 출퇴근 기록 시간이 이 범위를 벗어나면 그 구간 급여대장은 못 믿고 제외
-  PAY_RATIO_MAX: 1.2
+  WARN_RATIO_MIN: 0.8,       // 급여대장 시간 ÷ 출퇴근 기록 시간이 이 범위를 벗어나면 "확인 필요"로만 표시(계산은 그대로)
+  WARN_RATIO_MAX: 1.2
 };
 
 // 한 매장의 월 누적 인건비 (급여 등록일까지).
@@ -28,7 +30,7 @@ function lcStoreCost({ dim, eff, staff, dayRows, attByDate, periods }) {
     let att = 0;
     for (let d = p.period_start; d <= p.period_end; d = lcAddDay(d, 1)) att += +(attByDate[d] || 0);
     const r = att > 0 ? (+p.mate_mh || 0) / att : null;
-    if (r == null || r < LC.PAY_RATIO_MIN || r > LC.PAY_RATIO_MAX) { bad.push(p.period_start + '~' + p.period_end); continue; }
+    if (r == null || r < LC.WARN_RATIO_MIN || r > LC.WARN_RATIO_MAX) bad.push(p.period_start + '~' + p.period_end); // 참고 표시만
     payActual += +p.mate_pay || 0;
     for (let d = p.period_start; d <= p.period_end; d = lcAddDay(d, 1)) covered.add(d);
     if (!cutIso || p.period_end > cutIso) cutIso = p.period_end;
