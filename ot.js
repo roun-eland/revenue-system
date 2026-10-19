@@ -471,18 +471,19 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
       const sr = S[x.iso], lr = L[x.iso];
       if (!sr || !lr || sr.is_closed || !(+sr.total > 0)) continue;
       const A = +sr.total;
-      dayRows.push({ iso: x.iso, mate_mh: +lr.mate_mh || 0 });
+      dayRows.push({ iso: x.iso, mate_mh: +lr.mate_mh || 0, sales: A });
       sales += A; mate += +lr.mate_mh || 0; ft += +lr.ft_mh || 0; n++;
       if (!first) first = x.iso;
       last = x.iso;
       need += OT_STD[code] ? OT_STD[code][stdDayKey(x)].stats.totMH : needMHof(s0, A, x.hol ? 'H' : x.wd);
     }
     if (!n) continue;
-    // 인건비 = 메이트 급여(급여대장 실제, 못 믿을 구간은 추정) + 정직원(맨파워 구성×직급단가+직책수당)·연차·퇴직 경과일 안분 — labor-calc.js
+    // 누적 인건비율 = 급여가 등록된 날짜까지의 인건비 ÷ 그 날짜까지의 순매출 — 메이트 실제 급여 + 정직원(맨파워 구성×직급단가+직책수당)·연차·퇴직을 (기준일÷월일수)로 환산 — labor-calc.js
+    // (생산성·목표·초과시간은 급여와 무관하므로 마지막 근태일까지 전체 기간 그대로)
     const sf = staffFor(code, ym); // 업로드된 정직원 맨파워(없으면 8월 실측 구성)
     const attByDate = {};
     for (const iso of Object.keys(L)) attByDate[iso] = +L[iso].mate_mh || 0;
-    const lc = lcStoreCost({ dim, asOfIso: last, eff: s0.eff, staff: sf, dayRows, attByDate, periods: pBy[code] });
+    const lc = lcStoreCost({ dim, eff: s0.eff, staff: sf, dayRows, attByDate, periods: pBy[code] });
     const labor = lc.labor;
     const mh = mate + ft;
     // 목표생산성 = 그 매장 표준표(평일/주말, 없으면 72,000원/MH 엔진)를 9월 실제 매출에 그대로 적용했을 때
@@ -490,7 +491,8 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
     // 필요MH=필요총MH-FT 고정이므로 mh-need = mate-(need-ft) = 메이트 몫 초과분과 대수적으로 같다).
     out.push({ code, name: s0.name, sales, mh, mate, ft, prod: sales / mh, need, over: mh - need,
                targetProd: need ? sales / need : null,
-               ratio: labor / (sales / 1.1) * 100, labor, days: n, first, last, std: !!OT_STD[code], eff: s0.eff,
+               ratio: labor / (lc.ratioSales / 1.1) * 100, labor, ratioSales: lc.ratioSales, cutIso: lc.cutIso, hasPay: lc.hasPay,
+               days: n, first, last, std: !!OT_STD[code], eff: s0.eff,
                payDays: lc.actDays, estDays: lc.estDays, badPeriods: lc.bad });
   }
   return out; // 정렬은 렌더링 시점(sortDashRows)에서 적용 — 코드 순서 그대로 반환
@@ -513,12 +515,14 @@ async function renderDashMTD(ym, myReq) {
   if (!rows.length) { $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">이 달에 적재된 실적이 없습니다.</p>'; $('dashKpis').innerHTML = ''; return; }
   const last = rows.reduce((a, r) => r.last > a ? r.last : a, ''), first = rows.reduce((a, r) => !a || r.first < a ? r.first : a, '');
   $('dashSub').textContent = `${ym} 누적 실적 (${first.slice(5)}~${last.slice(5)}) — 예상이 아니라 입력된 매출·근태 실적 기준입니다. ` +
-    '누적 인건비 = 메이트 실제 급여(급여대장) + 정직원 급여(맨파워 직급 구성×직급 단가+직책수당)·연차수당(1인 10만원)·퇴직급여(1인 30만원)를 경과일로 안분한 값이고, 급여대장이 없거나 출퇴근 시간과 크게 어긋난 구간은 메이트 근무시간×실질시급 추정으로 대체합니다. 전사 합계에는 본부 인건비 안분(월 6,500만원×경과일 비율)이 포함됩니다(매장별 값에는 미포함). 4대보험 회사부담분은 제외. 목표생산성은 표준표 등록 매장은 그 표(평일/주말)를 이번 달 실제 매출에 그대로 적용했을 때의 생산성, 그 외는 72,000원/MH 엔진(운영 제약 포함) 기준입니다. 메이트 초과시간 = 실제 메이트MH − 목표생산성 달성에 필요한 메이트MH. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
+    '누적 인건비율은 메이트 급여가 등록된 날짜까지만 계산합니다(급여대장이 10일까지면 매출·인건비 모두 10일까지 누적). 인건비 = 메이트 실제 급여(급여대장) + 정직원 급여(맨파워 직급 구성×직급 단가+직책수당)·연차수당(1인 10만원)·퇴직급여(1인 30만원)를 (기준일÷그 달 일수)로 환산한 값이고, 사용할 수 있는 급여대장이 없는 매장은 마지막 근태일까지 메이트 근무시간×실질시급 추정으로 계산합니다. 전사 합계에는 본부 인건비(월 6,500만원)를 같은 비율로 환산해 더했습니다(매장별 값에는 미포함). 4대보험 회사부담분은 제외. 생산성·목표생산성·초과시간은 급여와 무관하게 마지막 근태일까지 전체 기간입니다. 목표생산성은 표준표 등록 매장은 그 표(평일/주말)를 이번 달 실제 매출에 그대로 적용했을 때의 생산성, 그 외는 72,000원/MH 엔진(운영 제약 포함) 기준입니다. 메이트 초과시간 = 실제 메이트MH − 목표생산성 달성에 필요한 메이트MH. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
   const tSales = rows.reduce((t, r) => t + r.sales, 0), tMH = rows.reduce((t, r) => t + r.mh, 0);
   const tNeed = rows.reduce((t, r) => t + r.need, 0);
-  const hqCost = lcHqCost(new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate(), last); // last = 전사 집계 마지막 일자
-  const tLaborStores = rows.reduce((t, r) => t + r.labor, 0), tLabor = tLaborStores + hqCost, ratioTot = tLabor / (tSales / 1.1) * 100;
-  const nEst = rows.filter(r => r.estDays > 0).length;
+  const rCut = rows.reduce((a, r) => r.cutIso > a ? r.cutIso : a, ''); // 누적 인건비율 기준일 = 매장들의 급여 등록일 중 가장 늦은 날
+  const hqCost = lcHqCost(new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate(), rCut);
+  const tRatioSales = rows.reduce((t, r) => t + r.ratioSales, 0);
+  const tLaborStores = rows.reduce((t, r) => t + r.labor, 0), tLabor = tLaborStores + hqCost, ratioTot = tLabor / (tRatioSales / 1.1) * 100;
+  const nEst = rows.filter(r => !r.hasPay || r.estDays > 0).length;
   const nOk = rows.filter(r => r.targetProd != null && r.prod >= r.targetProd).length;
   const overRows = rows.filter(r => r.over > 0);
   const overMH = overRows.reduce((t, r) => t + r.over, 0), overCost = overRows.reduce((t, r) => t + r.over * r.eff, 0);
@@ -526,7 +530,7 @@ async function renderDashMTD(ym, myReq) {
   const score = (tNeed / tMH * 100).toFixed(0);
   const nCap = rows.filter(r => r.ratio > LABOR_CAP * 100).length;
   $('dashKpis').innerHTML =
-    `<div><div class="k">전사 누적 매출 · 누적 인건비율 (${ym.slice(5)}월)</div><div class="v">${(tSales / 1e8).toFixed(1)}억 <span style="font-size:15px;font-weight:700;color:var(--muted)">· ${ratioTot.toFixed(1)}%</span></div><div class="s">${rows.length}개 매장 · ${first.slice(5)}~${last.slice(5)} 누적 · 인건비율 = (매장 인건비 + 본부 안분 ${won(hqCost / 10000)}만원) ÷ 순매출${nEst ? ` · <span style="color:var(--crit)">급여대장 대신 추정 ${nEst}개점</span>` : ''}</div></div>` +
+    `<div><div class="k">전사 누적 매출 · 누적 인건비율 (${ym.slice(5)}월)</div><div class="v">${(tRatioSales / 1e8).toFixed(1)}억 <span style="font-size:15px;font-weight:700;color:var(--muted)">· ${ratioTot.toFixed(1)}%</span></div><div class="s">${rows.length}개 매장 · ${first.slice(5)}~${rCut.slice(5)} 급여 등록일까지 누적 · 인건비율 = (매장 인건비 + 본부 ${won(hqCost / 10000)}만원) ÷ 순매출${nEst ? ` · <span style="color:var(--crit)">급여대장 대신 추정 ${nEst}개점</span>` : ''}</div></div>` +
     `<div><div class="k">전사 누적 생산성</div><div class="v">${won(tSales / tMH)} <span style="font-size:15px;font-weight:700;color:var(--good)">(${score}%)</span></div><div class="s">원/MH · 누적 ${won(tMH)}MH, 목표(매장별 표준표 기준) ${won(tNeed)}MH 환산치</div></div>` +
     `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">누적 생산성 ≥ 매장별 목표생산성 · 인건비율 ${Math.round(LABOR_CAP * 100)}% 초과 ${nCap}곳</div></div>` +
     `<div><div class="k">과잉 투입 인건비 (누적)</div><div class="v" style="color:var(--crit)">+${won(overCost / 10000)}만원</div><div class="s">메이트 초과 +${won(overMH)}h · 인건비의 ${overPct.toFixed(1)}%</div></div>`;
@@ -543,7 +547,7 @@ async function renderDashMTD(ym, myReq) {
       `<td>${r.targetProd != null ? won(r.targetProd) : '-'}</td><td><b>${won(r.prod)}</b></td><td><b>${scorePct.toFixed(0)}%</b></td>` +
       `<td><span class="band ${rb}"${capMark}>${r.ratio.toFixed(1)}%</span></td>` +
       `<td style="color:${overColor};font-weight:700">${r.over > 0 ? '+' + won(r.over) : won(r.over)}h <span class="mini" style="width:${w}px;background:${overColor}"></span></td>` +
-      `<td class="d" style="font-size:11px">${r.std ? '표준표' : '엔진'}<br>${r.days}일<br>${r.estDays ? `<span style="color:var(--crit)" title="${r.badPeriods.length ? '급여대장 시간이 출퇴근 기록과 어긋난 구간: ' + r.badPeriods.join(', ') : '급여대장이 아직 없는 날짜 포함'}">급여 추정 ${r.estDays}일</span>` : '급여 실제'}</td></tr>`;
+      `<td class="d" style="font-size:11px">${r.std ? '표준표' : '엔진'}<br>${r.days}일<br>${r.estDays ? `<span style="color:var(--crit)" title="${r.badPeriods.length ? '급여대장 시간이 출퇴근 기록과 어긋난 구간: ' + r.badPeriods.join(', ') : '급여대장이 아직 없는 날짜 포함'}">급여 추정 ${r.estDays}일</span>` : `급여 실제 ~${r.cutIso.slice(5).replace('-', '/')}`}</td></tr>`;
   }
   $('dashTable').innerHTML = html + '</tbody></table>';
 }

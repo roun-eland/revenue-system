@@ -203,7 +203,7 @@ async function fillLabor() {
   const pBy = {};
   perRows.forEach(r => { (pBy[r.store_code] = pBy[r.store_code] || []).push(r); });
   const dim = daysIn(ym);
-  let tSales = 0, tMH = 0, tLabor = 0, n = 0, nEst = 0, first = null, last = null;
+  let tSales = 0, tMH = 0, tLabor = 0, tRatioSales = 0, n = 0, nEst = 0, first = null, last = null, rCut = '';
   for (const [code, s0] of Object.entries(OT_DATA)) {
     const S = sBy[code], L = lBy[code];
     if (!S || !L) continue;
@@ -213,28 +213,30 @@ async function fillLabor() {
       const x = S[iso], y = L[iso];
       if (!x || !y || x.is_closed || !(+x.total > 0)) continue;
       sales += +x.total; mate += +y.mate_mh || 0; ft += +y.ft_mh || 0; days++;
-      dayRows.push({ iso, mate_mh: +y.mate_mh || 0 });
+      dayRows.push({ iso, mate_mh: +y.mate_mh || 0, sales: +x.total });
       if (!sFirst) sFirst = iso;
       sLast = iso;
     }
     if (!days) continue;
     const attByDate = {};
     for (const iso of Object.keys(L)) attByDate[iso] = +L[iso].mate_mh || 0;
-    const lc = lcStoreCost({ dim, asOfIso: sLast, eff: s0.eff, staff: staffFor(code), dayRows, attByDate, periods: pBy[code] });
-    tLabor += lc.labor;
-    if (lc.estDays > 0) nEst++;
+    const lc = lcStoreCost({ dim, eff: s0.eff, staff: staffFor(code), dayRows, attByDate, periods: pBy[code] });
+    tLabor += lc.labor;                 // 급여 등록일까지의 인건비
+    tRatioSales += lc.ratioSales;       // 같은 날짜까지의 매출 (인건비율용)
+    if (lc.cutIso > rCut) rCut = lc.cutIso;
+    if (!lc.hasPay || lc.estDays > 0) nEst++;
     tSales += sales; tMH += mate + ft; n++;
     if (!first || sFirst < first) first = sFirst;
     if (!last || sLast > last) last = sLast;
   }
   if (!n) { setCard('labor', noData('../labor/', '생산성', '현재월 누적', '이 달에 적재된 실적이 없습니다.')); return; }
-  tLabor += lcHqCost(dim, last);   // 본부 인건비 안분(월 6,500만원 × 경과일 비율) — 전사 합계에만
-  const ratio = tLabor / (tSales / 1.1) * 100, prod = tSales / tMH;
+  tLabor += lcHqCost(dim, rCut);   // 본부 인건비(월 6,500만원)를 기준일÷월일수로 환산 — 전사 합계에만
+  const ratio = tLabor / (tRatioSales / 1.1) * 100, prod = tSales / tMH;
   const rcol = ratio <= 24 ? 'var(--good)' : ratio <= 28 ? 'var(--warn)' : 'var(--crit)';
   const pcol = prod >= 72000 ? 'var(--good)' : prod >= 60000 ? 'var(--warn)' : 'var(--crit)';
-  const body = metric('누적 인건비율', ratio.toFixed(1) + '%', '본부 인건비 안분 포함', rcol)
-    + metric('누적 생산성', won(prod) + '<span class="mu">원/MH</span>', `목표 72,000 대비 ${(prod / 72000 * 100).toFixed(0)}%`, pcol);
-  setCard('labor', card('../labor/?v=dash', '생산성', `${+ym.slice(5)}월 누적 · ${first.slice(5).replace('-', '/')}~${last.slice(5).replace('-', '/')} · ${n}개점`, body, nEst ? `<span style="color:var(--crit)">급여대장 대신 추정으로 계산한 매장 ${nEst}곳 — 급여대장 업로드 확인 필요</span>` : ''));
+  const body = metric('누적 인건비율', ratio.toFixed(1) + '%', `${first.slice(5).replace('-', '/')}~${rCut.slice(5).replace('-', '/')} 급여 등록일까지 · 본부 포함`, rcol)
+    + metric('누적 생산성', won(prod) + '<span class="mu">원/MH</span>', `${first.slice(5).replace('-', '/')}~${last.slice(5).replace('-', '/')} · 목표 72,000 대비 ${(prod / 72000 * 100).toFixed(0)}%`, pcol);
+  setCard('labor', card('../labor/?v=dash', '생산성', `${+ym.slice(5)}월 누적 · ${n}개점`, body, nEst ? `<span style="color:var(--crit)">급여대장 대신 추정으로 계산한 매장 ${nEst}곳 — 급여대장 업로드 확인 필요</span>` : ''));
 }
 
 // ================= 고객: 최근 7일 리뷰 =================
