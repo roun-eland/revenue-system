@@ -5539,7 +5539,6 @@ const SIGNAL_CFG = {
   gram: { red: 0.10, warn: 0.05 },        // 메뉴: g당원가가 설계보다 +10%/+5% 이상이면 위험/주의
   consOver: 0.20,                         // 인당소비량: 설계보다 20% 이상 많이 먹으면 주의(많이 먹는 건 기본적으로 좋음)
   consLow: -0.10,                         //            설계보다 10% 이상 적게 먹으면 주의(저조)
-  gradeTol: 0.05,                         // 등급 판정: g당원가·소비량이 설계 ±5% 이내면 설계 수준으로 본다
   mat: { red: 0.10, warn: 0.05, minAmount: 100000, minRise: 0.01, top: 15 }  // 자재: 전월 평균 단가 대비 상승률, 기간 사용액 10만원 미만은 제외
 };
 let signalCache = null;
@@ -5597,8 +5596,9 @@ function computeSignalData(data, prevUsageByCode, effDays) {
       m.sigC = (cChg >= C.consOver || cChg <= C.consLow) ? 'y' : 'g';
       m.sigP = m.gap >= C.menuGap.red ? 'r' : m.gap >= C.menuGap.warn ? 'y' : 'g';
       // 등급: 인당소비 높음/낮음 × g당원가 높음/낮음, A/B는 원가율로 갈린다 (사용자 기준 2026-10-19)
-      const consHigh = m.cons >= m.dCons * (1 - C.gradeTol);
-      const gHigh = m.cpg > m.dCpg * (1 + C.gradeTol);
+      // 높음/낮음은 신호등과 같은 기준을 쓴다 — 소비 높음 = 설계의 90% 이상(저조 신호가 아님), g당원가 높음 = 설계 +5% 초과(주의 이상)
+      const consHigh = m.cChg > C.consLow;
+      const gHigh = m.gChg > C.gram.warn;
       const ratioHigh = m.gap > C.menuGap.warn;
       m.grade = (consHigh && !gHigh) ? (ratioHigh ? 'B' : 'A') : (!consHigh && !gHigh) ? 'C' : (consHigh && gHigh) ? 'C' : 'D';
       m.monthWon = m.gap / 100 * netSales * monthFactor;       // 설계 대비 월 추가(+)/절감(−) 비용
@@ -5743,7 +5743,7 @@ function renderSignalView() {
   H += '<div class="card"><div class="card-head"><h3>② 샐러드바 — 어떤 메뉴가 문제인가</h3>' +
     `<span class="hint">설계 대비 · 등급 D → A 순, 같은 등급에선 월 추가비용 큰 순</span></div>` +
     `<div class="sig-filter"><label>존:</label><select id="sigZoneFilter"><option value="">전체</option>${zonesAvail.map(z => `<option value="${esc(z)}"${z === zf ? ' selected' : ''}>${esc(z)}</option>`).join('')}</select>` +
-    `<span class="pivot-d">등급 기준 — A: 소비↑·g당원가↓·원가율↓ / B: 소비↑·g당원가↓·원가율↑ / C: 소비↓·g당원가↓ 또는 소비↑·g당원가↑ / D: 소비↓·g당원가↑ (설계 ±${Math.round(C.gradeTol * 100)}% 이내는 설계 수준)</span></div>` +
+    `<span class="pivot-d">등급 기준 — A: 소비↑·g당원가↓·원가율↓ / B: 소비↑·g당원가↓·원가율↑ / C: 소비↓·g당원가↓ 또는 소비↑·g당원가↑ / D: 소비↓·g당원가↑ · 소비↑ = 설계의 ${Math.round((1 + C.consLow) * 100)}% 이상, g당원가↑ = 설계 +${Math.round(C.gram.warn * 100)}% 초과, 원가율↑ = 설계 +${C.menuGap.warn.toFixed(2)}%p 초과</span></div>` +
     '<div class="table-scroll"><table class="data-table sig-table"><colgroup><col style="width:230px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:60px"><col style="width:90px"><col style="width:100px"></colgroup>' +
     '<thead><tr><th>메뉴</th><th>원가율(실제 / 설계)</th><th>g당원가(실제 / 설계)</th><th>인당소비량(실제 / 설계)</th><th>등급</th><th>GAP(설계)</th><th>월예상액</th></tr></thead><tbody>';
   graded.forEach(m => {
