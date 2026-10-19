@@ -5539,7 +5539,8 @@ const SIGNAL_CFG = {
   gram: { red: 0.10, warn: 0.05 },        // 메뉴: g당원가가 설계보다 +10%/+5% 이상이면 위험/주의
   consOver: 0.20,                         // 인당소비량: 설계보다 20% 이상 많이 먹으면 주의(많이 먹는 건 기본적으로 좋음)
   consLow: -0.10,                         //            설계보다 10% 이상 적게 먹으면 주의(저조)
-  mat: { red: 0.10, warn: 0.05, minAmount: 100000, minRise: 0.01, top: 15 }  // 자재: 전월 평균 단가 대비 상승률, 기간 사용액 10만원 미만은 제외
+  mat: { red: 0.10, warn: 0.05, minAmount: 100000, minRise: 0.01, top: 15 },  // 자재: 전월 평균 단가 대비 상승률, 기간 사용액 10만원 미만은 제외
+  saladExclude: ['축산', '야채', '월남쌈', '죽', '육수', '토핑', '소스']          // ② 샐러드바 표에서 뺄 존 (사용자 지정 2026-10-20)
 };
 let signalCache = null;
 const sigLv = v => (v === 'r' ? '위험' : v === 'y' ? '주의' : v === 'g' ? '정상' : '보류');
@@ -5664,11 +5665,13 @@ function computeSignalData(data, prevUsageByCode, effDays) {
   const matCount = { r: mats.filter(x => x.sig === 'r').length, y: mats.filter(x => x.sig === 'y').length, g: mats.filter(x => x.sig === 'g').length };
   mats = mats.slice(0, C.mat.top);
 
+  // 샐러드바 표·등급 집계는 핫/콜/음료/디저트처럼 "메뉴"로 보는 존만 — 축산·야채·월남쌈·죽·육수·토핑·소스는 제외(존별 표에는 그대로 나온다)
+  const saladMenus = menus.filter(m => !C.saladExclude.includes(m.zone));
   const gradeCount = { A: 0, B: 0, C: 0, D: 0, hold: 0 };
-  menus.forEach(m => { if (m.hold) gradeCount.hold++; else gradeCount[m.grade]++; });
+  saladMenus.forEach(m => { if (m.hold) gradeCount.hold++; else gradeCount[m.grade]++; });
   const zoneCount = { r: 0, y: 0, g: 0, n: 0 };
   zones.forEach(z => zoneCount[z.sig]++);
-  return { zones, brand, menus, mats, matTotal, matCount, gradeCount, zoneCount, netSales, guests, effDays, monthFactor };
+  return { zones, brand, menus, saladMenus, mats, matTotal, matCount, gradeCount, zoneCount, netSales, guests, effDays, monthFactor };
 }
 
 // ---- 화면 ----
@@ -5736,8 +5739,8 @@ function renderSignalView() {
   H += zoneRow(b, true) + calc.zones.map(z => zoneRow(z, false)).join('') + '</tbody></table></div></div>';
 
   // ② 샐러드바 메뉴
-  const zonesAvail = [...new Set(calc.menus.map(m => m.zone).filter(Boolean))].sort((a, c) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(c));
-  const shown = calc.menus.filter(m => !zf || m.zone === zf);
+  const zonesAvail = [...new Set(calc.saladMenus.map(m => m.zone).filter(Boolean))].sort((a, c) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(c));
+  const shown = calc.saladMenus.filter(m => !zf || m.zone === zf);
   const graded = shown.filter(m => !m.hold).sort((a, c) => GRADE_ORDER_DESC[a.grade] - GRADE_ORDER_DESC[c.grade] || c.monthWon - a.monthWon);
   const holds = shown.filter(m => m.hold);
   H += '<div class="card"><div class="card-head"><h3>② 샐러드바 — 어떤 메뉴가 문제인가</h3>' +
