@@ -278,6 +278,8 @@ async function fillVoc() {
 // 매출 = 월 외형매출(ot_sales_daily 합, 현재월은 카드의 "현재 예상 매출"), 원가율 = 자재 실사용액 ÷ 순매출(월 전체, 현재월은 카드값),
 // 인건비율 = 카드와 같은 계산(laborMonth). 인건비율은 근태 자료가 있는 8월부터만 나온다.
 let trendChart = null;
+// 확정 실적이 들어 있는 월 범위 문구 (예: "1~9월")
+const manualRange = manual => { const ks = Object.keys(manual).sort(); return ks.length ? (ks.length === 1 ? `${+ks[0].slice(5)}월` : `${+ks[0].slice(5)}~${+ks[ks.length - 1].slice(5)}월`) : '확정 실적 없음'; };
 async function renderTrend() {
   // 2026-01부터 현재월까지 (최대 12개월)
   const start = shiftYm(CUR_YM, -11) > '2026-01' ? shiftYm(CUR_YM, -11) : '2026-01';
@@ -347,7 +349,7 @@ async function renderTrend() {
       }
     }
   });
-  $('trendNote').textContent = `${+CUR_YM.slice(5)}월은 진행 중(매출=현재 예상, 원가율·인건비율=누적)이라 점선·빈 점으로 표시합니다. 인건비율은 1~8월은 제공받은 월 실적, 9월부터는 급여대장 기준 계산값입니다.`;
+  $('trendNote').textContent = `${+CUR_YM.slice(5)}월은 진행 중(매출=현재 예상, 원가율·인건비율=누적)이라 점선·빈 점으로 표시합니다. 인건비율은 ${manualRange(manual)}은 제공받은 월 확정 실적, 그 이후는 급여대장 기준 계산값입니다.`;
 }
 
 init();
