@@ -17,10 +17,9 @@ body.navv2 .gnav,body.navv2 .ot-nav,body.navv2 .tab-nav{display:none!important}
 .sb-g.on{background:#2f3030;color:#fff}
 .sb-g.soon{cursor:default;color:#b5b5b5}
 .sb-g.soon:hover{background:transparent}
-.sb-mark{flex:none;width:24px;height:24px;border-radius:6px;background:#ececec;color:#444;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
-.sb-grp.cur .sb-mark,.sb-g.on .sb-mark{background:#2f3030;color:#fff}
-.sb-g.on .sb-mark{background:#fff;color:#2f3030}
-.sb-g.soon .sb-mark{background:#f3f3f3;color:#c0c0c0}
+.sb-ico{flex:none;width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.sb-grp.cur>.sb-g{color:#131518}
+.sb-grp.cur>.sb-g .sb-ico{stroke:#3f9e12}
 .sb-t{flex:1}
 .sb-tag{font-size:10px;font-weight:500;color:#aaa}
 .sb-car{color:#999;font-size:11px;transition:transform .12s}

@@ -4,6 +4,18 @@
 //       ② 완전히 걷어내려면 각 화면의 nav.css·nav.js 두 줄을 지우면 된다 (git 태그 pre-nav-v2 = 적용 전 상태).
 
 (function () {
+  // 메뉴 아이콘 (선 아이콘, 24x24) — 섹션 id별
+  const ICONS = {
+    home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/>',
+    sales: '<path d="M5 20V11M12 20V4M19 20v-6"/>',
+    labor: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    cost: '<circle cx="12" cy="12" r="8.5"/><path d="m8.5 8.5 3.5 4.5 3.5-4.5M8.5 12.5h7M8.5 15.5h7"/>',
+    supply: '<path d="m3.5 7.5 8.5-4 8.5 4v9l-8.5 4-8.5-4z"/><path d="m3.5 7.5 8.5 4 8.5-4M12 11.5v9"/>',
+    demand: '<circle cx="10.5" cy="10.5" r="6"/><path d="m20 20-5.2-5.2"/>',
+    voc: '<path d="M4 5.5h16V16H10l-4.5 3.5V16H4z"/>'
+  };
+  const ico = id => `<svg class="sb-ico" viewBox="0 0 24 24" aria-hidden="true">${ICONS[id] || ''}</svg>`;
+
   const SECTIONS = [
     { id: 'home', label: '홈', mark: '홈', href: 'home/' },
     { id: 'sales', label: '매출', mark: '매', href: 'sales/', nav: '#sfNav button', attr: 'view',
@@ -103,17 +115,17 @@
   function render() {
     let h = `<div class="sb-top"><span class="sb-brand">로운</span><button type="button" class="sb-mini" id="sbMini" title="메뉴 접기·펼치기" aria-label="메뉴 접기·펼치기">«</button></div><nav class="sb-nav">`;
     for (const s of SECTIONS) {
-      if (s.soon) { h += `<div class="sb-g soon" title="준비 중"><span class="sb-mark">${s.mark}</span><span class="sb-t">${s.label}</span><span class="sb-tag">준비 중</span></div>`; continue; }
+      if (s.soon) { h += `<div class="sb-g soon" title="준비 중">${ico(s.id)}<span class="sb-t">${s.label}</span><span class="sb-tag">준비 중</span></div>`; continue; }
       const items = itemsFor(s);
       if (s.items && !items.length) continue;                       // 권한 때문에 볼 항목이 없는 섹션은 숨김
       const isCur = s.id === curId;
       const open = isCur ? groupOpen[s.id] !== false : !!groupOpen[s.id];
       if (!s.items) {
-        h += `<a class="sb-g${isCur ? ' on' : ''}" href="../${s.href}"><span class="sb-mark">${s.mark}</span><span class="sb-t">${s.label}</span></a>`;
+        h += `<a class="sb-g${isCur ? ' on' : ''}" href="../${s.href}">${ico(s.id)}<span class="sb-t">${s.label}</span></a>`;
         continue;
       }
       h += `<div class="sb-grp${open ? ' open' : ''}${isCur ? ' cur' : ''}" data-sec="${s.id}">
-        <button type="button" class="sb-g sb-gh" data-sec="${s.id}"><span class="sb-mark">${s.mark}</span><span class="sb-t">${s.label}</span><span class="sb-car">▸</span></button>
+        <button type="button" class="sb-g sb-gh" data-sec="${s.id}">${ico(s.id)}<span class="sb-t">${s.label}</span><span class="sb-car">▸</span></button>
         <div class="sb-items">${items.map(it => `<a class="sb-i" data-key="${esc(it.key)}" href="${isCur ? '#' : `../${s.href}?v=${encodeURIComponent(it.key)}`}">${esc(it.label)}</a>`).join('')}</div></div>`;
     }
     h += `</nav><div class="sb-foot"><div class="sb-who">${esc(email)}${role ? ` <span class="sb-role">${role === 'planner' ? '기획자' : '매장 관리자'}</span>` : ''}</div><a class="sb-old" href="?nav=old">이전 화면으로 보기</a></div>`;
