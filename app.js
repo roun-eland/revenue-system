@@ -1257,8 +1257,11 @@ function renderSeasonPilotTable() {
     if (seasonPilotCollapsed[zid]) return;
     rows.slice().sort((a, b) => (seasonPilotBrandRatio([b], data) || 0) - (seasonPilotBrandRatio([a], data) || 0))
       .forEach(r => {
-        H += `<tr class="pivot-menu"><td title="${esc(r.menu_name)}">　${esc(r.menu_name)} ` +
-          `<input class="pilot-inline-in" type="number" step="any" value="${r.cost_per_gram ?? ''}" placeholder="g당원가" data-menu="${esc(r.menu_name)}" onchange="seasonPilotEditCost(this)"></td>` +
+        // 메뉴명은 직접 고칠 수 있고(저장하면 설계원가에도 반영), 삭제 버튼은 관리자(planner) 계정에만 보인다 — DB RLS도 같은 기준으로 막는다.
+        H += `<tr class="pivot-menu"><td title="${esc(r.menu_name)}">` +
+          `<input class="pilot-name-in" type="text" value="${esc(r.menu_name)}" data-id="${r.id}" onchange="seasonPilotRenameMenu(this)"> ` +
+          `<input class="pilot-inline-in" type="number" step="any" value="${r.cost_per_gram ?? ''}" placeholder="g당원가" data-menu="${esc(r.menu_name)}" onchange="seasonPilotEditCost(this)">` +
+          (document.body.classList.contains('viewer') ? '' : ` <button type="button" class="pilot-del-btn" title="이 메뉴를 시즌 설계에서 삭제 (관리자만)" onclick="seasonPilotDeleteMenu(${r.id})">×</button>`) + `</td>` +
           `<td class="pivot-na">—</td><td>${fmtR(seasonPilotBrandRatio([r], data))}</td>${tierCellsEditable(r)}</tr>`;
       });
   });
@@ -1284,6 +1287,39 @@ function seasonPilotEditConsumption(el) {
   row[tier.consumptionField] = numOrNull(el.value);
   renderSeasonPilotTable();
   seasonPilotSaveField(row.id, tier.consumptionField, row[tier.consumptionField]);
+}
+// 메뉴명 수정 — 같은 시즌에 같은 이름이 이미 있으면 막는다(시즌+메뉴명이 고유키). 설계원가(menu_designs)는 파일럿에서 다시 만들어지므로 자동 반영된다.
+// ⚠ 레시피 등록(recipe_items)의 메뉴명은 따로 바뀌지 않는다 — 이름으로 레시피와 연결되므로 레시피 쪽 이름도 맞춰야 한다.
+async function seasonPilotRenameMenu(el) {
+  const row = seasonPilotCache?.pilotRows.find(r => r.id === Number(el.dataset.id));
+  if (!row) return;
+  const newName = el.value.trim();
+  if (!newName) { el.value = row.menu_name; return; }
+  if (newName === row.menu_name) return;
+  if (seasonPilotCache.pilotRows.some(r => r.id !== row.id && r.menu_name === newName)) {
+    alert(`이 시즌에 이미 "${newName}" 메뉴가 있습니다. 다른 이름을 입력해주세요.`);
+    el.value = row.menu_name;
+    return;
+  }
+  const { error } = await sb.from('season_pilot_menu').update({ menu_name: newName }).eq('id', row.id);
+  if (error) { alert('메뉴명 수정 실패: ' + error.message); el.value = row.menu_name; return; }
+  seasonPilotUndoStack.push({ rowId: row.id, field: 'menu_name', prevValue: row.menu_name });
+  row.menu_name = newName;
+  renderSeasonPilotTable();
+  schedulePilotDesignSync(state.currentSeasonId);
+}
+// 메뉴 행 삭제 (관리자만) — 삭제한 행은 뒤로가기 스택에 통째로 보관해 "↶ 뒤로가기"로 복구할 수 있다.
+async function seasonPilotDeleteMenu(rowId) {
+  if (document.body.classList.contains('viewer')) return;
+  const row = seasonPilotCache?.pilotRows.find(r => r.id === rowId);
+  if (!row) return;
+  if (!confirm(`"${row.menu_name}" 메뉴를 이 시즌 설계에서 삭제할까요?\n설계원가에도 반영되며, "↶ 뒤로가기"로 되돌릴 수 있습니다.`)) return;
+  const { error } = await sb.from('season_pilot_menu').delete().eq('id', rowId);
+  if (error) { alert('삭제 실패: ' + error.message); return; }
+  seasonPilotUndoStack.push({ type: 'delete', row: { ...row } });
+  seasonPilotCache.pilotRows = seasonPilotCache.pilotRows.filter(r => r.id !== rowId);
+  renderSeasonPilotTable();
+  schedulePilotDesignSync(state.currentSeasonId);
 }
 async function seasonPilotSaveField(rowId, field, value) {
   const { error } = await sb.from('season_pilot_menu').update({ [field]: value }).eq('id', rowId);
@@ -1334,9 +1370,17 @@ function schedulePilotDesignSync(seasonId) {
   pilotSyncTimer = setTimeout(() => syncMenuDesignsFromPilot(seasonId), 3000);
 }
 // "뒤로가기" — 누를 때마다 스택에서 바로 직전 수정 한 건씩 꺼내 되돌린다(여러 번 누르면 그만큼 더 과거로).
-function seasonPilotUndo() {
+async function seasonPilotUndo() {
   const entry = seasonPilotUndoStack.pop();
   if (!entry) return;
+  if (entry.type === 'delete') {   // 삭제한 메뉴 행 복구 (같은 id로 다시 넣는다)
+    const { error } = await sb.from('season_pilot_menu').insert(entry.row);
+    if (error) { alert('복구 실패: ' + error.message); seasonPilotUndoStack.push(entry); renderSeasonPilotTable(); return; }
+    seasonPilotCache.pilotRows.push(entry.row);
+    renderSeasonPilotTable();
+    schedulePilotDesignSync(state.currentSeasonId);
+    return;
+  }
   const row = seasonPilotCache?.pilotRows.find(r => r.id === entry.rowId);
   if (row) {
     row[entry.field] = entry.prevValue;

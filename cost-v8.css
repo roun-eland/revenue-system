@@ -445,3 +445,12 @@ body.viewer #seasonDatePopup { display: none !important; }
 .sig-grade.gA{background:#3f9e12}.sig-grade.gB{background:#82dc28;color:#1c3305}.sig-grade.gC{background:#ef9f27}.sig-grade.gD{background:#e24b4a}
 .sig-filter{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 8px}
 .sig-filter select{font:inherit;font-size:13px;padding:4px 8px;border:1px solid var(--line-strong);border-radius:4px}
+/* 시즌 파일럿 결과표: 메뉴명 수정 입력칸 + 관리자 전용 삭제 버튼 */
+.pilot-name-in {
+  width: 150px; font: 12.5px inherit; padding: 1px 4px; border: 1px solid transparent; border-radius: 4px;
+  background: transparent; color: var(--ink); margin-left: 12px;
+}
+.pilot-name-in:hover { border-color: var(--line-strong); background: var(--surface); }
+.pilot-name-in:focus { outline: 2px solid var(--accent); outline-offset: -1px; background: var(--surface); border-color: var(--line-strong); }
+.pilot-del-btn { border: 0; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; padding: 0 5px; border-radius: 4px; }
+.pilot-del-btn:hover { color: var(--crit); background: var(--crit-soft); }
