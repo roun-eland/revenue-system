@@ -454,3 +454,6 @@ body.viewer #seasonDatePopup { display: none !important; }
 .pilot-name-in:focus { outline: 2px solid var(--accent); outline-offset: -1px; background: var(--surface); border-color: var(--line-strong); }
 .pilot-del-btn { border: 0; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; padding: 0 5px; border-radius: 4px; }
 .pilot-del-btn:hover { color: var(--crit); background: var(--crit-soft); }
+/* 시즌 파일럿 결과표 첫 열 확장 — 메뉴명 입력칸 + g당원가 칸 + 삭제 버튼이 잘리지 않게 (기본 250px 고정이라 가려졌음) */
+#seasonPilotTable td:first-child, #seasonPilotTable th:first-child { width: 400px; max-width: 400px; }
+#seasonPilotTable .pilot-name-in { width: 170px; margin-left: 0; }
