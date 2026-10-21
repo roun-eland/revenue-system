@@ -152,7 +152,10 @@ function groupItems(lots) {
     const ss = STORE_STOCK.get(g.code);
     g.store = ss && !ss.mismatch ? ss.qty : null;
     g.storeMismatch = !!(ss && ss.mismatch);
-    g.comb = g.daily > 0 && g.store != null ? (g.qty + g.store) / g.daily : (g.days != null && g.store == null ? g.days : null);
+    // 매장재고(일) = 매장 재고 ÷ 매장 일평균 사용량(최근 4주). 합산 재고일수 = 비축일수 + 매장재고(일) — 매장 사용량을 알 수 없으면 비축일수만.
+    g.storeDaily = ss && !ss.mismatch && STORE_SPAN_DAYS > 0 ? ss.usage / STORE_SPAN_DAYS : null;
+    g.storeDays = g.store != null && g.storeDaily > 0 ? g.store / g.storeDaily : null;
+    g.comb = g.days != null ? g.days + (g.storeDays || 0) : null;
     const exp = g.lots.filter(l => l.expiry_date).map(l => l.expiry_date).sort();
     g.expiry = exp[0] || null;
     const left = g.lots.filter(l => l.shelf_days_left != null).map(l => l.shelf_days_left);
@@ -192,27 +195,36 @@ async function loadLots(date) {
   }
   return acc;
 }
-// 매장 재고: 가장 최근 주차 마감(period_end) 기준 전 매장 합 — 같은 자재코드·같은 단위일 때만 합산
+// 매장 재고·사용량 — 재고는 가장 최근 주차 마감(period_end) 기준 전 매장 합, 사용량은 최근 4주(28일) 합 → 일평균 사용량.
+// 같은 자재코드·같은 단위일 때만 합산한다.
+let STORE_SPAN_DAYS = 0;   // 사용량을 합산한 기간의 일수
+const daysBetween = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
 async function loadStoreStock(codes) {
-  STORE_STOCK = new Map(); STORE_PE = null;
+  STORE_STOCK = new Map(); STORE_PE = null; STORE_SPAN_DAYS = 0;
   if (!codes.length) return;
   const { data: pe, error: e1 } = await sb.from('material_usage').select('period_end').order('period_end', { ascending: false }).limit(1);
   if (e1 || !pe || !pe.length) return;
   STORE_PE = pe[0].period_end;
+  const d0 = new Date(STORE_PE + 'T00:00:00'); d0.setDate(d0.getDate() - 27);
+  const fromEnd = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, '0')}-${String(d0.getDate()).padStart(2, '0')}`;
+  let minStart = null;
   for (let i = 0; i < codes.length; i += 40) {
     const part = codes.slice(i, i + 40);
     for (let p = 0; ; p++) {
-      const { data, error } = await sb.from('material_usage').select('store_code,material_code,stock_unit,current_stock_qty').eq('period_end', STORE_PE).in('material_code', part).range(p * 1000, p * 1000 + 999);
+      const { data, error } = await sb.from('material_usage').select('store_code,material_code,stock_unit,current_stock_qty,actual_usage_qty,period_start,period_end').gte('period_end', fromEnd).lte('period_end', STORE_PE).in('material_code', part).range(p * 1000, p * 1000 + 999);
       if (error) throw error;
       for (const r of data) {
-        const cur = STORE_STOCK.get(r.material_code) || { qty: 0, unit: r.stock_unit, n: 0, mismatch: false };
+        const cur = STORE_STOCK.get(r.material_code) || { qty: 0, usage: 0, unit: r.stock_unit, n: 0, mismatch: false };
         if ((r.stock_unit || '').toLowerCase() !== (cur.unit || '').toLowerCase()) cur.mismatch = true;
-        cur.qty += Number(r.current_stock_qty) || 0; cur.n++;
+        if (r.period_end === STORE_PE) { cur.qty += Number(r.current_stock_qty) || 0; cur.n++; }   // 재고 = 최근 주차 마감 시점
+        cur.usage += Number(r.actual_usage_qty) || 0;                                             // 사용량 = 최근 4주 합
+        if (r.period_start && (!minStart || r.period_start < minStart)) minStart = r.period_start;
         STORE_STOCK.set(r.material_code, cur);
       }
       if (data.length < 1000) break;
     }
   }
+  STORE_SPAN_DAYS = minStart ? daysBetween(minStart, STORE_PE) + 1 : 0;
 }
 
 // ---------- 인증 (생산성·고객과 동일 — 로그인은 랜딩에서) ----------
@@ -283,7 +295,7 @@ async function renderHq() {
     return;
   }
   ITEMS = groupItems(LOTS);
-  $('hqSnapNote').textContent = `${LOTS.length}개 로트 · ${ITEMS.length}개 자재` + (STORE_PE ? ` · 매장 재고는 ${STORE_PE} 마감 기준` : '');
+  $('hqSnapNote').textContent = `${LOTS.length}개 로트 · ${ITEMS.length}개 자재` + (STORE_PE ? ` · 매장 재고는 ${STORE_PE} 마감, 매장 사용량은 최근 4주 기준` : '');
   renderKpis(); renderCore(); renderCat(); buildLotFilters(); renderLots();
 }
 
@@ -307,7 +319,11 @@ function renderKpis() {
 
 function itemRows(items) {
   return items.map(g => {
-    const storeTxt = g.storeMismatch ? '<span title="매장과 재고단위가 달라 합산하지 않음">단위 상이</span>' : g.store == null ? '—' : num(g.store, g.store % 1 ? 1 : 0);
+    const storeTip = g.store == null ? '' : `매장 재고 ${num(g.store, g.store % 1 ? 1 : 0)}${g.unit || ''} · 일평균 사용 ${g.storeDaily != null ? num(g.storeDaily, 1) : '—'}${g.unit || ''}(최근 4주)`;
+    const storeTxt = g.storeMismatch ? '<span title="매장과 재고단위가 달라 합산하지 않음">단위 상이</span>'
+      : g.store == null ? '—'
+      : g.storeDays == null ? `<span title="${esc(storeTip)}">사용 없음</span>`
+      : `<span title="${esc(storeTip)}">${num(g.storeDays, 1)}</span>`;
     const gapTxt = g.shelfMin == null ? '—' : `<span class="${g.shelfMin < 0 ? 'neg' : ''}">${num(g.shelfMin)}일</span>`;
     return `<tr><td class="l"><span class="chip ${g.tier === 1 ? 't1' : g.tier === 2 ? 't2' : ''}">${TIER_LABEL[g.tier]}</span></td>
       <td class="l"><b>${esc(g.name)}</b><br><span style="font-size:11px;color:var(--muted2)">${esc(g.code)} · ${esc(g.spec || '')}</span></td>
@@ -319,7 +335,7 @@ function itemRows(items) {
   }).join('');
 }
 const ITEM_HEAD = `<colgroup><col style="width:105px"><col style="width:300px"><col style="width:48px"><col style="width:80px"><col style="width:110px"><col style="width:80px"><col style="width:76px"><col style="width:84px"><col style="width:84px"><col style="width:96px"><col style="width:80px"><col style="width:60px"><col style="width:300px"></colgroup>
-  <thead><tr><th>구분</th><th>자재</th><th>단위</th><th>본부 재고</th><th>재고금액(원)</th><th>일평균출고</th><th>본부 재고일수</th><th>매장 재고</th><th>합산 재고일수</th><th>유통기한(최단)</th><th>잔여</th><th>신호</th><th style="text-align:left">사유</th></tr></thead>`;
+  <thead><tr><th>구분</th><th>자재</th><th>단위</th><th>본부 재고</th><th>재고금액(원)</th><th title="본부가 매장으로 하루 평균 내보내는 양">출고량(일)</th><th title="본부 재고 ÷ 출고량 — 이 재고로 매장에 며칠 공급할 수 있는지">비축일수(일)</th><th title="매장 재고 ÷ 매장 일평균 사용량(최근 4주) — 매장이 가진 재고로 며칠 쓸 수 있는지">매장재고(일)</th><th title="비축일수 + 매장재고(일)">합산 재고일수</th><th>만료일(최단)</th><th title="가장 먼저 끝나는 로트의 유통기한까지 남은 일수">유통기한(일)</th><th>신호</th><th style="text-align:left">사유</th></tr></thead>`;
 
 function renderCore() {
   const core = ITEMS.filter(g => g.tier <= 2).sort((a, b) => a.tier - b.tier || b.amount - a.amount);
@@ -366,7 +382,7 @@ function renderLots() {
   rows = rows.sort((a, b) => lvRank[a.sig.lv] - lvRank[b.sig.lv] || tier(a) - tier(b) || (b.stock_amount || 0) - (a.stock_amount || 0));
   $('lotCount').textContent = `${rows.length}건 · ${won(rows.reduce((t, l) => t + (l.stock_amount || 0), 0))}원`;
   let h = `<table><colgroup><col style="width:60px"><col style="width:150px"><col style="width:130px"><col style="width:290px"><col style="width:46px"><col style="width:76px"><col style="width:110px"><col style="width:72px"><col style="width:70px"><col style="width:96px"><col style="width:64px"><col style="width:70px"><col style="width:96px"><col style="width:60px"><col style="width:96px"><col style="width:110px"></colgroup>
-    <thead><tr><th>신호</th><th>보관센터</th><th>자재구분</th><th>자재</th><th>단위</th><th>재고수량</th><th>재고금액(원)</th><th>일평균출고</th><th>재고일수</th><th>유통기한</th><th>잔여일</th><th>소진차이</th><th>불용 청구(원)</th><th>입고일</th><th>체류일</th><th>전주 구분</th></tr></thead><tbody>`;
+    <thead><tr><th>신호</th><th>보관센터</th><th>자재구분</th><th>자재</th><th>단위</th><th>재고수량</th><th>재고금액(원)</th><th title="본부가 매장으로 하루 평균 내보내는 양">출고량(일)</th><th title="이 로트 수량 ÷ 출고량">비축일수(일)</th><th>만료일</th><th title="유통기한까지 남은 일수">유통기한(일)</th><th>소진차이</th><th>불용 청구(원)</th><th>입고일</th><th>체류일</th><th>전주 구분</th></tr></thead><tbody>`;
   for (const l of rows) {
     const worse = l.prev_category && l.prev_category !== l.category && /정상/.test(l.prev_category) && !/정상/.test(l.category || '');
     h += `<tr><td>${sigChip(l.sig.lv)}</td><td class="l">${esc(l.center)}</td><td class="l ${CAT_CRIT(l.category) ? 'neg' : ''}">${esc(l.category || '')}</td>
