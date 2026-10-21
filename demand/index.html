@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로운 수요</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="../ot.css?v=202610021614">
+<link rel="stylesheet" href="../nav.css?v=202610211230">
+<style>
+/* 수요(시장·경쟁사 모니터링) 전용 */
+.ot-main,.ot-header,.ot-nav,.navbc{max-width:none}
+.view{max-width:none}
+.kpis>div,.card{border-color:#cfcfcf}
+.kpis.k4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:900px){.kpis.k4{grid-template-columns:repeat(2,1fr)}}
+.chip{display:inline-block;font-size:11px;font-weight:700;border-radius:9px;padding:1px 8px;background:var(--fill);color:var(--muted)}
+.chip.on{background:var(--dark);color:#fff}
+.chip.new{background:#fdf6e7;color:var(--warn)}
+.chip.ok{background:#f3fbe7;color:var(--good)}
+.chipbtn{display:inline-block;font:inherit;font-size:12px;border:1px solid #cfcfcf;border-radius:12px;padding:2px 10px;background:#fff;cursor:pointer;color:var(--muted)}
+.chipbtn.on{background:var(--dark);color:#fff;border-color:var(--dark)}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
+.filters label{font-size:12px;color:var(--muted)}
+.filters select,.cell-in{font:inherit;font-size:13px;padding:4px 8px;border:1px solid #cfcfcf;border-radius:4px;background:#fff}
+.cell-in{width:100%;box-sizing:border-box}
+.up{color:var(--crit);font-weight:700}.dn{color:var(--good);font-weight:700}
+td.l,th.l{text-align:left}
+.chartbox{position:relative;height:320px}
+.empty{padding:28px 20px;color:var(--muted);font-size:13px;line-height:1.8;background:var(--fill);border-radius:4px}
+.stage{display:inline-block;font-size:11px;border-radius:9px;padding:1px 9px;background:#eef3fa;color:#3a5f8a;margin-left:6px}
+.row-del{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;padding:0 6px}
+.row-del:hover{color:var(--crit)}
+.lock{padding:28px 20px;color:var(--muted);font-size:13px;line-height:1.7}
+</style>
+</head>
+<body>
+
+<div id="loginView" class="ot-login" hidden></div>
+
+<div id="appView" hidden>
+  <div class="gnav">
+    <span class="gnav-brand">로운</span>
+    <a class="gnav-item" href="../sales/">매출</a>
+    <a class="gnav-item" href="../labor/">생산성</a>
+    <a class="gnav-item" href="../cost/">원가</a>
+    <a class="gnav-item" href="../supply/">공급</a>
+    <span class="gnav-item on">수요</span>
+    <a class="gnav-item" href="../voc/">고객</a>
+  </div>
+  <header class="ot-header">
+    <div class="ot-brand"><span class="mark">수요</span><span class="name">시장·경쟁사 모니터링</span></div>
+    <div class="spacer"></div>
+    <span class="who"><span id="whoEmail"></span> <span class="role-chip" id="roleChip">기획자</span></span>
+    <button id="logoutBtn" class="btn btn-sm" type="button">로그아웃</button>
+  </header>
+
+  <nav class="ot-nav" id="dmNav">
+    <button data-view="summary" class="on">요약</button>
+    <button data-view="market">시장</button>
+    <button data-view="search">검색</button>
+    <button data-view="competitor">경쟁사</button>
+    <button data-view="voice">고객 반응</button>
+    <button data-view="source">출처·한계</button>
+    <button data-view="settings">설정</button>
+  </nav>
+
+  <main class="ot-main">
+
+    <section id="view-lock" class="view" hidden>
+      <div class="card lock"><b>수요 모니터링은 기획자(관리자) 계정에서만 볼 수 있습니다.</b></div>
+    </section>
+
+    <!-- 요약 -->
+    <section id="view-summary" class="view">
+      <h2>요약</h2>
+      <p class="view-sub">월간 시장·경쟁사 리서치의 핵심을 한 화면에 모읍니다. 지금은 <b>1단계(검색 지표)</b>만 열려 있고, 나머지는 단계별로 채워집니다.</p>
+      <div class="kpis k4" id="sumKpis"></div>
+      <div class="card"><h3 style="margin:0 0 8px">진행 현황</h3><div id="sumStages"></div></div>
+    </section>
+
+    <!-- 시장 -->
+    <section id="view-market" class="view" hidden>
+      <h2>시장 <span class="stage">2~4단계</span></h2>
+      <p class="view-sub">샤브·훠궈·스키야키·마라탕 등 근접 시장의 규모와 흐름(점포 수, 시장 기사, 업계 지표)을 정리합니다.</p>
+      <div class="empty">월간 리포트가 만들어지면 여기에 표시됩니다.<br>시장 규모의 검색 지표는 <b>검색</b> 탭에서 먼저 볼 수 있습니다.</div>
+    </section>
+
+    <!-- 검색 -->
+    <section id="view-search" class="view" hidden>
+      <h2>검색</h2>
+      <p class="view-sub">고객이 무엇을 얼마나 검색하는지 — 월 검색수 추이, 연관검색어, 급상승 키워드. 월 검색수는 네이버 검색광고 API(PC+모바일), 과거 추이는 네이버 데이터랩 상대지수를 실측 월에 맞춰 환산한 <b>추정값(점선)</b>입니다.</p>
+      <div class="filters">
+        <label>기간</label><select id="sPeriod"><option value="12">12개월</option><option value="24">24개월</option></select>
+        <label>기기</label><select id="sDevice"><option value="total">전체(PC+모바일)</option><option value="mobile">모바일</option><option value="pc">PC</option></select>
+        <span id="sPickers" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"></span>
+        <button id="runCollectBtn" class="btn btn-sm" type="button" style="margin-left:auto">지금 수집</button>
+        <span class="plan-msg" id="runMsg"></span>
+      </div>
+      <div class="kpis k4" id="sKpis"></div>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 8px">① 월 검색수 추이</h3>
+        <div class="chartbox"><canvas id="sChart"></canvas></div>
+        <div class="dnote" id="sChartNote"></div>
+      </div>
+      <div class="ref-grid">
+        <div class="card">
+          <h3 style="margin:0 0 8px">② 연관검색어</h3>
+          <div class="filters" style="margin-bottom:8px"><label>기준 키워드</label><select id="sRelBase"></select></div>
+          <div class="tblwrap" id="sRelTable"></div>
+        </div>
+        <div class="card">
+          <h3 style="margin:0 0 8px">③ 급상승·신규 키워드</h3>
+          <div class="tblwrap" id="sRiseTable"></div>
+          <div class="dnote">전월 대비 +50% 이상이면서 월 검색수 5,000 이상, 또는 이번 달 새로 나타난 연관어(월 검색수 5,000 이상)만 표시합니다.</div>
+        </div>
+      </div>
+      <div class="dnote" id="sRunNote" style="margin-top:10px"></div>
+    </section>
+
+    <!-- 경쟁사 -->
+    <section id="view-competitor" class="view" hidden>
+      <h2>경쟁사 <span class="stage">2단계에서 점포·가격 추가</span></h2>
+      <p class="view-sub">등록된 경쟁사와 최근 검색 관심도입니다. 점포 수·가격·고객 반응은 2~3단계에서 채워집니다. 목록은 <b>설정</b> 탭에서 고칩니다.</p>
+      <div class="card"><div class="tblwrap" id="cmpTable"></div></div>
+    </section>
+
+    <!-- 고객 반응 -->
+    <section id="view-voice" class="view" hidden>
+      <h2>고객 반응 <span class="stage">3단계</span></h2>
+      <p class="view-sub">블로그·카페·유튜브 후기를 수십~수백 건 모아 긍정·부정 주제로 요약합니다.</p>
+      <div class="empty">3단계에서 연결됩니다 (유튜브·AI 요약 키 필요).</div>
+    </section>
+
+    <!-- 출처·한계 -->
+    <section id="view-source" class="view" hidden>
+      <h2>출처·한계</h2>
+      <p class="view-sub">모든 값에는 출처와 확인 수준을 붙입니다. 현재 1단계에서 쓰는 출처와 알려진 한계입니다.</p>
+      <div class="card"><div class="tblwrap" id="srcTable"></div></div>
+    </section>
+
+    <!-- 설정 -->
+    <section id="view-settings" class="view" hidden>
+      <h2>설정</h2>
+      <p class="view-sub">모니터링할 브랜드(경쟁사)와 키워드를 관리합니다. 키워드를 추가하면 다음 수집부터 반영됩니다.</p>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 8px">브랜드·경쟁사</h3>
+        <div class="tblwrap" id="brandTable"></div>
+        <div class="filters" style="margin:10px 0 0">
+          <input id="nbName" class="cell-in" style="width:180px" placeholder="브랜드명">
+          <select id="nbKind"><option value="competitor">경쟁사</option><option value="own">우리</option></select>
+          <input id="nbSeg" class="cell-in" style="width:160px" placeholder="업태(예: 단품 샤브)">
+          <button id="nbAdd" class="btn btn-sm" type="button">추가</button><span class="plan-msg" id="nbMsg"></span>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin:0 0 8px">키워드</h3>
+        <div class="tblwrap" id="kwTable"></div>
+        <div class="filters" style="margin:10px 0 0">
+          <input id="nkWord" class="cell-in" style="width:200px" placeholder="키워드">
+          <select id="nkGrp"><option value="market">시장</option><option value="own">우리</option><option value="competitor">경쟁사</option><option value="need">메뉴·니즈</option></select>
+          <button id="nkAdd" class="btn btn-sm" type="button">추가</button><span class="plan-msg" id="nkMsg"></span>
+        </div>
+        <div class="dnote">검색광고 API는 공백이 없는 형태로 조회하므로, "샤브샤브 뷔페"는 "샤브샤브뷔페"로 변환되어 조회됩니다(표시는 그대로).</div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="../vendor/supabase.min.js"></script>
+<script src="../vendor/chart.umd.min.js"></script>
+<script src="../nav.js?v=202610211230"></script>
+<script src="../demand.js?v=202610211230"></script>
+</body>
+</html>
