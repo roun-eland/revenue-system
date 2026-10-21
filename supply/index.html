@@ -25,6 +25,9 @@ td.l{text-align:left}
 .filters .fld select,.filters .fld input{font:inherit;font-size:13px;padding:6px 8px;border:1px solid #cfcfcf;border-radius:4px;background:#fff}
 textarea.paste{width:100%;min-height:90px;font:inherit;font-size:12px;padding:8px;border:1px solid #cfcfcf;border-radius:4px;box-sizing:border-box}
 .lock{padding:28px 20px;color:var(--muted);font-size:13px;line-height:1.7}
+/* 표가 많은 화면이라 본문 폭 제한(1040px)을 풀어 화면 너비를 그대로 쓴다 (업로드 화면은 읽기 좋게 좁게 유지) */
+.ot-main,.ot-header,.ot-nav,.navbc{max-width:none}
+#view-hq{max-width:none}
 </style>
 <link rel="stylesheet" href="../nav.css?v=202610191900">
 </head>
@@ -132,6 +135,6 @@ textarea.paste{width:100%;min-height:90px;font:inherit;font-size:12px;padding:8p
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../export-tables.js?v=202610021415"></script>
 <script src="../supply-core.js?v=202610191830"></script>
-<script src="../supply.js?v=202610211000"></script>
+<script src="../supply.js?v=202610211030"></script>
 </body>
 </html>

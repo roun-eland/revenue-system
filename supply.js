@@ -334,7 +334,7 @@ function itemRows(items) {
       <td>${sigChip(g.sig.lv)}</td><td class="why">${esc(g.sig.why.join(' · ')) || '—'}</td></tr>`;
   }).join('');
 }
-const ITEM_HEAD = `<colgroup><col style="width:105px"><col style="width:300px"><col style="width:48px"><col style="width:80px"><col style="width:110px"><col style="width:80px"><col style="width:76px"><col style="width:84px"><col style="width:84px"><col style="width:96px"><col style="width:80px"><col style="width:60px"><col style="width:300px"></colgroup>
+const ITEM_HEAD = `<colgroup><col style="width:100px"><col style="width:270px"><col style="width:44px"><col style="width:76px"><col style="width:104px"><col style="width:76px"><col style="width:84px"><col style="width:84px"><col style="width:84px"><col style="width:96px"><col style="width:84px"><col style="width:60px"><col style="width:260px"></colgroup>
   <thead><tr><th>구분</th><th>자재</th><th>단위</th><th>본부 재고</th><th>재고금액(원)</th><th title="본부가 매장으로 하루 평균 내보내는 양">출고량(일)</th><th title="본부 재고 ÷ 출고량 — 이 재고로 매장에 며칠 공급할 수 있는지">비축일수(일)</th><th title="매장 재고 ÷ 매장 일평균 사용량(최근 4주) — 매장이 가진 재고로 며칠 쓸 수 있는지">매장재고(일)</th><th title="비축일수 + 매장재고(일)">합산 재고일수</th><th>만료일(최단)</th><th title="가장 먼저 끝나는 로트의 유통기한까지 남은 일수">유통기한(일)</th><th>신호</th><th style="text-align:left">사유</th></tr></thead>`;
 
 function renderCore() {
