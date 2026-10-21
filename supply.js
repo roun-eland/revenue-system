@@ -328,14 +328,14 @@ function itemRows(items) {
     return `<tr><td class="l"><span class="chip ${g.tier === 1 ? 't1' : g.tier === 2 ? 't2' : ''}">${TIER_LABEL[g.tier]}</span></td>
       <td class="l"><b>${esc(g.name)}</b><br><span style="font-size:11px;color:var(--muted2)">${esc(g.code)} · ${esc(g.spec || '')}</span></td>
       <td>${esc(g.unit || '')}</td><td>${num(g.qty, g.qty % 1 ? 1 : 0)}</td><td>${won(g.amount)}</td>
-      <td>${g.daily ? num(g.daily, 1) : '—'}</td><td>${g.days == null ? '—' : num(g.days, 1)}</td>
+      <td>${g.daily ? `${num(g.daily, 1)} <span style="font-size:11px;color:var(--muted2)">${esc(g.unit || '')}</span>` : '—'}</td><td>${g.days == null ? '—' : num(g.days, 1)}</td>
       <td>${storeTxt}</td><td><b>${g.comb == null ? '—' : num(g.comb, 1)}</b></td>
       <td>${g.expiry || '—'}</td><td>${gapTxt}</td>
       <td>${sigChip(g.sig.lv)}</td><td class="why">${esc(g.sig.why.join(' · ')) || '—'}</td></tr>`;
   }).join('');
 }
-const ITEM_HEAD = `<colgroup><col style="width:100px"><col style="width:270px"><col style="width:44px"><col style="width:76px"><col style="width:104px"><col style="width:76px"><col style="width:84px"><col style="width:84px"><col style="width:84px"><col style="width:96px"><col style="width:84px"><col style="width:60px"><col style="width:260px"></colgroup>
-  <thead><tr><th>구분</th><th>자재</th><th>단위</th><th>본부 재고</th><th>재고금액(원)</th><th title="본부가 매장으로 하루 평균 내보내는 양">출고량(일)</th><th title="본부 재고 ÷ 출고량 — 이 재고로 매장에 며칠 공급할 수 있는지">비축일수(일)</th><th title="매장 재고 ÷ 매장 일평균 사용량(최근 4주) — 매장이 가진 재고로 며칠 쓸 수 있는지">매장재고(일)</th><th title="비축일수 + 매장재고(일)">합산 재고일수</th><th>만료일(최단)</th><th title="가장 먼저 끝나는 로트의 유통기한까지 남은 일수">유통기한(일)</th><th>신호</th><th style="text-align:left">사유</th></tr></thead>`;
+const ITEM_HEAD = `<colgroup><col style="width:100px"><col style="width:270px"><col style="width:44px"><col style="width:76px"><col style="width:104px"><col style="width:100px"><col style="width:84px"><col style="width:84px"><col style="width:84px"><col style="width:96px"><col style="width:84px"><col style="width:60px"><col style="width:240px"></colgroup>
+  <thead><tr><th>구분</th><th>자재</th><th>단위</th><th>본부 재고</th><th>재고금액(원)</th><th title="본부가 매장으로 하루 평균 내보내는 양 (자재 단위: kg·ea 등)">일 출고량</th><th title="본부 재고 ÷ 일 출고량 — 이 재고로 매장에 며칠 공급할 수 있는지">비축일수(일)</th><th title="매장 재고 ÷ 매장 일평균 사용량(최근 4주) — 매장이 가진 재고로 며칠 쓸 수 있는지">매장재고(일)</th><th title="비축일수 + 매장재고(일)">합산 재고일수</th><th>만료일(최단)</th><th title="가장 먼저 끝나는 로트의 유통기한까지 남은 일수">유통기한(일)</th><th>신호</th><th style="text-align:left">사유</th></tr></thead>`;
 
 function renderCore() {
   const core = ITEMS.filter(g => g.tier <= 2).sort((a, b) => a.tier - b.tier || b.amount - a.amount);
@@ -382,7 +382,7 @@ function renderLots() {
   rows = rows.sort((a, b) => lvRank[a.sig.lv] - lvRank[b.sig.lv] || tier(a) - tier(b) || (b.stock_amount || 0) - (a.stock_amount || 0));
   $('lotCount').textContent = `${rows.length}건 · ${won(rows.reduce((t, l) => t + (l.stock_amount || 0), 0))}원`;
   let h = `<table><colgroup><col style="width:60px"><col style="width:150px"><col style="width:130px"><col style="width:290px"><col style="width:46px"><col style="width:76px"><col style="width:110px"><col style="width:72px"><col style="width:70px"><col style="width:96px"><col style="width:64px"><col style="width:70px"><col style="width:96px"><col style="width:60px"><col style="width:96px"><col style="width:110px"></colgroup>
-    <thead><tr><th>신호</th><th>보관센터</th><th>자재구분</th><th>자재</th><th>단위</th><th>재고수량</th><th>재고금액(원)</th><th title="본부가 매장으로 하루 평균 내보내는 양">출고량(일)</th><th title="이 로트 수량 ÷ 출고량">비축일수(일)</th><th>만료일</th><th title="유통기한까지 남은 일수">유통기한(일)</th><th>소진차이</th><th>불용 청구(원)</th><th>입고일</th><th>체류일</th><th>전주 구분</th></tr></thead><tbody>`;
+    <thead><tr><th>신호</th><th>보관센터</th><th>자재구분</th><th>자재</th><th>단위</th><th>재고수량</th><th>재고금액(원)</th><th title="본부가 매장으로 하루 평균 내보내는 양 (단위 열 기준)">일 출고량</th><th title="이 로트 수량 ÷ 일 출고량">비축일수(일)</th><th>만료일</th><th title="유통기한까지 남은 일수">유통기한(일)</th><th>소진차이</th><th>불용 청구(원)</th><th>입고일</th><th>체류일</th><th>전주 구분</th></tr></thead><tbody>`;
   for (const l of rows) {
     const worse = l.prev_category && l.prev_category !== l.category && /정상/.test(l.prev_category) && !/정상/.test(l.category || '');
     h += `<tr><td>${sigChip(l.sig.lv)}</td><td class="l">${esc(l.center)}</td><td class="l ${CAT_CRIT(l.category) ? 'neg' : ''}">${esc(l.category || '')}</td>
