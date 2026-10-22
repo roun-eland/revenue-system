@@ -15,7 +15,7 @@ const GRP_ORDER = ['market', 'own', 'competitor', 'need'];
 const COLORS = ['#3F9E12', '#D9822B', '#378ADD', '#8E5BD1', '#D4537E', '#2F3030', '#1D9E75', '#BA7517'];
 const ls = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 무시 */ } } };
 
-let BRANDS = [], KW = [], SM = [], TR = [], RL = [], RUNS = [], VS = [], VR = [];
+let BRANDS = [], KW = [], SM = [], TR = [], RL = [], RUNS = [], VS = [], VR = [], VV = [];
 let KWMAP = new Map();
 let chart = null;
 
@@ -32,7 +32,7 @@ async function fetchAll(table, cols, orderCol) {
   return acc;
 }
 async function loadAll() {
-  [BRANDS, KW, SM, TR, RL, RUNS, VS, VR] = await Promise.all([
+  [BRANDS, KW, SM, TR, RL, RUNS, VS, VR, VV] = await Promise.all([
     fetchAll('demand_brands', '*', 'id'),
     fetchAll('demand_keywords', '*', 'id'),
     fetchAll('demand_search_monthly', '*', 'ym'),
@@ -40,7 +40,8 @@ async function loadAll() {
     fetchAll('demand_related', '*', 'ym'),
     sb.from('demand_runs').select('*').order('id', { ascending: false }).limit(5).then(r => r.data || []),
     fetchAll('demand_voice_summary', '*', 'ym'),
-    fetchAll('demand_voice_raw', 'brand_id,source,ym', 'id')
+    fetchAll('demand_voice_raw', 'brand_id,source,ym', 'id'),
+    fetchAll('demand_voice_volume', '*', 'ym')
   ]);
   KWMAP = new Map(KW.map(k => [k.id, k]));
 }
@@ -312,26 +313,52 @@ const themeList = (arr, cls) => (arr && arr.length)
   ? arr.slice(0, 3).map(t => `<div><span class="${cls}">${esc(t.theme)}</span> <span style="color:var(--muted)">${num(t.count)}건</span>${t.example ? `<div class="dnote" style="margin:0">“${esc(t.example)}”</div>` : ''}</div>`).join('')
   : '<span style="color:var(--muted)">—</span>';
 function renderVoice() {
-  const yms = [...new Set([...VS.map(r => r.ym), ...VR.map(r => r.ym)])].sort().reverse();
+  const yms = [...new Set([...VS.map(r => r.ym), ...VR.map(r => r.ym), ...VV.map(r => r.ym)])].sort().reverse();
   const sel = $('vMonth');
   const cur = sel.value && yms.includes(sel.value) ? sel.value : (yms[0] || '');
   sel.innerHTML = yms.length ? yms.map(m => `<option value="${m}"${m === cur ? ' selected' : ''}>${m}</option>`).join('') : '<option value="">(수집 전)</option>';
   const box = $('voiceTable');
   if (!cur) { box.innerHTML = '<div class="empty">아직 수집된 고객 반응이 없습니다. 오른쪽 위 <b>지금 수집·요약</b>을 누르면 이 자리에 브랜드별 요약이 나타납니다.</div>'; return; }
-  const brands = BRANDS.filter(b => b.status !== 'excluded').sort((a, b) => (a.kind === 'own' ? -1 : 1) - (b.kind === 'own' ? -1 : 1) || a.id - b.id);
   const rawCnt = new Map();
   for (const r of VR) if (r.ym === cur) { const m = rawCnt.get(r.brand_id) || {}; m[r.source] = (m[r.source] || 0) + 1; rawCnt.set(r.brand_id, m); }
   const sumBy = new Map(VS.filter(r => r.ym === cur).map(r => [r.brand_id, r]));
+  // 총 발행량 = 그 달 날짜가 있는 글(블로그+뉴스+유튜브 영상). 원문이 남아 있으면 그 건수, 이미 삭제됐으면 보관해 둔 건수 중 큰 값
+  const DATED = ['blog', 'news', 'youtube_video'];
+  const volSnap = new Map(VV.filter(r => r.ym === cur).map(r => [r.brand_id, r]));
+  const volOf = id => {
+    const rc = rawCnt.get(id) || {};
+    const live = DATED.reduce((a, k) => a + (rc[k] || 0), 0);
+    const sn = volSnap.get(id);
+    // 수집 때 그 달 시작일까지 끝까지 내려가지 못했으면(날짜순 최대 1000건 한도) 실제는 더 많다는 뜻으로 '≥'를 붙인다
+    return { n: Math.max(live, sn ? sn.total : 0), capped: sn ? sn.complete === false : false };
+  };
+  const vol = new Map(BRANDS.map(b => [b.id, volOf(b.id)]));
+  // 고객 관심도 = 그 브랜드 이름의 월 검색수(네이버 검색광고 실측, 수집 전 달은 데이터랩 지수로 환산한 추정)
+  const interest = new Map(BRANDS.map(b => {
+    // 브랜드에 키워드가 여러 개면(예: '로운샤브', '로운 샤브샤브') 가장 많이 검색되는 쪽을 쓴다
+    let best = null;
+    for (const k of KW.filter(k => k.brand_id === b.id && k.grp !== 'need' && k.active)) {
+      const p = seriesFor(k.id, [cur], 'total')[0];
+      if (p && p.v != null && (!best || p.v > best.v)) best = p;
+    }
+    return [b.id, best];
+  }));
+  const maxInt = Math.max(1, ...[...interest.values()].map(p => p ? p.v : 0));
+  const brands = BRANDS.filter(b => b.status !== 'excluded').sort((a, b) => ((interest.get(b.id) || { v: -1 }).v - (interest.get(a.id) || { v: -1 }).v) || (vol.get(b.id).n - vol.get(a.id).n) || a.id - b.id);
+  const rankOf = new Map(brands.map((b, i) => [b.id, i + 1]));
   const srcTxt = m => Object.entries(m || {}).map(([k, v]) => `${SRC_LABEL[k] || k} ${v}`).join(' · ') || '—';
-  box.innerHTML = `<table><colgroup><col style="width:130px"><col style="width:170px"><col style="width:230px"><col style="width:260px"><col style="width:260px"><col style="width:230px"><col style="width:200px"></colgroup>
-    <thead><tr><th class="l">브랜드</th><th class="l">표본(출처별)</th><th class="l">한 줄 요약</th><th class="l">좋다는 반응</th><th class="l">아쉽다는 반응</th><th class="l">자주 언급되는 특징</th><th class="l">주의 신호</th></tr></thead><tbody>` +
+  box.innerHTML = `<table><colgroup><col style="width:130px"><col style="width:130px"><col style="width:170px"><col style="width:230px"><col style="width:260px"><col style="width:260px"><col style="width:230px"><col style="width:200px"></colgroup>
+    <thead><tr><th class="l">브랜드</th><th class="l" title="브랜드 이름의 그 달 월 검색수(네이버 검색광고, PC+모바일). 클수록 고객이 많이 찾는 브랜드. 아래 작은 글씨는 수집한 후기·기사 수(표본)">고객 관심도<br><span style="font-weight:400">월 검색수</span></th><th class="l">표본(출처별)</th><th class="l">한 줄 요약</th><th class="l">좋다는 반응</th><th class="l">아쉽다는 반응</th><th class="l">자주 언급되는 특징</th><th class="l">주의 신호</th></tr></thead><tbody>` +
     brands.map(b => {
       const s = sumBy.get(b.id), rc = rawCnt.get(b.id);
       const n = s ? s.n_items : Object.values(rc || {}).reduce((a, c) => a + c, 0);
       const thin = n < 8 ? ' <span class="chip new">표본 부족</span>' : '';
       const nm = `<b>${esc(b.name)}</b>${b.kind === 'own' ? ' <span class="chip ok">우리</span>' : ''}`;
-      if (!s) return `<tr><td class="l">${nm}</td><td class="l" style="white-space:normal">${esc(srcTxt(rc))}${thin}</td><td class="l" colspan="5" style="color:var(--muted);white-space:normal">${n ? '원문은 수집됐고 AI 요약 대기 중입니다 (요약 키 등록 후 <b>지금 수집·요약</b>).' : '수집된 원문이 없습니다.'}</td></tr>`;
-      return `<tr><td class="l" style="vertical-align:top">${nm}</td><td class="l" style="white-space:normal;vertical-align:top">${esc(srcTxt(s.sources))}${thin}</td>
+      const v = vol.get(b.id);
+      const it = interest.get(b.id);
+      const vcell = `<td class="l" style="vertical-align:top"><div style="font-weight:700">${it ? num(it.v) : '—'}${it && !it.actual ? ' <span class="chip">추정</span>' : ''} <span style="color:var(--muted);font-weight:400">${it ? rankOf.get(b.id) + '위' : ''}</span></div>${it ? `<div style="height:5px;background:var(--fill);border-radius:3px;margin-top:4px"><div style="height:5px;width:${Math.max(2, Math.round(it.v / maxInt * 100))}%;background:${b.kind === 'own' ? '#3F9E12' : '#8a8a8a'};border-radius:3px"></div></div>` : ''}<div class="dnote" style="margin:4px 0 0">수집한 글 ${v.n ? (v.capped ? '≥ ' : '') + num(v.n) : 0}건</div></td>`;
+      if (!s) return `<tr><td class="l" style="vertical-align:top">${nm}</td>${vcell}<td class="l" style="white-space:normal;vertical-align:top">${esc(srcTxt(rc))}${thin}</td><td class="l" colspan="5" style="color:var(--muted);white-space:normal;vertical-align:top">${n ? '원문은 수집됐고 AI 요약 대기 중입니다 (요약 키 등록 후 <b>지금 수집·요약</b>).' : '수집된 원문이 없습니다.'}</td></tr>`;
+      return `<tr><td class="l" style="vertical-align:top">${nm}</td>${vcell}<td class="l" style="white-space:normal;vertical-align:top">${esc(srcTxt(s.sources))}${thin}</td>
         <td class="l" style="white-space:normal;vertical-align:top">${esc(s.headline || '')}</td>
         <td class="l" style="white-space:normal;vertical-align:top">${themeList(s.positives, 'dn')}</td>
         <td class="l" style="white-space:normal;vertical-align:top">${themeList(s.negatives, 'up')}</td>
