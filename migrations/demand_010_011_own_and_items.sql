@@ -1,0 +1,4 @@
+-- 적용 완료본 요약: 우리(로운샤브) 점포 수·점포당 매출을 내부 매출 시스템에서 계산해 demand_store_counts(source='own')에 저장하는 함수
+-- demand_own_stores_refresh() 와 월 1회 예약(매월 1일 09:10 KST), 상가정보 점포 목록 표 demand_store_items.
+-- 상세 SQL은 Supabase 마이그레이션 이력(demand_010_own_store_counts, demand_011_store_items)에 있음.
+-- 참고: 상가정보로 상호명을 세는 방식은 가맹점이 다른 상호로 등록되는 경우가 많아 신뢰하기 어려워 중단(2026-10-22).

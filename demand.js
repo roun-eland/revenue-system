@@ -288,21 +288,37 @@ $('runCollectBtn').onclick = async () => {
 function renderCompetitor() {
   const rows = BRANDS.filter(b => b.status !== 'excluded').sort((a, b) => (a.kind === 'own' ? -1 : 1) - (b.kind === 'own' ? -1 : 1) || a.id - b.id);
   // 점포 수: 공정위 정보공개서 기준(기준년도별, 가맹점+직영점). 브랜드관리번호가 없는 브랜드는 아직 값이 없다.
+  const latest = (id, src, area = '전체') => SC.filter(r => r.brand_id === id && r.source === src && r.area === area).sort((x, y) => String(y.period).localeCompare(String(x.period)));
   const storeCell = b => {
-    const rows = SC.filter(r => r.brand_id === b.id && r.source === 'ftc' && r.area === '전체').sort((a, c) => String(c.period).localeCompare(String(a.period)));
-    if (!rows.length) return b.ftc_brand_no ? '<span style="color:var(--muted)">자료 없음</span>' : '<span style="color:var(--muted)" title="정보공개서에 등록된 브랜드가 아니거나 이름이 달라 찾지 못했습니다. 상가정보 집계로 보완 예정">공정위 미등록</span>';
-    const cur = rows[0], prev = rows.find(r => Number(r.period) < Number(cur.period));
-    const chg = prev ? cur.total - prev.total : null;
-    return `<div style="font-weight:700">${num(cur.total)}개 ${chg == null ? '' : `<span class="${chg >= 0 ? 'up' : 'dn'}" style="font-weight:400">${chg >= 0 ? '+' : ''}${chg}</span>`}</div><div class="dnote" style="margin:2px 0 0">가맹 ${num(cur.frcs)} · 직영 ${num(cur.dms)} (${cur.period} 기준)</div>`;
+    // 1) 우리 브랜드: 내부 매출 시스템(전 매장 직영)
+    const own = latest(b.id, 'own')[0];
+    if (own) return `<div style="font-weight:700">${num(own.total)}개 ${own.open_12m ? `<span class="up" style="font-weight:400">+${own.open_12m}</span>` : ''}</div><div class="dnote" style="margin:2px 0 0">전 매장 직영 · 최근 12개월 신규 ${num(own.open_12m || 0)}개 (내부 매출 시스템 ${esc((own.note || '').match(/\d{4}-\d{2}-\d{2}/)?.[0] || '')})</div>`;
+    // 2) 공정위 정보공개서(연 단위): 가맹+직영, 전 기준년도 대비 증감
+    const rows = latest(b.id, 'ftc');
+    if (rows.length) {
+      const cur = rows[0], prev = rows.find(r => Number(r.period) < Number(cur.period));
+      const chg = prev ? cur.total - prev.total : null;
+      return `<div style="font-weight:700">${num(cur.total)}개 ${chg == null ? '' : `<span class="${chg >= 0 ? 'up' : 'dn'}" style="font-weight:400">${chg >= 0 ? '+' : ''}${chg}</span>`}</div><div class="dnote" style="margin:2px 0 0">가맹 ${num(cur.frcs)} · 직영 ${num(cur.dms)} (정보공개서 ${cur.period} 기준)</div>`;
+    }
+    // 3) 공정위에 없으면 소상공인 상가정보에서 상호명으로 센 값(참고용: 업종 분류·상호 표기에 따라 빠질 수 있음)
+    const sm = latest(b.id, 'semas')[0];
+    if (sm && sm.total > 0) return `<div style="font-weight:700">${num(sm.total)}개 <span class="chip">참고</span></div><div class="dnote" style="margin:2px 0 0">상가정보 ${esc(String(sm.period).replace(/(\d{4})(\d{2})/, '$1-$2'))} 기준, 상호명으로 센 값(누락 가능)</div>`;
+    return b.ftc_brand_no ? '<span style="color:var(--muted)">자료 없음</span>' : '<span style="color:var(--muted)" title="정보공개서에 등록되지 않았거나 이름이 달라 찾지 못했고, 상가정보에서도 상호명으로 찾지 못했습니다">확인 불가</span>';
   };
-  $('cmpTable').innerHTML = `<table><colgroup><col style="width:180px"><col style="width:70px"><col style="width:170px"><col style="width:90px"><col style="width:130px"><col style="width:110px"><col style="width:190px"><col style="width:110px"></colgroup>
-    <thead><tr><th class="l">브랜드</th><th>구분</th><th class="l">업태</th><th>상태</th><th>월 검색수(전체)</th><th>전월 대비</th><th class="l" title="공정위 정보공개서 기준 점포 수(가맹점+직영점)와 전 기준년도 대비 증감. 연 1회 갱신이라 최신 상황과 차이가 있을 수 있음">점포 수<br><span style="font-weight:400">공정위 정보공개서</span></th><th>가격</th></tr></thead><tbody>` +
+  // 점포당 연매출: 우리는 내부 매출 시스템 값, 경쟁사는 공개 자료가 없어 비워 둔다
+  const salesCell = b => {
+    const own = latest(b.id, 'own')[0];
+    if (own && own.avg_sales_ttm) return `<div style="font-weight:700">${(own.avg_sales_ttm / 1e8).toFixed(1)}억</div><div class="dnote" style="margin:2px 0 0">최근 12개월, 12개월 이상 영업 점포 평균</div>`;
+    return '<span style="color:var(--muted)" title="경쟁사 점포당 매출은 공개 API가 없어 비워 둡니다">—</span>';
+  };
+  $('cmpTable').innerHTML = `<table><colgroup><col style="width:180px"><col style="width:70px"><col style="width:170px"><col style="width:90px"><col style="width:130px"><col style="width:110px"><col style="width:200px"><col style="width:150px"><col style="width:110px"></colgroup>
+    <thead><tr><th class="l">브랜드</th><th>구분</th><th class="l">업태</th><th>상태</th><th>월 검색수(전체)</th><th>전월 대비</th><th class="l" title="공정위 정보공개서 기준 점포 수(가맹점+직영점)와 전 기준년도 대비 증감. 연 1회 갱신이라 최신 상황과 차이가 있을 수 있음">점포 수<br><span style="font-weight:400">공정위·상가정보·내부</span></th><th class="l" title="우리는 내부 매출 시스템 기준(최근 12개월). 경쟁사는 공개된 값이 없어 비워 둠">점포당 연매출<br><span style="font-weight:400">최근 12개월</span></th><th>가격</th></tr></thead><tbody>` +
     rows.map(b => {
       const kw = KW.find(k => k.brand_id === b.id && k.grp !== 'need');
       const la = kw ? latestActual(kw.id, 'total') : null;
       const chg = la && la.prev > 0 ? (la.v / la.prev - 1) * 100 : null;
       return `<tr><td class="l"><b>${esc(b.name)}</b></td><td>${b.kind === 'own' ? '<span class="chip ok">우리</span>' : '경쟁사'}</td><td class="l">${esc(b.segment || '')}</td><td>${b.status === 'candidate' ? '<span class="chip new">후보</span>' : '사용'}</td>` +
-        `<td>${la ? num(la.v) : '—'}</td><td>${chg == null ? '—' : `<span class="${chg >= 0 ? 'up' : 'dn'}">${sgn(chg)}%</span>`}</td><td class="l" style="vertical-align:top">${storeCell(b)}</td><td style="color:var(--muted)">2단계</td></tr>`;
+        `<td>${la ? num(la.v) : '—'}</td><td>${chg == null ? '—' : `<span class="${chg >= 0 ? 'up' : 'dn'}">${sgn(chg)}%</span>`}</td><td class="l" style="vertical-align:top">${storeCell(b)}</td><td class="l" style="vertical-align:top">${salesCell(b)}</td><td style="color:var(--muted)">2단계</td></tr>`;
     }).join('') + '</tbody></table>';
 }
 

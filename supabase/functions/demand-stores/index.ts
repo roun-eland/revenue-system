@@ -5,6 +5,7 @@
 //        점포 수      : /1130000/FftcBrandFrcsDropInfo3_Service/getbrandFrcsDmsstus2 (jngBizCrtraYr, brandMnno → areaNm, frcsCnt, dmsCnt)
 //   ② 소상공인 상가(상권)정보(점포 목록을 받아 상호명으로 거름) — 번호가 없는 브랜드 보완 (아직 미구현)
 // body.mode: "resolve" = 브랜드 목록에서 우리 브랜드 이름을 찾아 후보를 돌려준다(저장 안 함).
+//            "semas"   = 상가정보에서 body.cats(업종) 전체를 훑어 상호명으로 브랜드 점포를 찾아 demand_store_items에 누적하고 demand_store_counts(source=semas)를 다시 집계. 업종이 많아 여러 번에 나눠 실행(첫 실행에 reset:true).
 //            "ftc"     = demand_brands.ftc_brand_no가 있는 브랜드의 지역별 가맹점·직영점 수를 demand_store_counts에 저장.   body.years: [2025, 2024, 2023]
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -129,6 +130,80 @@ Deno.serve(async (req) => {
         report[b.name] = per;
       }
       return json({ ok: true, report });
+    }
+    // semas: 소상공인 상가(상권)정보에서 후보 업종의 전국 점포 목록을 받아, 상호명에 브랜드 이름이 들어간 점포를 센다.
+    //   상호명 검색 기능이 없어서 업종 전체를 1000건씩 훑는다. 기준년월은 응답에 따른다(수개월 늦을 수 있음).
+    if (mode === "semas") {
+      const t0 = Date.now();
+      const cats: Array<[string, string]> = body.cats ?? [["indsSclsCd", "I20102"], ["indsMclsCd", "I207"], ["indsMclsCd", "I202"], ["indsMclsCd", "I203"]];
+      const { data: brs } = await admin.from("demand_brands").select("id,name,aliases").neq("status", "excluded").order("id");
+      const keysOf = (b: { name: string; aliases: string[] | null }) => [b.name, ...(b.aliases ?? [])].map(norm).filter((k) => k.length >= 3);
+      const found = new Map<number, Map<string, { area: string; name: string; cat: string }>>(); // brand_id → (bizesId → 정보)
+      for (const b of brs ?? []) found.set(b.id, new Map());
+      let stdrYm = "";
+      let pagesDone = 0, scanned = 0;
+      const semasCall = async (divId: string, key: string, pageNo: number) => {
+        const u = new URL("https://apis.data.go.kr/B553077/api/open/sdsc2/storeListInUpjong");
+        u.searchParams.set("ServiceKey", dataGoKey());
+        for (const [k, v] of Object.entries({ divId, key, numOfRows: 1000, pageNo, type: "json" })) u.searchParams.set(k, String(v));
+        const r = await fetch(u);
+        const text = await r.text();
+        if (!r.ok) throw new Error(`상가정보 API ${r.status}: ${text.replaceAll(dataGoKey(), "***").slice(0, 120)}`);
+        // deno-lint-ignore no-explicit-any
+        const j: any = JSON.parse(text);
+        if (j.header?.resultCode && j.header.resultCode !== "00") throw new Error(`상가정보 오류 ${j.header.resultCode}: ${j.header.resultMsg}`);
+        return j;
+      };
+      const catReport: Record<string, unknown> = {};
+      for (const [divId, key] of cats) {
+        const first = await semasCall(divId, key, 1);
+        const total = Number(first.body?.totalCount ?? 0);
+        const pages = Math.ceil(total / 1000);
+        stdrYm = stdrYm || String(first.header?.stdrYm ?? first.body?.items?.[0]?.stdrYm ?? "");
+        // deno-lint-ignore no-explicit-any
+        const eat = (items: any[], cat: string) => {
+          for (const it of items) {
+            scanned++;
+            const nm = norm(String(it.bizesNm ?? ""));
+            for (const b of brs ?? []) {
+              if (keysOf(b).some((k) => nm.includes(k))) found.get(b.id)!.set(String(it.bizesId), { area: String(it.ctprvnNm ?? "기타"), name: String(it.bizesNm ?? "") + (it.brchNm ? " " + it.brchNm : ""), cat });
+            }
+          }
+        };
+        eat(first.body?.items ?? [], key);
+        let next = 2;
+        const worker = async () => {
+          while (next <= pages && Date.now() - t0 < 120000) {
+            const p = next++;
+            try { const j = await semasCall(divId, key, p); eat(j.body?.items ?? [], key); pagesDone++; } catch (e) { catReport[`${key}#${p}`] = (e as Error).message; }
+          }
+        };
+        await Promise.all([worker(), worker(), worker(), worker()]);
+        catReport[key] = { total, pages };
+        pagesDone++;
+        if (Date.now() - t0 >= 120000) { catReport["중단"] = "시간 제한으로 일부 업종을 끝까지 못 돌았습니다."; break; }
+      }
+      const period = stdrYm || "unknown";
+      const stamp = new Date().toISOString();
+      if (body.reset) await admin.from("demand_store_items").delete().eq("source", "semas").eq("period", period); // 새 기간 첫 실행: 이전에 모은 목록을 비우고 시작
+      // 이번에 찾은 점포를 누적 저장(점포번호 기준 중복 제거)
+      for (const b of brs ?? []) {
+        const items = [...found.get(b.id)!.entries()].map(([ext_id, v]) => ({ brand_id: b.id, source: "semas", period, ext_id, area: v.area, name: v.name, cat: v.cat }));
+        for (let i = 0; i < items.length; i += 500) await admin.from("demand_store_items").upsert(items.slice(i, i + 500));
+      }
+      // 누적된 목록에서 브랜드·지역별 개수를 다시 집계해 점포 수 표에 저장
+      const result: Record<string, unknown> = {};
+      for (const b of brs ?? []) {
+        const { data: all } = await admin.from("demand_store_items").select("area").eq("brand_id", b.id).eq("source", "semas").eq("period", period).limit(5000);
+        const byArea = new Map<string, number>();
+        for (const r of all ?? []) byArea.set(r.area ?? "기타", (byArea.get(r.area ?? "기타") ?? 0) + 1);
+        await admin.from("demand_store_counts").delete().eq("brand_id", b.id).eq("source", "semas").eq("period", period);
+        const rows = [...byArea.entries()].map(([area, n]) => ({ brand_id: b.id, source: "semas", period, area, frcs: null, dms: null, total: n, collected_at: stamp }));
+        rows.push({ brand_id: b.id, source: "semas", period, area: "전체", frcs: null, dms: null, total: (all ?? []).length, collected_at: stamp });
+        const { error } = await admin.from("demand_store_counts").insert(rows);
+        result[b.name] = error ? "저장 실패: " + error.message : (all ?? []).length;
+      }
+      return json({ ok: true, period, scanned, pagesDone, seconds: Math.round((Date.now() - t0) / 1000), cats: catReport, result });
     }
     return json({ error: "알 수 없는 mode" }, 400);
   } catch (e) {
