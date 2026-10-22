@@ -83,7 +83,7 @@ function showView(v) {
 }
 document.querySelectorAll('#dmNav button').forEach(b => { b.onclick = () => showView(b.dataset.view); });
 
-function renderAll() { renderSummary(); renderSearch(); renderCompetitor(); renderVoice(); renderSource(); renderSettings(); if (window.renderReportBox) window.renderReportBox(); }
+function renderAll() { renderSummary(); renderMarket(); renderSearch(); renderCompetitor(); renderVoice(); renderSource(); renderSettings(); if (window.renderReportBox) window.renderReportBox(); }
 
 // ---------- 계산 도구 ----------
 const pad2 = n => String(n).padStart(2, '0');
@@ -151,6 +151,44 @@ function renderSummary() {
     st(2, '경쟁사 점포', true, '공정위 정보공개서 점포 수(연 단위) + 우리 점포·매출(내부 시스템). 가격 감시는 보류') +
     st(3, '고객 반응', true, '블로그·뉴스·유튜브 후기 수집 + AI 요약·부정 비중 (매월 1일 자동)') +
     st(4, '월간 리포트', true, '매월 2일 초안 자동 생성 → 기획자 검토·승인 → 게시, 엑셀 원자료');
+}
+
+// ---------- 시장 ----------
+function renderMarket() {
+  // ① 시장 키워드: 최근 실측 월 검색수, 전월 대비, 1년 전 대비(추정)
+  const mk = KW.filter(k => k.grp === 'market' && k.active);
+  const months = ymList(13);
+  const rows = mk.map(k => {
+    const la = latestActual(k.id, 'total');
+    const s = seriesFor(k.id, months, 'total');
+    const cur = la ? la.v : null, yAgo = s[0].v;
+    return { k, la, mom: la && la.prev > 0 ? (la.v / la.prev - 1) * 100 : null, yoy: cur != null && yAgo > 0 ? (cur / yAgo - 1) * 100 : null };
+  }).sort((a, b) => (b.la ? b.la.v : -1) - (a.la ? a.la.v : -1));
+  const pctCell = v => v == null ? '—' : `<span class="${v >= 0 ? 'up' : 'dn'}">${sgn(v)}%</span>`;
+  $('mkSearch').innerHTML = rows.length
+    ? `<table><colgroup><col style="width:200px"><col style="width:130px"><col style="width:120px"><col style="width:150px"></colgroup>
+      <thead><tr><th class="l">시장 키워드</th><th>월 검색수</th><th>전월 대비</th><th>1년 전 대비(추정)</th></tr></thead><tbody>` +
+      rows.map(r => `<tr><td class="l"><b>${esc(r.k.keyword)}</b></td><td>${r.la ? num(r.la.v) : '—'}${r.la ? `<span class="dnote" style="display:inline;margin-left:6px">${r.la.ym}</span>` : ''}</td><td>${pctCell(r.mom)}</td><td>${pctCell(r.yoy)}</td></tr>`).join('') + '</tbody></table>'
+    : '<div class="empty">시장 키워드 수집값이 없습니다. 검색 탭에서 수집을 먼저 실행하세요.</div>';
+
+  // ② 경쟁사 점포 수: 공정위 정보공개서 기준년도별 합계와 브랜드별 값
+  const comp = BRANDS.filter(b => b.kind === 'competitor' && b.status !== 'excluded');
+  const ftc = SC.filter(r => r.source === 'ftc' && r.area === '전체' && comp.some(b => b.id === r.brand_id));
+  const years = [...new Set(ftc.map(r => String(r.period)))].sort();
+  if (!years.length) { $('mkStores').innerHTML = '<div class="empty">공정위 점포 수 자료가 없습니다.</div>'; return; }
+  const val = (id, y) => { const r = ftc.find(x => x.brand_id === id && String(x.period) === y); return r ? r.total : null; };
+  const withData = comp.filter(b => years.some(y => val(b.id, y) != null)).sort((a, b) => (val(b.id, years[years.length - 1]) || 0) - (val(a.id, years[years.length - 1]) || 0));
+  const tot = y => withData.reduce((s, b) => s + (val(b.id, y) || 0), 0);
+  const last = years[years.length - 1], prevY = years[years.length - 2];
+  const head = years.map(y => `<th>${y}</th>`).join('');
+  const ownBrand = BRANDS.find(b => b.kind === 'own');
+  const ownRow = ownBrand ? SC.filter(r => r.brand_id === ownBrand.id && r.source === 'own' && r.area === '전체').sort((x, y) => String(y.period).localeCompare(String(x.period)))[0] : null;
+  const chgHtml = (b) => { const c = val(b.id, last), p = prevY ? val(b.id, prevY) : null; return c != null && p > 0 ? `<span class="${c - p >= 0 ? 'up' : 'dn'}">${c - p >= 0 ? '+' : ''}${c - p}</span>` : '—'; };
+  $('mkStores').innerHTML = `<table><colgroup><col style="width:180px">${years.map(() => '<col style="width:90px">').join('')}<col style="width:110px"></colgroup>
+    <thead><tr><th class="l">브랜드</th>${head}<th>${last} 증감</th></tr></thead><tbody>` +
+    withData.map(b => `<tr><td class="l"><b>${esc(b.name)}</b></td>${years.map(y => `<td>${val(b.id, y) == null ? '—' : num(val(b.id, y))}</td>`).join('')}<td>${chgHtml(b)}</td></tr>`).join('') +
+    `<tr style="font-weight:700;background:var(--bg2,#f6f6f6)"><td class="l">합계(${withData.length}곳)</td>${years.map(y => `<td>${num(tot(y))}</td>`).join('')}<td>${prevY && tot(prevY) > 0 ? (tot(last) - tot(prevY) >= 0 ? '+' : '') + (tot(last) - tot(prevY)) : '—'}</td></tr></tbody></table>` +
+    (ownRow ? `<div class="dnote" style="margin-top:6px">참고: 우리(${esc(ownBrand.name)})는 정보공개서 미등록이라 제외했고, 내부 매출 시스템 기준 ${num(ownRow.total)}개 직영점입니다(경쟁사 탭 참고).</div>` : '');
 }
 
 // ---------- 검색 ----------
