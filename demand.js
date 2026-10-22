@@ -15,7 +15,7 @@ const GRP_ORDER = ['market', 'own', 'competitor', 'need'];
 const COLORS = ['#3F9E12', '#D9822B', '#378ADD', '#8E5BD1', '#D4537E', '#2F3030', '#1D9E75', '#BA7517'];
 const ls = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 무시 */ } } };
 
-let BRANDS = [], KW = [], SM = [], TR = [], RL = [], RUNS = [];
+let BRANDS = [], KW = [], SM = [], TR = [], RL = [], RUNS = [], VS = [], VR = [];
 let KWMAP = new Map();
 let chart = null;
 
@@ -32,13 +32,15 @@ async function fetchAll(table, cols, orderCol) {
   return acc;
 }
 async function loadAll() {
-  [BRANDS, KW, SM, TR, RL, RUNS] = await Promise.all([
+  [BRANDS, KW, SM, TR, RL, RUNS, VS, VR] = await Promise.all([
     fetchAll('demand_brands', '*', 'id'),
     fetchAll('demand_keywords', '*', 'id'),
     fetchAll('demand_search_monthly', '*', 'ym'),
     fetchAll('demand_trend', '*', 'period'),
     fetchAll('demand_related', '*', 'ym'),
-    sb.from('demand_runs').select('*').order('id', { ascending: false }).limit(5).then(r => r.data || [])
+    sb.from('demand_runs').select('*').order('id', { ascending: false }).limit(5).then(r => r.data || []),
+    fetchAll('demand_voice_summary', '*', 'ym'),
+    fetchAll('demand_voice_raw', 'brand_id,source,ym', 'id')
   ]);
   KWMAP = new Map(KW.map(k => [k.id, k]));
 }
@@ -75,10 +77,11 @@ function showView(v) {
   document.querySelectorAll('#dmNav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   for (const k of VIEWS) $('view-' + k).hidden = k !== v;
   if (v === 'search') renderSearch();
+  if (v === 'voice') renderVoice();
 }
 document.querySelectorAll('#dmNav button').forEach(b => { b.onclick = () => showView(b.dataset.view); });
 
-function renderAll() { renderSummary(); renderSearch(); renderCompetitor(); renderSource(); renderSettings(); }
+function renderAll() { renderSummary(); renderSearch(); renderCompetitor(); renderVoice(); renderSource(); renderSettings(); }
 
 // ---------- 계산 도구 ----------
 const pad2 = n => String(n).padStart(2, '0');
@@ -293,14 +296,72 @@ function renderCompetitor() {
     }).join('') + '</tbody></table>';
 }
 
+// ---------- 고객 반응 (3단계) ----------
+const SRC_LABEL = { youtube_video: '유튜브 영상', youtube_comment: '유튜브 댓글', blog: '블로그', cafe: '카페', news: '뉴스' };
+async function invokeFn(name, body) {
+  const { data, error } = await sb.functions.invoke(name, { body });
+  if (error) {
+    let m = error.message;
+    try { if (error.context && error.context.json) { const j = await error.context.json(); if (j && j.error) m = j.error; } } catch (_) { /* 무시 */ }
+    throw new Error(m);
+  }
+  if (data && data.error) throw new Error(data.error);
+  return data;
+}
+const themeList = (arr, cls) => (arr && arr.length)
+  ? arr.slice(0, 3).map(t => `<div><span class="${cls}">${esc(t.theme)}</span> <span style="color:var(--muted)">${num(t.count)}건</span>${t.example ? `<div class="dnote" style="margin:0">“${esc(t.example)}”</div>` : ''}</div>`).join('')
+  : '<span style="color:var(--muted)">—</span>';
+function renderVoice() {
+  const yms = [...new Set([...VS.map(r => r.ym), ...VR.map(r => r.ym)])].sort().reverse();
+  const sel = $('vMonth');
+  const cur = sel.value && yms.includes(sel.value) ? sel.value : (yms[0] || '');
+  sel.innerHTML = yms.length ? yms.map(m => `<option value="${m}"${m === cur ? ' selected' : ''}>${m}</option>`).join('') : '<option value="">(수집 전)</option>';
+  const box = $('voiceTable');
+  if (!cur) { box.innerHTML = '<div class="empty">아직 수집된 고객 반응이 없습니다. 오른쪽 위 <b>지금 수집·요약</b>을 누르면 이 자리에 브랜드별 요약이 나타납니다.</div>'; return; }
+  const brands = BRANDS.filter(b => b.status !== 'excluded').sort((a, b) => (a.kind === 'own' ? -1 : 1) - (b.kind === 'own' ? -1 : 1) || a.id - b.id);
+  const rawCnt = new Map();
+  for (const r of VR) if (r.ym === cur) { const m = rawCnt.get(r.brand_id) || {}; m[r.source] = (m[r.source] || 0) + 1; rawCnt.set(r.brand_id, m); }
+  const sumBy = new Map(VS.filter(r => r.ym === cur).map(r => [r.brand_id, r]));
+  const srcTxt = m => Object.entries(m || {}).map(([k, v]) => `${SRC_LABEL[k] || k} ${v}`).join(' · ') || '—';
+  box.innerHTML = `<table><colgroup><col style="width:130px"><col style="width:170px"><col style="width:230px"><col style="width:260px"><col style="width:260px"><col style="width:230px"><col style="width:200px"></colgroup>
+    <thead><tr><th class="l">브랜드</th><th class="l">표본(출처별)</th><th class="l">한 줄 요약</th><th class="l">좋다는 반응</th><th class="l">아쉽다는 반응</th><th class="l">자주 언급되는 특징</th><th class="l">주의 신호</th></tr></thead><tbody>` +
+    brands.map(b => {
+      const s = sumBy.get(b.id), rc = rawCnt.get(b.id);
+      const n = s ? s.n_items : Object.values(rc || {}).reduce((a, c) => a + c, 0);
+      const thin = n < 8 ? ' <span class="chip new">표본 부족</span>' : '';
+      const nm = `<b>${esc(b.name)}</b>${b.kind === 'own' ? ' <span class="chip ok">우리</span>' : ''}`;
+      if (!s) return `<tr><td class="l">${nm}</td><td class="l" style="white-space:normal">${esc(srcTxt(rc))}${thin}</td><td class="l" colspan="5" style="color:var(--muted);white-space:normal">${n ? '원문은 수집됐고 AI 요약 대기 중입니다 (요약 키 등록 후 <b>지금 수집·요약</b>).' : '수집된 원문이 없습니다.'}</td></tr>`;
+      return `<tr><td class="l" style="vertical-align:top">${nm}</td><td class="l" style="white-space:normal;vertical-align:top">${esc(srcTxt(s.sources))}${thin}</td>
+        <td class="l" style="white-space:normal;vertical-align:top">${esc(s.headline || '')}</td>
+        <td class="l" style="white-space:normal;vertical-align:top">${themeList(s.positives, 'dn')}</td>
+        <td class="l" style="white-space:normal;vertical-align:top">${themeList(s.negatives, 'up')}</td>
+        <td class="l" style="white-space:normal;vertical-align:top">${(s.features || []).length ? s.features.slice(0, 6).map(f => `<div>· ${esc(f)}</div>`).join('') : '<span style="color:var(--muted)">—</span>'}</td>
+        <td class="l" style="white-space:normal;vertical-align:top">${(s.flags || []).length ? s.flags.map(f => `<div class="up">⚠ ${esc(f)}</div>`).join('') : '<span style="color:var(--muted)">없음</span>'}</td></tr>`;
+    }).join('') + '</tbody></table>';
+}
+$('vMonth').onchange = renderVoice;
+async function runVoice(mode) {
+  const msg = $('vMsg'), b1 = $('runVoiceBtn'), b2 = $('runVoiceOnlyBtn');
+  b1.disabled = b2.disabled = true; msg.className = 'plan-msg'; msg.textContent = mode === 'collect' ? '원문 수집 중… (1~2분)' : '수집·요약 중… (2~3분, 중복 클릭 금지)';
+  try {
+    const data = await invokeFn('demand-voice', { mode });
+    msg.className = 'plan-msg ok'; msg.textContent = data.summary;
+    await loadAll(); renderAll();
+  } catch (e) { msg.className = 'plan-msg err'; msg.textContent = '실패: ' + e.message; }
+  finally { b1.disabled = b2.disabled = false; }
+}
+$('runVoiceBtn').onclick = () => runVoice('all');
+$('runVoiceOnlyBtn').onclick = () => runVoice('collect');
+
 // ---------- 출처·한계 ----------
 function renderSource() {
   const rows = [
     ['네이버 검색광고 API (키워드 도구)', '월 검색수(PC·모바일), 연관검색어, 경쟁 정도', '월 1회 스냅샷 적재', '과거 월별 값을 주지 않아 쌓은 시점부터 실측. 검색수가 매우 적으면 "<10"으로 가려져 비어 있음.'],
     ['네이버 데이터랩 (검색어트렌드)', '검색 관심도 추이(상대지수 0~100)', '월 1회 최근 24개월', '절대 검색수가 아닌 상대값 → 실측 월에 맞춰 환산한 추정으로만 표시(점선).'],
     ['(2단계) 카카오 지도 검색', '경쟁사 점포 수 월 스냅샷', '월 1회', '신규·폐점 판정은 근사치 — 후보로 두고 사람이 확인.'],
-    ['(3단계) 네이버 블로그·뉴스·카페, 유튜브', '고객 반응, 신메뉴·프로모션 소식', '월 1회', '표본 건수와 출처 링크를 함께 표시. 광고성 글은 제외.'],
-    ['(3~4단계) AI 요약', '후기·기사 요약, 경쟁사 프로필', '월 1회', '수집한 문서만 근거로 쓰고 문장마다 출처 부여, 기획자 검토 후 게시.']
+    ['네이버 블로그·카페·뉴스 검색 (NAVER API HUB)', '고객 반응, 신메뉴·프로모션 소식', '월 1회', '검색 상위 최대 50건(제목·요약문만)이라 전수 조사가 아니며, 이름이 들어간 글만 사용. 광고성 글은 완전히 거르지 못함.'],
+    ['유튜브 (YouTube Data API v3)', '후기 영상, 인기 영상의 댓글', '월 1회', '최근 90일 후기 영상과 조회수 상위 3개 영상의 댓글 20개씩. 원문은 정책에 따라 28일 후 자동 삭제하고 요약만 남김. 작성자 정보는 저장하지 않음.'],
+    ['AI 요약 (Anthropic API)', '브랜드별 좋은 점·아쉬운 점·특징·주의 신호', '월 1회', '수집된 조각만 근거로 요약하며 표본이 8건 미만이면 "표본 부족"으로 표시. 기획자가 확인 후 활용.']
   ];
   $('srcTable').innerHTML = '<table><colgroup><col style="width:260px"><col style="width:280px"><col style="width:150px"><col></colgroup><thead><tr><th class="l">출처</th><th class="l">용도</th><th class="l">주기</th><th class="l">한계</th></tr></thead><tbody>' +
     rows.map(r => `<tr>${r.map(c => `<td class="l" style="white-space:normal">${esc(c)}</td>`).join('')}</tr>`).join('') + '</tbody></table>';
