@@ -6,7 +6,9 @@
 //   YOUTUBE_API_KEY                      유튜브 영상·댓글
 //   NAVERHUB_CLIENT_ID / _SECRET         네이버 블로그·뉴스·카페 검색 (NAVER API HUB에 '검색' API 등록 필요)
 //     (검색 전용 Application을 따로 만들었다면 NAVERSEARCH_CLIENT_ID / _SECRET 이 우선)
-//   ANTHROPIC_API_KEY                    요약 (선택: DEMAND_AI_MODEL 로 모델 지정)
+//   GEMINI_API_KEY                       요약(무료 등급 가능, 선택: GEMINI_MODEL) — 있으면 이쪽을 우선 사용
+//   ANTHROPIC_API_KEY                    요약 대체 수단 (선택: DEMAND_AI_MODEL)
+//   요약은 호출 한도 때문에 ~105초 안에서 끊어 처리하고 남은 건수(remaining)를 돌려준다. 다시 호출하면 이어서 진행.
 // 보관 원칙: 원문 조각(demand_voice_raw)은 28일 후 자동 삭제(유튜브 정책), 요약(demand_voice_summary)만 남긴다. 작성자 이름 등 개인정보는 저장하지 않는다.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -150,17 +152,57 @@ ${list}
 5) 표본이 8건 미만이면 headline에 "표본 부족"을 넣는다. headline은 한 문장.
 출력은 JSON만(설명·코드블록 금지):
 {"headline":"","positives":[{"theme":"","count":0,"example":""}],"negatives":[{"theme":"","count":0,"example":""}],"features":[""],"flags":[""]}`;
+  const SYS = "너는 외식 시장 리서치 분석가다. 주어진 자료만 근거로 간결하고 정확하게 요약하고, 지정한 JSON 형식으로만 답한다.";
+  // 키가 있는 쪽을 쓴다: Gemini(무료 등급 가능) 우선, 없으면 Anthropic
+  const { text, model } = env("GEMINI_API_KEY") ? await callGemini(SYS, prompt) : await callClaude(SYS, prompt);
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error("요약 응답에서 JSON을 찾지 못했습니다.");
+  return { out: JSON.parse(m[0]), model };
+}
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function callClaude(system: string, prompt: string) {
   const model = env("DEMAND_AI_MODEL") || "claude-sonnet-5-5";
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": env("ANTHROPIC_API_KEY"), "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model, max_tokens: 1800, system: "너는 외식 시장 리서치 분석가다. 주어진 자료만 근거로 간결하고 정확하게 요약하고, 지정한 JSON 형식으로만 답한다.", messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify({ model, max_tokens: 1800, system, messages: [{ role: "user", content: prompt }] }),
   });
   if (!r.ok) throw new Error(`Anthropic API ${r.status}: ${(await r.text()).replaceAll(env("ANTHROPIC_API_KEY"), "***").slice(0, 160)}`);
-  const text = ((await r.json()).content ?? []).map((c: { text?: string }) => c.text ?? "").join("");
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error("요약 응답에서 JSON을 찾지 못했습니다.");
-  return { out: JSON.parse(m[0]), model };
+  return { text: ((await r.json()).content ?? []).map((c: { text?: string }) => c.text ?? "").join(""), model };
+}
+// Gemini: 모델 이름이 바뀌거나 중단돼도 이어서 쓰도록 후보를 차례로 시도하고, 무료 등급의 호출 한도(429)에는 잠시 기다렸다 재시도한다
+async function callGemini(system: string, prompt: string) {
+  const key = env("GEMINI_API_KEY");
+  const models = [env("GEMINI_MODEL"), "gemini-2.5-flash", "gemini-flash-latest"].filter((x, i, a) => x && a.indexOf(x) === i);
+  let lastErr = "";
+  for (const model of models) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "x-goog-api-key": key, "content-type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 4096 },
+        }),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const text = (j.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? "").join("");
+        if (!text) throw new Error(`Gemini 응답이 비어 있습니다(${j.candidates?.[0]?.finishReason ?? j.promptFeedback?.blockReason ?? "알 수 없음"}).`);
+        return { text, model };
+      }
+      const body = (await r.text()).replaceAll(key, "***");
+      lastErr = `Gemini(${model}) ${r.status}: ${body.slice(0, 160)}`;
+      if (r.status === 404) break; // 이 모델은 없음 → 다음 후보
+      if (r.status === 429 || r.status >= 500) {
+        if (/PerDay|per day|daily/i.test(body)) throw new Error(lastErr); // 일일 한도는 기다려도 소용없음
+        await sleep(attempt === 0 ? 8000 : 15000); continue;
+      }
+      throw new Error(lastErr);
+    }
+  }
+  throw new Error(lastErr || "Gemini 호출 실패");
 }
 
 Deno.serve(async (req) => {
@@ -182,7 +224,9 @@ Deno.serve(async (req) => {
     }
     const body = await req.json().catch(() => ({}));
     const mode: string = body.mode ?? "all";
-    const hasYt = !!env("YOUTUBE_API_KEY"), hasAi = !!env("ANTHROPIC_API_KEY");
+    const t0 = Date.now(); // 함수 실행 제한(약 150초) 안에서 요약을 끊어서 이어 가기 위한 시작 시각
+    const hasYt = !!env("YOUTUBE_API_KEY"), hasAi = !!(env("GEMINI_API_KEY") || env("ANTHROPIC_API_KEY"));
+    const useGemini = !!env("GEMINI_API_KEY");
     const hasNaver = !!(env("NAVERSEARCH_CLIENT_ID") || env("NAVERHUB_CLIENT_ID"));
     if (!hasYt && !hasNaver && (mode === "collect" || mode === "all")) return json({ error: "수집할 출처 키(YOUTUBE_API_KEY 또는 네이버 검색)가 등록되지 않았습니다." }, 400);
 
@@ -220,12 +264,19 @@ Deno.serve(async (req) => {
         });
       }
 
+      let remaining = 0;
       if ((mode === "summarize" || mode === "all") && hasAi) {
-        const tasks = brands.flatMap((b) => months.map((ym) => ({ b, ym })));
-        await pool(tasks, 3, async ({ b, ym }) => {
+        // 최근 6시간 안에 이미 만든 요약은 건너뛴다(끊어서 이어 호출할 때 중복 방지). body.force=true면 전부 다시 만든다.
+        const { data: done } = await admin.from("demand_voice_summary").select("brand_id,ym,created_at").in("ym", months);
+        const fresh = new Set((done ?? []).filter((r) => Date.now() - new Date(r.created_at).getTime() < 6 * 3600 * 1000).map((r) => `${r.brand_id}|${r.ym}`));
+        const tasks = brands.flatMap((b) => months.map((ym) => ({ b, ym }))).filter((t) => body.force || !fresh.has(`${t.b.id}|${t.ym}`));
+        // 무료 Gemini는 분당 호출 수가 적어 하나씩 간격을 두고, 시간이 다 되면 남은 것은 다음 호출로 넘긴다
+        await pool(tasks, useGemini ? 1 : 3, async ({ b, ym }) => {
+          if (Date.now() - t0 > 105000) { remaining++; return; }
           const { data: raw } = await admin.from("demand_voice_raw").select("source,title,snippet").eq("brand_id", b.id).eq("ym", ym).limit(300);
           const items = raw ?? [];
           if (items.length < 3) return; // 표본이 너무 적으면 요약하지 않음(화면에는 원문 건수만 표시)
+          if (useGemini) await sleep(4500);
           const sources: Record<string, number> = {};
           for (const x of items) sources[x.source] = (sources[x.source] ?? 0) + 1;
           try {
@@ -241,9 +292,9 @@ Deno.serve(async (req) => {
         errs.push("요약 키가 없어 요약은 건너뛰었습니다.");
       }
 
-      const summary = `${months.join("·")} 발행분 원문 ${collected}건 수집 · 브랜드×월 ${summarized}건 요약${errs.length ? " · 확인 필요 " + errs.length + "건: " + errs.slice(0, 2).join(" | ") : ""}`;
+      const summary = `${months.join("·")} 발행분 원문 ${collected}건 수집 · 브랜드×월 ${summarized}건 요약${remaining ? ` · 남은 요약 ${remaining}건(다시 실행하면 이어서 진행)` : ""}${errs.length ? " · 확인 필요 " + errs.length + "건: " + errs.slice(0, 2).join(" | ") : ""}`;
       await finish(errs.length && !collected && !summarized ? "error" : "ok", summary.slice(0, 300));
-      return json({ ok: true, summary, errors: errs });
+      return json({ ok: true, summary, errors: errs, remaining });
     } catch (e) {
       await finish("error", String((e as Error).message).slice(0, 300));
       return json({ error: (e as Error).message }, 500);

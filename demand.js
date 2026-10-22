@@ -344,7 +344,12 @@ async function runVoice(mode) {
   const msg = $('vMsg'), b1 = $('runVoiceBtn'), b2 = $('runVoiceOnlyBtn');
   b1.disabled = b2.disabled = true; msg.className = 'plan-msg'; msg.textContent = mode === 'collect' ? '원문 수집 중… (1~2분)' : '수집·요약 중… (2~3분, 중복 클릭 금지)';
   try {
-    const data = await invokeFn('demand-voice', { mode });
+    let data = await invokeFn('demand-voice', { mode });
+    // 요약은 호출 한도 때문에 한 번에 다 못 끝낼 수 있어, 남은 게 있으면 이어서 요청한다(최대 8회)
+    for (let i = 1; data.remaining > 0 && i < 8; i++) {
+      msg.textContent = `요약 이어서 진행 중… (남은 ${data.remaining}건, 창을 닫지 마세요)`;
+      data = await invokeFn('demand-voice', { mode: 'summarize' });
+    }
     msg.className = 'plan-msg ok'; msg.textContent = data.summary;
     await loadAll(); renderAll();
   } catch (e) { msg.className = 'plan-msg err'; msg.textContent = '실패: ' + e.message; }
