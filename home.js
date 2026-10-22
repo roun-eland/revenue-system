@@ -56,6 +56,7 @@ function renderCards() {
     ['labor', '../labor/', '생산성', '현재월 누적'],
     ['voc', '../voc/', '고객', '최근 7일 리뷰']
   ];
+  if (isPlanner) defs.push(['demand', '../demand/', '수요', '최근 승인 월간 리포트']); // demand_reports는 기획자만 읽을 수 있다
   $('homeCards').innerHTML = defs.map(([k, h, t, s]) => `<div id="hc-${k}" style="display:contents">${pending(h, t, s)}</div>`).join('');
   const jobs = [
     fillSales().catch(e => setCard('sales', failed('../sales/', '매출', '현재월', e))),
@@ -63,10 +64,25 @@ function renderCards() {
     fillLabor().catch(e => setCard('labor', failed('../labor/', '생산성', '현재월 누적', e))),
     fillVoc().catch(e => setCard('voc', failed('../voc/', '고객', '최근 7일 리뷰', e)))
   ];
+  if (isPlanner) jobs.push(fillDemand().catch(e => setCard('demand', failed('../demand/', '수요', '최근 승인 월간 리포트', e))));
   // 월별 추이 그래프는 세 카드의 현재월 값이 정해진 뒤 그린다 (현재월 점은 카드와 같은 값)
   Promise.all(jobs).then(() => renderTrend()).catch(e => { $('trendNote').textContent = '추이 그래프를 불러오지 못했습니다: ' + (e && e.message || e); });
 }
 const TREND = { sales: null, cost: null, labor: {} }; // 카드가 채우는 현재월 값
+
+// 수요: 기획자가 승인한 가장 최근 월간 리포트의 총평과 요점을 보여 준다 (승인 전 초안은 홈에 올리지 않는다)
+async function fillDemand() {
+  const { data, error } = await sb.from('demand_reports').select('ym,title,narrative,highlights,approved_at').eq('status', 'approved').order('ym', { ascending: false }).limit(1);
+  if (error) throw error;
+  const r = data && data[0];
+  if (!r) { setCard('demand', noData('../demand/', '수요', '최근 승인 월간 리포트', '아직 승인된 월간 리포트가 없습니다. 수요 화면에서 초안을 검토·승인하세요.')); return; }
+  const n = r.narrative || {};
+  const bullets = ((n.summary && n.summary.length) ? n.summary : (r.highlights || [])).slice(0, 3);
+  const head = n.headline || (r.highlights && r.highlights[0]) || r.title;
+  setCard('demand', card('../demand/', '수요', `${r.ym} 월간 리포트`,
+    `<div class="m" style="white-space:normal"><div class="ml">총평</div><div style="font-size:14px;font-weight:700;line-height:1.5;margin-top:2px">${esc(head)}</div></div>`,
+    bullets.map(b => '· ' + esc(b)).join('<br>')));
+}
 
 async function fetchRows(build, pageSize = 1000) {
   const acc = [];
