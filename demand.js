@@ -292,16 +292,17 @@ $('runCollectBtn').onclick = async () => {
 // 경쟁사: 월별 값은 공개 자료가 없어, 알려진 시점의 값만 점으로 찍고 사이는 점선으로 잇는다.
 //   점포 수 = 공정위 정보공개서(기준년도 전년 12월) + 기획자가 확정한 최신 확인값(기준월)
 //   매출(추정) = 점포 수 × 확정한 점포당 평균 연매출 ÷ 12 — 점포 수와 평균 매출이 모두 확정된 브랜드만
-const CH_START = '2023-01';
+const CH_START = '2024-01'; // 우리 내부 매출 데이터가 2024-01부터라 그래프도 그 시점부터
 let chSales = null, chStores = null, CH_SEL = null;
 function ymRange(from, to) { const out = []; for (let m = from; m <= to; m = shiftYm(m, 1)) out.push(m); return out; }
 const curYm = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; };
-// 브랜드 이름 키워드의 가장 최근 실측 월 검색수(경쟁사 상위 4곳 선정용)
-function brandSearchNow(id) {
+// 브랜드 이름 키워드 중 가장 최근 실측 월 검색수가 가장 큰 것({v, prev, ym}) — 표 정렬·그래프 상위 4곳 선정에 같이 쓴다
+function brandSearchLatest(id) {
   let best = null;
-  for (const k of KW.filter(x => x.brand_id === id && x.grp !== 'need')) { const la = latestActual(k.id, 'total'); if (la && (best == null || la.v > best)) best = la.v; }
+  for (const k of KW.filter(x => x.brand_id === id && x.grp !== 'need')) { const la = latestActual(k.id, 'total'); if (la && (best == null || la.v > best.v)) best = la; }
   return best;
 }
+const brandSearchNow = id => { const la = brandSearchLatest(id); return la ? la.v : null; };
 // 브랜드의 점포 수 알려진 시점들: { 'YYYY-MM': 값, ... }
 function storePoints(b) {
   const pts = {};
@@ -387,7 +388,9 @@ function estCell(brandId, metric) {
   return n ? `<span class="chip new">후보 ${n}건</span> <span class="dnote" style="display:inline">아래에서 확인</span>` : '<span style="color:var(--muted)">—</span>';
 }
 function renderCompetitor() {
-  const rows = BRANDS.filter(b => b.status !== 'excluded').sort((a, b) => (a.kind === 'own' ? -1 : 1) - (b.kind === 'own' ? -1 : 1) || a.id - b.id);
+  // 우리(로운)가 맨 위, 나머지는 월 검색수 많은 순
+  const sv = b => { const la = brandSearchLatest(b.id); return la ? la.v : -1; };
+  const rows = BRANDS.filter(b => b.status !== 'excluded').sort((a, b) => (a.kind === 'own' ? -1 : 1) - (b.kind === 'own' ? -1 : 1) || sv(b) - sv(a) || a.id - b.id);
   const latest = (id, src, area = '전체') => SC.filter(r => r.brand_id === id && r.source === src && r.area === area).sort((x, y) => String(y.period).localeCompare(String(x.period)));
   // 최신 확인값(점포 수): 우리는 내부 매출 시스템, 경쟁사는 확정한 값(출처·기준일 병기)
   const nowCell = b => {
@@ -416,8 +419,7 @@ function renderCompetitor() {
   $('cmpTable').innerHTML = `<table><colgroup><col style="width:150px"><col style="width:60px"><col style="width:130px"><col style="width:60px"><col style="width:100px"><col style="width:80px"><col style="width:230px"><col style="width:220px"><col style="width:200px"><col style="width:190px"></colgroup>
     <thead><tr><th class="l">브랜드</th><th>구분</th><th class="l">업태</th><th>상태</th><th>월 검색수(전체)</th><th>전월 대비</th><th class="l" title="언론·공식 자료에서 확인해 확정한 최신 점포 수(출처·기준일 병기). 우리는 내부 매출 시스템 값">점포 수<br><span style="font-weight:400">최신 확인값</span></th><th class="l" title="공정위 정보공개서 점포 수. 연 1회 갱신되며 영업현황은 등록 전년도 말 기준이라 최신과 차이가 큽니다">점포 수<br><span style="font-weight:400">공정위(전년도 말)</span></th><th class="l" title="우리는 내부 매출 시스템 기준(최근 12개월). 경쟁사는 확인한 값만 표시">점포당 연매출<br><span style="font-weight:400">확인값</span></th><th class="l" title="공식 홈페이지·메뉴판에서 확인해 입력한 대표 가격">가격<br><span style="font-weight:400">확인값</span></th></tr></thead><tbody>` +
     rows.map(b => {
-      const kw = KW.find(k => k.brand_id === b.id && k.grp !== 'need');
-      const la = kw ? latestActual(kw.id, 'total') : null;
+      const la = brandSearchLatest(b.id);
       const chg = la && la.prev > 0 ? (la.v / la.prev - 1) * 100 : null;
       return `<tr><td class="l"><b>${esc(b.name)}</b></td><td>${b.kind === 'own' ? '<span class="chip ok">우리</span>' : '경쟁사'}</td><td class="l">${esc(b.segment || '')}</td><td>${b.status === 'candidate' ? '<span class="chip new">후보</span>' : '사용'}</td>` +
         `<td>${la ? num(la.v) : '—'}</td><td>${chg == null ? '—' : `<span class="${chg >= 0 ? 'up' : 'dn'}">${sgn(chg)}%</span>`}</td><td class="l" style="vertical-align:top">${nowCell(b)}</td><td class="l" style="vertical-align:top">${ftcCell(b)}</td><td class="l" style="vertical-align:top">${salesCell(b)}</td><td class="l" style="vertical-align:top">${estCell(b.id, 'price')}</td></tr>`;
