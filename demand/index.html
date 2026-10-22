@@ -27,6 +27,8 @@
 .up{color:var(--crit);font-weight:700}.dn{color:var(--good);font-weight:700}
 td.l,th.l{text-align:left}
 .chartbox{position:relative;height:320px}
+.chgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+@media(max-width:900px){.chgrid{grid-template-columns:1fr}}
 .empty{padding:28px 20px;color:var(--muted);font-size:13px;line-height:1.8;background:var(--fill);border-radius:4px}
 .stage{display:inline-block;font-size:11px;border-radius:9px;padding:1px 9px;background:#eef3fa;color:#3a5f8a;margin-left:6px}
 .row-del{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;padding:0 6px}
@@ -57,7 +59,6 @@ td.l,th.l{text-align:left}
 
   <nav class="ot-nav" id="dmNav">
     <button data-view="summary" class="on">요약</button>
-    <button data-view="market">시장</button>
     <button data-view="search">검색</button>
     <button data-view="voice">고객 반응</button>
     <button data-view="competitor">경쟁사</button>
@@ -95,22 +96,6 @@ td.l,th.l{text-align:left}
       <div class="card"><h3 style="margin:0 0 8px">진행 현황</h3><div id="sumStages"></div></div>
     </section>
 
-    <!-- 시장 -->
-    <section id="view-market" class="view" hidden>
-      <h2>시장 <span class="stage">2~4단계</span></h2>
-      <p class="view-sub">샤브·훠궈·스키야키·마라탕 등 근접 시장의 규모와 흐름을 봅니다. ① 시장 키워드 검색 규모 ② 경쟁사 점포 수 합계 추이(공정위 정보공개서). 시장 기사·업계 지표 수집은 아직 없습니다.</p>
-      <div class="card" style="margin-bottom:14px">
-        <h3 style="margin:0 0 4px">① 시장 키워드 월 검색수</h3>
-        <div class="dnote" style="margin:0 0 8px">네이버 월 검색수(PC+모바일). 1년 전 대비는 데이터랩 지수로 환산한 <b>추정값</b>이라 방향 참고용입니다.</div>
-        <div id="mkSearch"></div>
-      </div>
-      <div class="card">
-        <h3 style="margin:0 0 4px">② 경쟁사 점포 수 추이 <span style="font-size:11px;font-weight:400;color:var(--muted2)">공정위 정보공개서 · 가맹+직영 · 연 단위(전년도 말 영업현황)</span></h3>
-        <div class="dnote" style="margin:0 0 8px">정보공개서에 등록된 브랜드만 집계됩니다(미등록·이름 불일치 브랜드는 빠짐). 0은 해당 연도 미등록 또는 신규 등록 전입니다.</div>
-        <div id="mkStores"></div>
-      </div>
-    </section>
-
     <!-- 검색 -->
     <section id="view-search" class="view" hidden>
       <h2>검색</h2>
@@ -145,8 +130,17 @@ td.l,th.l{text-align:left}
 
     <!-- 경쟁사 -->
     <section id="view-competitor" class="view" hidden>
-      <h2>경쟁사 <span class="stage">점포·매출·가격은 확인값 방식</span></h2>
+      <h2>시장·경쟁사 <span class="stage">점포·매출·가격은 확인값 방식</span></h2>
       <p class="view-sub">등록된 경쟁사의 검색 관심도와 규모입니다. 점포 수·점포당 연매출·가격은 <b>출처와 기준일을 붙여 확인·확정한 값</b>만 “확인값” 열에 표시합니다. 공정위 정보공개서는 연 1회·전년도 말 기준이라 최신 값과 차이가 큽니다. 목록은 <b>설정</b> 탭에서 고칩니다.</p>
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 4px">월별 추이 <span style="font-size:11px;font-weight:400;color:var(--muted2)">2023~ · 우리 + 경쟁사(월 검색수 상위 4곳)</span></h3>
+        <div id="chPick" style="margin:6px 0 10px"></div>
+        <div class="chgrid">
+          <div><div class="dnote" style="margin:0 0 4px;font-weight:700">① 매출 변화 추이</div><div class="chartbox"><canvas id="cmpChartSales"></canvas></div></div>
+          <div><div class="dnote" style="margin:0 0 4px;font-weight:700">② 점포 수 변화 추이</div><div class="chartbox"><canvas id="cmpChartStores"></canvas></div></div>
+        </div>
+        <p class="dnote" id="cmpChartNote" style="margin-top:8px"></p>
+      </div>
       <div class="card"><div class="tblwrap" id="cmpTable"></div></div>
       <div class="card" style="margin-top:14px">
         <h3 style="margin:0 0 4px">확인값 관리 <span style="font-size:11px;font-weight:400;color:var(--muted2)">후보 확인 · 직접 입력</span></h3>
@@ -221,8 +215,8 @@ td.l,th.l{text-align:left}
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
-<script src="../nav.js?v=202610221110"></script>
-<script src="../demand.js?v=202610230230"></script>
+<script src="../nav.js?v=202610230330"></script>
+<script src="../demand.js?v=202610230330"></script>
 <script src="../demand-report.js?v=202610230010"></script>
 </body>
 </html>

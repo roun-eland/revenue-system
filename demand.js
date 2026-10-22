@@ -15,7 +15,7 @@ const GRP_ORDER = ['market', 'own', 'competitor', 'need'];
 const COLORS = ['#3F9E12', '#D9822B', '#378ADD', '#8E5BD1', '#D4537E', '#2F3030', '#1D9E75', '#BA7517'];
 const ls = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 무시 */ } } };
 
-let BRANDS = [], KW = [], SM = [], TR = [], RL = [], RUNS = [], VS = [], VR = [], VV = [], SC = [], EST = [];
+let BRANDS = [], KW = [], SM = [], TR = [], RL = [], RUNS = [], VS = [], VR = [], VV = [], SC = [], EST = [], OWNM = [];
 let KWMAP = new Map();
 let chart = null;
 
@@ -32,7 +32,7 @@ async function fetchAll(table, cols, orderCol) {
   return acc;
 }
 async function loadAll() {
-  [BRANDS, KW, SM, TR, RL, RUNS, VS, VR, VV, SC, EST] = await Promise.all([
+  [BRANDS, KW, SM, TR, RL, RUNS, VS, VR, VV, SC, EST, OWNM] = await Promise.all([
     fetchAll('demand_brands', '*', 'id'),
     fetchAll('demand_keywords', '*', 'id'),
     fetchAll('demand_search_monthly', '*', 'ym'),
@@ -43,7 +43,8 @@ async function loadAll() {
     fetchAll('demand_voice_raw', 'brand_id,source,ym', 'id'),
     fetchAll('demand_voice_volume', '*', 'ym'),
     fetchAll('demand_store_counts', '*', 'period'),
-    fetchAll('demand_estimates', '*', 'id')
+    fetchAll('demand_estimates', '*', 'id'),
+    sb.rpc('demand_own_monthly').then(r => r.data || [])
   ]);
   KWMAP = new Map(KW.map(k => [k.id, k]));
 }
@@ -75,8 +76,9 @@ async function init() {
 }
 $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace('../'); };
 
-const VIEWS = ['summary', 'market', 'search', 'competitor', 'voice', 'source', 'settings'];
+const VIEWS = ['summary', 'search', 'competitor', 'voice', 'source', 'settings'];
 function showView(v) {
+  if (!VIEWS.includes(v)) v = 'summary'; // 없어진 탭(예: 시장) 주소로 들어와도 요약으로
   document.querySelectorAll('#dmNav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   for (const k of VIEWS) $('view-' + k).hidden = k !== v;
   if (v === 'search') renderSearch();
@@ -84,7 +86,7 @@ function showView(v) {
 }
 document.querySelectorAll('#dmNav button').forEach(b => { b.onclick = () => showView(b.dataset.view); });
 
-function renderAll() { renderSummary(); renderMarket(); renderSearch(); renderCompetitor(); renderVoice(); renderSource(); renderSettings(); if (window.renderReportBox) window.renderReportBox(); }
+function renderAll() { renderSummary(); renderSearch(); renderCompetitor(); renderVoice(); renderSource(); renderSettings(); if (window.renderReportBox) window.renderReportBox(); }
 
 // ---------- 계산 도구 ----------
 const pad2 = n => String(n).padStart(2, '0');
@@ -152,44 +154,6 @@ function renderSummary() {
     st(2, '경쟁사 점포', true, '공정위 정보공개서 점포 수(연 단위) + 우리 점포·매출(내부 시스템). 가격 감시는 보류') +
     st(3, '고객 반응', true, '블로그·뉴스·유튜브 후기 수집 + AI 요약·부정 비중 (매월 1일 자동)') +
     st(4, '월간 리포트', true, '매월 2일 초안 자동 생성 → 기획자 검토·승인 → 게시, 엑셀 원자료');
-}
-
-// ---------- 시장 ----------
-function renderMarket() {
-  // ① 시장 키워드: 최근 실측 월 검색수, 전월 대비, 1년 전 대비(추정)
-  const mk = KW.filter(k => k.grp === 'market' && k.active);
-  const months = ymList(13);
-  const rows = mk.map(k => {
-    const la = latestActual(k.id, 'total');
-    const s = seriesFor(k.id, months, 'total');
-    const cur = la ? la.v : null, yAgo = s[0].v;
-    return { k, la, mom: la && la.prev > 0 ? (la.v / la.prev - 1) * 100 : null, yoy: cur != null && yAgo > 0 ? (cur / yAgo - 1) * 100 : null };
-  }).sort((a, b) => (b.la ? b.la.v : -1) - (a.la ? a.la.v : -1));
-  const pctCell = v => v == null ? '—' : `<span class="${v >= 0 ? 'up' : 'dn'}">${sgn(v)}%</span>`;
-  $('mkSearch').innerHTML = rows.length
-    ? `<table><colgroup><col style="width:200px"><col style="width:130px"><col style="width:120px"><col style="width:150px"></colgroup>
-      <thead><tr><th class="l">시장 키워드</th><th>월 검색수</th><th>전월 대비</th><th>1년 전 대비(추정)</th></tr></thead><tbody>` +
-      rows.map(r => `<tr><td class="l"><b>${esc(r.k.keyword)}</b></td><td>${r.la ? num(r.la.v) : '—'}${r.la ? `<span class="dnote" style="display:inline;margin-left:6px">${r.la.ym}</span>` : ''}</td><td>${pctCell(r.mom)}</td><td>${pctCell(r.yoy)}</td></tr>`).join('') + '</tbody></table>'
-    : '<div class="empty">시장 키워드 수집값이 없습니다. 검색 탭에서 수집을 먼저 실행하세요.</div>';
-
-  // ② 경쟁사 점포 수: 공정위 정보공개서 기준년도별 합계와 브랜드별 값
-  const comp = BRANDS.filter(b => b.kind === 'competitor' && b.status !== 'excluded');
-  const ftc = SC.filter(r => r.source === 'ftc' && r.area === '전체' && comp.some(b => b.id === r.brand_id));
-  const years = [...new Set(ftc.map(r => String(r.period)))].sort();
-  if (!years.length) { $('mkStores').innerHTML = '<div class="empty">공정위 점포 수 자료가 없습니다.</div>'; return; }
-  const val = (id, y) => { const r = ftc.find(x => x.brand_id === id && String(x.period) === y); return r ? r.total : null; };
-  const withData = comp.filter(b => years.some(y => val(b.id, y) != null)).sort((a, b) => (val(b.id, years[years.length - 1]) || 0) - (val(a.id, years[years.length - 1]) || 0));
-  const tot = y => withData.reduce((s, b) => s + (val(b.id, y) || 0), 0);
-  const last = years[years.length - 1], prevY = years[years.length - 2];
-  const head = years.map(y => `<th>${Number(y) - 1}년 말</th>`).join('');
-  const ownBrand = BRANDS.find(b => b.kind === 'own');
-  const ownRow = ownBrand ? SC.filter(r => r.brand_id === ownBrand.id && r.source === 'own' && r.area === '전체').sort((x, y) => String(y.period).localeCompare(String(x.period)))[0] : null;
-  const chgHtml = (b) => { const c = val(b.id, last), p = prevY ? val(b.id, prevY) : null; return c != null && p > 0 ? `<span class="${c - p >= 0 ? 'up' : 'dn'}">${c - p >= 0 ? '+' : ''}${c - p}</span>` : '—'; };
-  $('mkStores').innerHTML = `<table><colgroup><col style="width:180px">${years.map(() => '<col style="width:90px">').join('')}<col style="width:110px"></colgroup>
-    <thead><tr><th class="l">브랜드</th>${head}<th>${Number(last) - 1}년 말 증감</th></tr></thead><tbody>` +
-    withData.map(b => `<tr><td class="l"><b>${esc(b.name)}</b></td>${years.map(y => `<td>${val(b.id, y) == null ? '—' : num(val(b.id, y))}</td>`).join('')}<td>${chgHtml(b)}</td></tr>`).join('') +
-    `<tr style="font-weight:700;background:var(--bg2,#f6f6f6)"><td class="l">합계(${withData.length}곳)</td>${years.map(y => `<td>${num(tot(y))}</td>`).join('')}<td>${prevY && tot(prevY) > 0 ? (tot(last) - tot(prevY) >= 0 ? '+' : '') + (tot(last) - tot(prevY)) : '—'}</td></tr></tbody></table>` +
-    (ownRow ? `<div class="dnote" style="margin-top:6px">참고: 우리(${esc(ownBrand.name)})는 정보공개서 미등록이라 제외했고, 내부 매출 시스템 기준 ${num(ownRow.total)}개 직영점입니다(경쟁사 탭 참고).</div>` : '');
 }
 
 // ---------- 검색 ----------
@@ -323,6 +287,81 @@ $('runCollectBtn').onclick = async () => {
   } finally { btn.disabled = false; }
 };
 
+// ---------- 경쟁사 월별 추이 그래프 (2023~) ----------
+// 우리: 내부 매출 시스템의 월별 매출·영업 점포 수(2024-01부터 있음).
+// 경쟁사: 월별 값은 공개 자료가 없어, 알려진 시점의 값만 점으로 찍고 사이는 점선으로 잇는다.
+//   점포 수 = 공정위 정보공개서(기준년도 전년 12월) + 기획자가 확정한 최신 확인값(기준월)
+//   매출(추정) = 점포 수 × 확정한 점포당 평균 연매출 ÷ 12 — 점포 수와 평균 매출이 모두 확정된 브랜드만
+const CH_START = '2023-01';
+let chSales = null, chStores = null, CH_SEL = null;
+function ymRange(from, to) { const out = []; for (let m = from; m <= to; m = shiftYm(m, 1)) out.push(m); return out; }
+const curYm = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; };
+// 브랜드 이름 키워드의 가장 최근 실측 월 검색수(경쟁사 상위 4곳 선정용)
+function brandSearchNow(id) {
+  let best = null;
+  for (const k of KW.filter(x => x.brand_id === id && x.grp !== 'need')) { const la = latestActual(k.id, 'total'); if (la && (best == null || la.v > best)) best = la.v; }
+  return best;
+}
+// 브랜드의 점포 수 알려진 시점들: { 'YYYY-MM': 값, ... }
+function storePoints(b) {
+  const pts = {};
+  for (const r of SC.filter(r => r.brand_id === b.id && r.source === 'ftc' && r.area === '전체' && r.total > 0)) pts[`${Number(r.period) - 1}-12`] = r.total;
+  for (const e of estOf(b.id, 'stores', 'confirmed').slice().reverse()) if (e.as_of) pts[String(e.as_of).slice(0, 7)] = Number(e.value);
+  return pts;
+}
+// 추정 월 매출(억원): 점포 수 × 점포당 평균 연매출 ÷ 12, 확정된 평균 매출의 기준월에 점 하나씩
+function salesPoints(b) {
+  const sp = storePoints(b), keys = Object.keys(sp).sort(), pts = {};
+  for (const e of estOf(b.id, 'avg_sales', 'confirmed')) {
+    if (!e.as_of || !keys.length) continue;
+    const m = String(e.as_of).slice(0, 7);
+    const near = keys.reduce((a, k) => Math.abs(ymIdx(k) - ymIdx(m)) < Math.abs(ymIdx(a) - ymIdx(m)) ? k : a, keys[0]);
+    if (Math.abs(ymIdx(near) - ymIdx(m)) <= 12) pts[m] = Number(e.value) * sp[near] / 12;
+  }
+  return pts;
+}
+const ymIdx = ym => { const [y, m] = ym.split('-').map(Number); return y * 12 + m; };
+function renderCmpCharts() {
+  if (!$('cmpChartSales') || typeof Chart === 'undefined') return;
+  const own = BRANDS.find(b => b.kind === 'own' && b.status !== 'excluded');
+  const comps = BRANDS.filter(b => b.kind === 'competitor' && b.status !== 'excluded');
+  const ranked = comps.map(b => ({ b, v: brandSearchNow(b.id) })).sort((a, c) => (c.v || 0) - (a.v || 0));
+  if (!CH_SEL) CH_SEL = ranked.slice(0, 4).map(x => x.b.id);
+  $('chPick').innerHTML = ranked.map(({ b, v }) => `<label class="chip" style="cursor:pointer;margin:2px 4px 2px 0"><input type="checkbox" data-chpick="${b.id}"${CH_SEL.includes(b.id) ? ' checked' : ''}> ${esc(b.name)}${v ? ` <span class="dnote" style="display:inline">${num(v)}</span>` : ''}</label>`).join('');
+  const months = ymRange(CH_START, curYm());
+  const ownM = new Map((OWNM || []).map(r => [r.ym, r]));
+  const sets = (kind) => {
+    const out = [];
+    if (own) {
+      const data = months.map(m => { const r = ownM.get(m); return r ? (kind === 'sales' ? r.sales / 1e8 : r.stores) : null; });
+      out.push({ label: own.name + ' (내부)', data, borderColor: COLORS[0], backgroundColor: COLORS[0], borderWidth: 3, pointRadius: 2, tension: 0.15, spanGaps: false });
+    }
+    CH_SEL.map(id => comps.find(b => b.id === id)).filter(Boolean).forEach((b, i) => {
+      const pts = kind === 'sales' ? salesPoints(b) : storePoints(b);
+      const data = months.map(m => pts[m] != null ? pts[m] : null);
+      out.push({ label: b.name, data, borderColor: COLORS[(i + 1) % COLORS.length], backgroundColor: COLORS[(i + 1) % COLORS.length], borderWidth: 1.5, borderDash: [5, 4], pointRadius: 5, pointStyle: 'rectRot', spanGaps: true, tension: 0 });
+    });
+    return out;
+  };
+  const mk = (id, kind, prev, unit) => {
+    if (prev) prev.destroy();
+    return new Chart($(id), { type: 'line', data: { labels: months, datasets: sets(kind) }, options: {
+      responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y == null ? '—' : (kind === 'sales' ? c.parsed.y.toFixed(1) + '억' : num(c.parsed.y) + '개')}${kind === 'sales' && !c.dataset.label.includes('내부') ? ' (추정)' : ''}` } } },
+      scales: { x: { ticks: { maxTicksLimit: 12, font: { size: 10 } } }, y: { beginAtZero: true, title: { display: true, text: unit, font: { size: 11 } } } } } });
+  };
+  chSales = mk('cmpChartSales', 'sales', chSales, '월 매출 (억원)');
+  chStores = mk('cmpChartStores', 'stores', chStores, '점포 수 (개)');
+  const part = (OWNM || []).find(r => r.partial);
+  $('cmpChartNote').innerHTML = `우리(굵은 실선)는 내부 매출 시스템 월별 실적이며 <b>2024-01부터</b> 있습니다${part ? `(${part.ym}은 진행 중인 달이라 낮게 보임)` : ''}. 경쟁사(점선·마름모)는 월별 공개 자료가 없어 <b>알려진 시점의 값만</b> 표시합니다 — 점포 수는 공정위 정보공개서(전년도 12월)와 확정한 최신 확인값, 매출은 <b>확정한 점포 수 × 점포당 평균 연매출 ÷ 12 추정</b>이며 둘 다 확정된 브랜드만 나옵니다. 비교할 브랜드는 위 체크로 바꿀 수 있습니다(기본: 월 검색수 상위 4곳).`;
+}
+document.addEventListener('change', e => {
+  const t = e.target.closest('[data-chpick]'); if (!t) return;
+  const id = Number(t.dataset.chpick);
+  CH_SEL = t.checked ? [...new Set([...(CH_SEL || []), id])] : (CH_SEL || []).filter(x => x !== id);
+  renderCmpCharts();
+});
+
 // ---------- 경쟁사 ----------
 // ---------- 경쟁사 ----------
 // 공정위 API의 '기준년도'는 정보공개서 등록 연도라, 영업현황은 그 전년도 말 기준이다 (탕화쿵푸 2023→327, 2025→494가 언론의 2022·2024년 말 매장 수와 일치)
@@ -379,6 +418,7 @@ function renderCompetitor() {
         `<td>${la ? num(la.v) : '—'}</td><td>${chg == null ? '—' : `<span class="${chg >= 0 ? 'up' : 'dn'}">${sgn(chg)}%</span>`}</td><td class="l" style="vertical-align:top">${nowCell(b)}</td><td class="l" style="vertical-align:top">${ftcCell(b)}</td><td class="l" style="vertical-align:top">${salesCell(b)}</td><td class="l" style="vertical-align:top">${estCell(b.id, 'price')}</td></tr>`;
     }).join('') + '</tbody></table>';
   renderEstPanel();
+  renderCmpCharts();
 }
 
 // 후보 확인·직접 입력 패널
