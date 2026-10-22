@@ -21,6 +21,8 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const enc = new TextEncoder();
+// 키를 붙여넣을 때 끼는 앞뒤 공백·줄바꿈 제거
+const env = (n: string) => (Deno.env.get(n) ?? "").trim();
 // upsert 실패를 조용히 넘기지 않고 실행 기록(demand_runs)에 남기기 위해 오류를 던진다
 // deno-lint-ignore no-explicit-any
 const ck = (r: any) => { if (r?.error) throw new Error(`DB 저장 실패: ${r.error.message}`); };
@@ -37,12 +39,19 @@ async function keywordTool(hints: string[]) {
   const res = await fetch(`https://api.searchad.naver.com${uri}?hintKeywords=${encodeURIComponent(hints.join(","))}&showDetail=1`, {
     headers: {
       "X-Timestamp": ts,
-      "X-API-KEY": Deno.env.get("NAVERAD_ACCESS_LICENSE")!,
-      "X-Customer": Deno.env.get("NAVERAD_CUSTOMER_ID")!,
-      "X-Signature": await adSign(ts, "GET", uri, Deno.env.get("NAVERAD_SECRET_KEY")!),
+      "X-API-KEY": env("NAVERAD_ACCESS_LICENSE"),
+      "X-Customer": env("NAVERAD_CUSTOMER_ID"),
+      "X-Signature": await adSign(ts, "GET", uri, env("NAVERAD_SECRET_KEY")),
     },
   });
-  if (!res.ok) throw new Error(`검색광고 API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) {
+    // 키 값은 노출하지 않고 길이·형태만 알려 입력 실수를 가려낸다 (고객ID 숫자, 라이선스 64자, 비밀키 44자 안팎이 정상)
+    const c = env("NAVERAD_CUSTOMER_ID"), l = env("NAVERAD_ACCESS_LICENSE"), k = env("NAVERAD_SECRET_KEY");
+    const diag = `[진단 고객ID ${c.length}자${/^\d+$/.test(c) ? "·숫자" : "·숫자아님"} / 라이선스 ${l.length}자 / 비밀키 ${k.length}자]`;
+    // 네이버 오류 본문에는 액세스 라이선스가 그대로 들어 있어 화면·DB에 남기지 않도록 가린다
+    const body = (await res.text()).replace(/api-key:\s*\S+/g, "api-key: ***").slice(0, 120);
+    throw new Error(`검색광고 API ${res.status} ${diag}: ${body}`);
+  }
   const data = await res.json();
   return (data.keywordList ?? []) as Array<Record<string, unknown>>;
 }
@@ -54,8 +63,8 @@ async function dataLab(keywords: Array<{ id: number; keyword: string }>, start: 
   const res = await fetch("https://naverapihub.apigw.ntruss.com/search-trend/v1/search", {
     method: "POST",
     headers: {
-      "X-NCP-APIGW-API-KEY-ID": Deno.env.get("NAVERHUB_CLIENT_ID")!,
-      "X-NCP-APIGW-API-KEY": Deno.env.get("NAVERHUB_CLIENT_SECRET")!,
+      "X-NCP-APIGW-API-KEY-ID": env("NAVERHUB_CLIENT_ID"),
+      "X-NCP-APIGW-API-KEY": env("NAVERHUB_CLIENT_SECRET"),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -86,7 +95,7 @@ Deno.serve(async (req) => {
       if (!prof || prof.role !== "planner") return json({ error: "기획자 계정만 실행할 수 있습니다." }, 403);
     }
     for (const n of ["NAVERAD_CUSTOMER_ID", "NAVERAD_ACCESS_LICENSE", "NAVERAD_SECRET_KEY", "NAVERHUB_CLIENT_ID", "NAVERHUB_CLIENT_SECRET"]) {
-      if (!Deno.env.get(n)) return json({ error: `서버 설정에 ${n} 키가 아직 등록되지 않았습니다.` }, 400);
+      if (!env(n)) return json({ error: `서버 설정에 ${n} 키가 아직 등록되지 않았습니다.` }, 400);
     }
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -135,13 +144,17 @@ Deno.serve(async (req) => {
       // 2) 검색어 트렌드(HUB): 최근 24개월 월별 상대지수 (한 번에 5개 키워드 그룹)
       const end = new Date(); const start = new Date(end.getFullYear(), end.getMonth() - 23, 1);
       const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const dim = new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate();
+      const elapsed = end.getDate() - 1; // 데이터랩은 어제까지의 값
+      const curPeriod = `${fmt(end).slice(0, 7)}-01`;
       for (let i = 0; i < keywords.length; i += 5) {
         const chunk = keywords.slice(i, i + 5);
         const results = await dataLab(chunk.map((k) => ({ id: k.id, keyword: k.keyword })), fmt(start), fmt(end));
         for (const r of results) {
           const k = chunk.find((x) => x.keyword === r.title);
           if (!k) continue;
-          const rows = r.data.map((d) => ({ keyword_id: k.id, period: d.period, ratio: d.ratio }));
+          // 이번 달은 아직 진행 중이라 데이터랩 지수가 지난 날짜만큼만 쌓여 있다 → 한 달치로 환산해 저장 (그대로 두면 이번 달이 실제보다 낮게 잡혀 과거 추정이 부풀려진다)
+          const rows = r.data.map((d) => ({ keyword_id: k.id, period: d.period, ratio: d.period === curPeriod && elapsed >= 1 && elapsed < dim ? d.ratio * dim / elapsed : d.ratio }));
           if (rows.length) { ck(await admin.from("demand_trend").upsert(rows)); trendRows += rows.length; }
         }
         await sleep(300);

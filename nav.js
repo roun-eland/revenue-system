@@ -27,7 +27,7 @@
     { id: 'supply', label: '공급', mark: '공', href: 'supply/', nav: '#spNav button', attr: 'view',
       items: [['hq', '본부 재고', 1], ['upload', '데이터 업로드', 1]] },
     { id: 'demand', label: '수요', mark: '수', href: 'demand/', nav: '#dmNav button', attr: 'view',
-      items: [['summary', '요약', 1], ['market', '시장', 1], ['search', '검색', 1], ['competitor', '경쟁사', 1], ['voice', '고객 반응', 1], ['source', '출처·한계', 1], ['settings', '설정', 1]] },
+      items: [['summary', '요약', 1], ['market', '시장', 1], ['search', '검색', 1], ['voice', '고객 반응', 1], ['competitor', '경쟁사', 1], ['source', '출처·한계', 1], ['settings', '설정', 1]] },
     { id: 'voc', label: '고객', mark: '고', href: 'voc/', nav: '#cxNav button', attr: 'view',
       items: [['brand', '브랜드 대시보드'], ['wreview', '주차별 리뷰'], ['store', '매장 요인 분석'], ['praise', '칭찬 사원'], ['red', '레드플래그'], ['reviews', '리뷰·조치'], ['upload', '데이터 업로드', 1]] }
   ];
