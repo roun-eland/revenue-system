@@ -134,7 +134,9 @@ td.l,th.l{text-align:left}
       <p class="view-sub">등록된 경쟁사의 검색 관심도와 규모입니다. 점포 수·점포당 연매출·가격은 <b>출처와 기준일을 붙여 확인·확정한 값</b>만 “확인값” 열에 표시합니다. 공정위 정보공개서는 연 1회·전년도 말 기준이라 최신 값과 차이가 큽니다. 목록은 <b>설정</b> 탭에서 고칩니다.</p>
       <div class="card" style="margin-bottom:14px">
         <h3 style="margin:0 0 4px">월별 추이 <span style="font-size:11px;font-weight:400;color:var(--muted2)">2023~ · 우리 + 경쟁사(월 검색수 상위 4곳)</span></h3>
-        <div id="chPick" style="margin:6px 0 10px"></div>
+        <div id="chPick" style="margin:6px 0 4px"></div>
+        <label style="font-size:12px;cursor:pointer"><input type="checkbox" id="chLog" checked> 세로축 로그 눈금 (우리와 경쟁사 규모 차이가 커서 작은 값도 보이게)</label>
+        <div style="height:6px"></div>
         <div class="chgrid">
           <div><div class="dnote" style="margin:0 0 4px;font-weight:700">① 매출 변화 추이</div><div class="chartbox"><canvas id="cmpChartSales"></canvas></div></div>
           <div><div class="dnote" style="margin:0 0 4px;font-weight:700">② 점포 수 변화 추이</div><div class="chartbox"><canvas id="cmpChartStores"></canvas></div></div>
@@ -152,7 +154,7 @@ td.l,th.l{text-align:left}
         <h4 style="margin:14px 0 6px;font-size:13px">직접 입력</h4>
         <div class="filters" style="flex-wrap:wrap;gap:6px;align-items:center">
           <select id="estBrand"></select>
-          <select id="estMetric"><option value="stores">점포 수</option><option value="avg_sales">점포당 연매출</option><option value="price">가격</option></select>
+          <select id="estMetric"><option value="stores">점포 수</option><option value="avg_sales">점포당 연매출</option><option value="sales">브랜드 연 매출</option><option value="price">가격</option></select>
           <input id="estValue" type="number" step="any" min="0" placeholder="값" style="width:100px"><span id="estUnit" class="dnote" style="margin:0">개</span>
           <label>기준일</label><input id="estDate" type="date">
           <select id="estType"><option value="official">공식 홈페이지·공시</option><option value="news">언론 기사</option><option value="manual">직접 확인</option><option value="estimate">추정</option></select>
@@ -216,7 +218,7 @@ td.l,th.l{text-align:left}
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
 <script src="../nav.js?v=202610230330"></script>
-<script src="../demand.js?v=202610230330"></script>
+<script src="../demand.js?v=202610230430"></script>
 <script src="../demand-report.js?v=202610230010"></script>
 </body>
 </html>

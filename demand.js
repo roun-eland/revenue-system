@@ -318,6 +318,8 @@ function salesPoints(b) {
     const near = keys.reduce((a, k) => Math.abs(ymIdx(k) - ymIdx(m)) < Math.abs(ymIdx(a) - ymIdx(m)) ? k : a, keys[0]);
     if (Math.abs(ymIdx(near) - ymIdx(m)) <= 12) pts[m] = Number(e.value) * sp[near] / 12;
   }
+  // 브랜드(운영 법인) 연 매출을 확정한 경우(직영 위주 브랜드)는 그 값을 우선: 연 매출 ÷ 12를 회계연도 말 월에 찍는다
+  for (const e of estOf(b.id, 'sales', 'confirmed').slice().reverse()) if (e.as_of) pts[String(e.as_of).slice(0, 7)] = Number(e.value) / 12;
   return pts;
 }
 const ymIdx = ym => { const [y, m] = ym.split('-').map(Number); return y * 12 + m; };
@@ -328,8 +330,9 @@ function renderCmpCharts() {
   const ranked = comps.map(b => ({ b, v: brandSearchNow(b.id) })).sort((a, c) => (c.v || 0) - (a.v || 0));
   if (!CH_SEL) CH_SEL = ranked.slice(0, 4).map(x => x.b.id);
   $('chPick').innerHTML = ranked.map(({ b, v }) => `<label class="chip" style="cursor:pointer;margin:2px 4px 2px 0"><input type="checkbox" data-chpick="${b.id}"${CH_SEL.includes(b.id) ? ' checked' : ''}> ${esc(b.name)}${v ? ` <span class="dnote" style="display:inline">${num(v)}</span>` : ''}</label>`).join('');
+  if ($('chLog') && !$('chLog').dataset.init) { $('chLog').dataset.init = '1'; $('chLog').checked = ls.get('dm_chlog') !== '0'; }
   const months = ymRange(CH_START, curYm());
-  const ownM = new Map((OWNM || []).map(r => [r.ym, r]));
+  const ownM =new Map((OWNM || []).map(r => [r.ym, r]));
   const sets = (kind) => {
     const out = [];
     if (own) {
@@ -348,14 +351,16 @@ function renderCmpCharts() {
     return new Chart($(id), { type: 'line', data: { labels: months, datasets: sets(kind) }, options: {
       responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false },
       plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y == null ? '—' : (kind === 'sales' ? c.parsed.y.toFixed(1) + '억' : num(c.parsed.y) + '개')}${kind === 'sales' && !c.dataset.label.includes('내부') ? ' (추정)' : ''}` } } },
-      scales: { x: { ticks: { maxTicksLimit: 12, font: { size: 10 } } }, y: { beginAtZero: true, title: { display: true, text: unit, font: { size: 11 } } } } } });
+      scales: { x: { ticks: { maxTicksLimit: 12, font: { size: 10 } } }, y: LOGY ? { type: 'logarithmic', title: { display: true, text: unit + ' · 로그 눈금', font: { size: 11 } }, ticks: { callback: v => [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000].includes(v) ? v.toLocaleString('ko-KR') : '' } } : { beginAtZero: true, title: { display: true, text: unit, font: { size: 11 } } } } } });
   };
+  const LOGY = !$('chLog') || $('chLog').checked;
   chSales = mk('cmpChartSales', 'sales', chSales, '월 매출 (억원)');
   chStores = mk('cmpChartStores', 'stores', chStores, '점포 수 (개)');
   const part = (OWNM || []).find(r => r.partial);
-  $('cmpChartNote').innerHTML = `우리(굵은 실선)는 내부 매출 시스템 월별 실적이며 <b>2024-01부터</b> 있습니다${part ? `(${part.ym}은 진행 중인 달이라 낮게 보임)` : ''}. 경쟁사(점선·마름모)는 월별 공개 자료가 없어 <b>알려진 시점의 값만</b> 표시합니다 — 점포 수는 공정위 정보공개서(전년도 12월)와 확정한 최신 확인값, 매출은 <b>확정한 점포 수 × 점포당 평균 연매출 ÷ 12 추정</b>이며 둘 다 확정된 브랜드만 나옵니다. 비교할 브랜드는 위 체크로 바꿀 수 있습니다(기본: 월 검색수 상위 4곳).`;
+  $('cmpChartNote').innerHTML = `우리(굵은 실선)는 내부 매출 시스템 월별 실적이며 <b>2024-01부터</b> 있습니다${part ? `(${part.ym}은 진행 중인 달이라 낮게 보임)` : ''}. 경쟁사(점선·마름모)는 월별 공개 자료가 없어 <b>알려진 시점의 값만</b> 표시합니다 — 점포 수는 공정위 정보공개서(전년도 12월)와 확정한 최신 확인값, 매출은 ① 확정한 <b>브랜드(법인) 연 매출 ÷ 12</b>(직영 위주 브랜드) 또는 ② <b>확정한 점포 수 × 점포당 평균 연매출 ÷ 12 추정</b>이며, 확정된 값이 있는 브랜드·연도만 나옵니다(연 단위 값은 회계연도 말 12월에 찍음). 비교할 브랜드는 위 체크로 바꿀 수 있습니다(기본: 월 검색수 상위 4곳).`;
 }
 document.addEventListener('change', e => {
+  if (e.target.id === 'chLog') { ls.set('dm_chlog', e.target.checked ? '1' : '0'); renderCmpCharts(); return; }
   const t = e.target.closest('[data-chpick]'); if (!t) return;
   const id = Number(t.dataset.chpick);
   CH_SEL = t.checked ? [...new Set([...(CH_SEL || []), id])] : (CH_SEL || []).filter(x => x !== id);
@@ -366,12 +371,12 @@ document.addEventListener('change', e => {
 // ---------- 경쟁사 ----------
 // 공정위 API의 '기준년도'는 정보공개서 등록 연도라, 영업현황은 그 전년도 말 기준이다 (탕화쿵푸 2023→327, 2025→494가 언론의 2022·2024년 말 매장 수와 일치)
 const ftcAsOf = y => `${Number(y) - 1}년 말`;
-const EST_LABEL = { stores: '점포 수', avg_sales: '점포당 연매출', price: '가격' };
-const EST_UNIT = { stores: '개', avg_sales: '억원', price: '원' };
+const EST_LABEL = { stores: '점포 수', avg_sales: '점포당 연매출', sales: '브랜드 연 매출', price: '가격' };
+const EST_UNIT = { stores: '개', avg_sales: '억원', sales: '억원', price: '원' };
 const SRC_TYPE = { official: '공식', news: '언론', estimate: '추정', manual: '직접 확인' };
 const estOf = (brandId, metric, status) => EST.filter(e => e.brand_id === brandId && e.metric === metric && e.status === status)
   .sort((a, b) => String(b.as_of || '').localeCompare(String(a.as_of || '')) || b.id - a.id);
-const estFmt = e => e.metric === 'avg_sales' ? `${Number(e.value).toFixed(1)}억` : e.metric === 'price' ? `${num(e.value)}원` : `${num(e.value)}개`;
+const estFmt = e => e.metric === 'avg_sales' ? `${Number(e.value).toFixed(1)}억` : e.metric === 'sales' ? `${num(e.value)}억` : e.metric === 'price' ? `${num(e.value)}원` : `${num(e.value)}개`;
 // 확정된 최신 확인값 한 칸: 값 + 출처 유형 + 기준일·출처 링크
 function estCell(brandId, metric) {
   const c = estOf(brandId, metric, 'confirmed')[0], n = estOf(brandId, metric, 'candidate').length;

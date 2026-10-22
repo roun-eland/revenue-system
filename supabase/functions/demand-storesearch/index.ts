@@ -18,7 +18,7 @@ const strip = (s: string) => String(s ?? "").replace(/<[^>]+>/g, "").replace(/&q
 const ALIAS: Record<string, string> = { "샤브보트R": "샤브보트" };
 // 점포 수 / 점포당 평균 매출이 적혀 있을 법한 문장만 AI에게 보낸다(날짜순 검색은 잡음이 많아 먼저 걸러야 한다)
 const STORE_RE = /(매장|가맹점|점포|호점|직영)[^.]{0,24}\d[\d,]*\s*(개|곳|호점|점)|\d[\d,]*\s*(개|곳|호점)[^.]{0,14}(매장|가맹점|점포)/;
-const SALES_RE = /(평균\s*매출|점당\s*매출|한\s*곳당\s*(평균\s*)?매출|연\s*평균\s*매출|평균\s*연매출)/;
+const SALES_RE = /(평균\s*매출|점당\s*매출|한\s*곳당\s*(평균\s*)?매출|연\s*평균\s*매출|평균\s*연매출)|매출[^.]{0,24}\d[\d,.]*\s*(억|조)/;
 
 async function news(q: string, sort: "date" | "sim") {
   const id = env("NAVERSEARCH_CLIENT_ID") || env("NAVERHUB_CLIENT_ID");
@@ -85,6 +85,7 @@ Deno.serve(async (req) => {
     const list = all ?? [];
     const offset = Math.max(0, Number(body.offset) || 0), limit = Math.max(1, Math.min(8, Number(body.limit) || 4));
     const batch = list.slice(offset, offset + limit);
+    const years: number[] = Array.isArray(body.years) ? body.years.map(Number).filter((y: number) => y >= 2018 && y <= 2030).slice(0, 5) : [];
     if (!batch.length) return json({ ok: true, by: who, done: true, remaining: 0, summary: "처리할 브랜드가 없습니다." });
 
     // 1) 기사 모으기: 점포 수 숫자가 들어 있고 브랜드명이 언급된 기사만 남긴다
@@ -93,7 +94,11 @@ Deno.serve(async (req) => {
     for (const b of batch) {
       const nm = ALIAS[b.name] ?? b.name;
       const seen = new Map<string, { n: number; title: string; desc: string; url: string; date: string }>();
-      for (const [kw, sort] of [[`"${nm}" 매장 수`, "sim"], [`"${nm}" 가맹점 평균 매출`, "sim"], [`"${nm}" 호점 돌파`, "sim"], [`"${nm}" 폐업`, "date"], [`"${nm}" 매장`, "date"]] as const) {
+      // years를 주면 연도별 과거 값 수집 모드(연도 단어를 넣어 그 해 기사를 찾는다), 아니면 최근 기사 위주
+      const queries: Array<[string, "date" | "sim"]> = years.length
+        ? years.flatMap((y) => [[`"${nm}" ${y}년 매장 수`, "sim"], [`"${nm}" ${y}년 매출`, "sim"]] as Array<[string, "date" | "sim"]>)
+        : [[`"${nm}" 매장 수`, "sim"], [`"${nm}" 가맹점 평균 매출`, "sim"], [`"${nm}" 호점 돌파`, "sim"], [`"${nm}" 폐업`, "date"], [`"${nm}" 매장`, "date"]];
+      for (const [kw, sort] of queries) {
         try {
           for (const it of await news(kw, sort)) {
             const title = strip(it.title), desc = strip(it.description), url = it.originallink || it.link;
@@ -104,7 +109,7 @@ Deno.serve(async (req) => {
         } catch (e) { if (!seen.size) throw e; }
         await sleep(250);
       }
-      pack.push({ brand: b, items: [...seen.values()].sort((a, c) => c.date.localeCompare(a.date)).slice(0, 24) });
+      pack.push({ brand: b, items: [...seen.values()].sort((a, c) => c.date.localeCompare(a.date)).slice(0, years.length ? 36 : 24) });
     }
 
     // 2) AI가 기사 문장에서 '현재 전국 총 점포 수'만 뽑는다
@@ -112,9 +117,9 @@ Deno.serve(async (req) => {
     let saved = 0, note = "";
     if (withItems.length) {
       const data = withItems.map((p) => ({ brand_id: p.brand.id, brand: p.brand.name, articles: p.items.map((x, i) => ({ i, date: x.date, title: x.title, text: x.desc })) }));
-      const prompt = `아래는 외식 브랜드별 뉴스 기사 제목·요약이다. 각 브랜드의 ① '전국 총 매장(점포) 수'(metric "stores", 단위 개) ② '점포(가맹점) 한 곳당 평균 매출'(metric "avg_sales", 값은 억원 단위 숫자로 환산, 예: 36억863만원→36.1)이 명시된 문장만 골라 뽑아라.
-규칙: 1) 기사에 적힌 숫자만 쓴다. 추측·계산 금지(avg_sales의 억원 환산만 허용). 2) 해외 매장, 특정 지역·지점 수, 목표·계획(예: 'OO개 목표'), 가맹점만의 수(직영 제외라고 명시된 경우)는 제외한다. 3) 같은 브랜드 후보는 기준 시점이 가장 최근인 것 위주로 최대 5개, 서로 다른 값만(기사가 말하는 시점이 다르면 각각). 4) as_of는 기사 본문이 말한 기준 시점(YYYY-MM-DD, 일을 모르면 -01 또는 월말 추정 금지: 월만 알면 해당 월 1일)을 쓰고, 본문에 시점이 없으면 기사 date를 쓴다. 5) quote는 값이 나온 부분을 기사 텍스트에서 그대로 20~60자 인용한다.
-출력 JSON만: {"items":[{"brand_id":숫자,"metric":"stores"|"avg_sales","value":숫자,"as_of":"YYYY-MM-DD","article":기사번호i,"quote":"인용"}]}  해당 없으면 {"items":[]}
+      const prompt = `아래는 외식 브랜드별 뉴스 기사 제목·요약이다. 각 브랜드의 ① '전국 총 매장(점포) 수'(metric "stores", 단위 개) ② '점포(가맹점) 한 곳당 평균 매출'(metric "avg_sales", 값은 억원 단위 숫자로 환산, 예: 36억863만원→36.1) ③ 브랜드(운영 법인)의 '연 매출액'(metric "sales", 억원 환산, 조 단위는 ×10000)이 명시된 문장만 골라 뽑아라. 매출류(②③)의 as_of는 그 매출이 속한 회계연도 말(예: 2024년 매출 → 2024-12-31)이다.
+규칙: 1) 기사에 적힌 숫자만 쓴다. 추측·계산 금지(avg_sales의 억원 환산만 허용). 2) 해외 매장, 특정 지역·지점 수, 목표·계획(예: 'OO개 목표'), 가맹점만의 수(직영 제외라고 명시된 경우)는 제외한다. 3) 같은 브랜드·같은 구분(metric)에서는 기준 시점이 서로 다른 값을 시점마다 하나씩(같은 시점이면 가장 신뢰할 만한 하나), 브랜드당 최대 10개. 4) as_of는 기사 본문이 말한 기준 시점(YYYY-MM-DD, 일을 모르면 -01 또는 월말 추정 금지: 월만 알면 해당 월 1일)을 쓰고, 본문에 시점이 없으면 기사 date를 쓴다. 5) quote는 값이 나온 부분을 기사 텍스트에서 그대로 20~60자 인용한다.
+출력 JSON만: {"items":[{"brand_id":숫자,"metric":"stores"|"avg_sales"|"sales","value":숫자,"as_of":"YYYY-MM-DD","article":기사번호i,"quote":"인용"}]}  해당 없으면 {"items":[]}
 데이터: ${JSON.stringify(data).slice(0, 48000)}`;
       try {
         const text = await gemini("너는 기사에서 수치를 정확히 추출하는 조사원이다. 기사에 없는 값은 만들지 않고 지정한 JSON으로만 답한다.", prompt, t0 + 100000);
@@ -124,9 +129,9 @@ Deno.serve(async (req) => {
         for (const x of parsed.items ?? []) {
           const p = withItems.find((w) => w.brand.id === Number(x.brand_id));
           const art = p?.items[Number(x.article)];
-          const v = Number(x.value), metric = x.metric === "avg_sales" ? "avg_sales" : "stores";
+          const v = Number(x.value), metric = x.metric === "avg_sales" ? "avg_sales" : x.metric === "sales" ? "sales" : "stores";
           const flat = (t: string) => t.replace(/[\s,'"“”‘’.…·]/g, "");
-          if (!p || !art || !(v > 0 && v < (metric === "stores" ? 5000 : 1000))) continue;
+          if (!p || !art || !(v > 0 && v < (metric === "stores" ? 5000 : metric === "sales" ? 200000 : 1000))) continue;
           const full = flat(art.title + art.desc);
           // 환각 방지: 점포 수는 그 숫자가 기사 텍스트에 있어야 하고, 매출(억원 환산)은 인용문이 기사 텍스트에 그대로 있어야 한다
           if (metric === "stores" ? !full.includes(String(v)) : !(flat(String(x.quote ?? "")).length >= 8 && full.includes(flat(String(x.quote ?? ""))))) continue;
