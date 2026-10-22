@@ -15,7 +15,7 @@ const GRP_ORDER = ['market', 'own', 'competitor', 'need'];
 const COLORS = ['#3F9E12', '#D9822B', '#378ADD', '#8E5BD1', '#D4537E', '#2F3030', '#1D9E75', '#BA7517'];
 const ls = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 무시 */ } } };
 
-let BRANDS = [], KW = [], SM = [], TR = [], RL = [], RUNS = [], VS = [], VR = [], VV = [];
+let BRANDS = [], KW = [], SM = [], TR = [], RL = [], RUNS = [], VS = [], VR = [], VV = [], SC = [];
 let KWMAP = new Map();
 let chart = null;
 
@@ -32,7 +32,7 @@ async function fetchAll(table, cols, orderCol) {
   return acc;
 }
 async function loadAll() {
-  [BRANDS, KW, SM, TR, RL, RUNS, VS, VR, VV] = await Promise.all([
+  [BRANDS, KW, SM, TR, RL, RUNS, VS, VR, VV, SC] = await Promise.all([
     fetchAll('demand_brands', '*', 'id'),
     fetchAll('demand_keywords', '*', 'id'),
     fetchAll('demand_search_monthly', '*', 'ym'),
@@ -41,7 +41,8 @@ async function loadAll() {
     sb.from('demand_runs').select('*').order('id', { ascending: false }).limit(5).then(r => r.data || []),
     fetchAll('demand_voice_summary', '*', 'ym'),
     fetchAll('demand_voice_raw', 'brand_id,source,ym', 'id'),
-    fetchAll('demand_voice_volume', '*', 'ym')
+    fetchAll('demand_voice_volume', '*', 'ym'),
+    fetchAll('demand_store_counts', '*', 'period')
   ]);
   KWMAP = new Map(KW.map(k => [k.id, k]));
 }
@@ -286,14 +287,22 @@ $('runCollectBtn').onclick = async () => {
 // ---------- 경쟁사 ----------
 function renderCompetitor() {
   const rows = BRANDS.filter(b => b.status !== 'excluded').sort((a, b) => (a.kind === 'own' ? -1 : 1) - (b.kind === 'own' ? -1 : 1) || a.id - b.id);
-  $('cmpTable').innerHTML = `<table><colgroup><col style="width:180px"><col style="width:70px"><col style="width:170px"><col style="width:90px"><col style="width:130px"><col style="width:110px"><col style="width:110px"><col style="width:110px"></colgroup>
-    <thead><tr><th class="l">브랜드</th><th>구분</th><th class="l">업태</th><th>상태</th><th>월 검색수(전체)</th><th>전월 대비</th><th>점포 수</th><th>가격</th></tr></thead><tbody>` +
+  // 점포 수: 공정위 정보공개서 기준(기준년도별, 가맹점+직영점). 브랜드관리번호가 없는 브랜드는 아직 값이 없다.
+  const storeCell = b => {
+    const rows = SC.filter(r => r.brand_id === b.id && r.source === 'ftc' && r.area === '전체').sort((a, c) => String(c.period).localeCompare(String(a.period)));
+    if (!rows.length) return b.ftc_brand_no ? '<span style="color:var(--muted)">자료 없음</span>' : '<span style="color:var(--muted)" title="정보공개서에 등록된 브랜드가 아니거나 이름이 달라 찾지 못했습니다. 상가정보 집계로 보완 예정">공정위 미등록</span>';
+    const cur = rows[0], prev = rows.find(r => Number(r.period) < Number(cur.period));
+    const chg = prev ? cur.total - prev.total : null;
+    return `<div style="font-weight:700">${num(cur.total)}개 ${chg == null ? '' : `<span class="${chg >= 0 ? 'up' : 'dn'}" style="font-weight:400">${chg >= 0 ? '+' : ''}${chg}</span>`}</div><div class="dnote" style="margin:2px 0 0">가맹 ${num(cur.frcs)} · 직영 ${num(cur.dms)} (${cur.period} 기준)</div>`;
+  };
+  $('cmpTable').innerHTML = `<table><colgroup><col style="width:180px"><col style="width:70px"><col style="width:170px"><col style="width:90px"><col style="width:130px"><col style="width:110px"><col style="width:190px"><col style="width:110px"></colgroup>
+    <thead><tr><th class="l">브랜드</th><th>구분</th><th class="l">업태</th><th>상태</th><th>월 검색수(전체)</th><th>전월 대비</th><th class="l" title="공정위 정보공개서 기준 점포 수(가맹점+직영점)와 전 기준년도 대비 증감. 연 1회 갱신이라 최신 상황과 차이가 있을 수 있음">점포 수<br><span style="font-weight:400">공정위 정보공개서</span></th><th>가격</th></tr></thead><tbody>` +
     rows.map(b => {
       const kw = KW.find(k => k.brand_id === b.id && k.grp !== 'need');
       const la = kw ? latestActual(kw.id, 'total') : null;
       const chg = la && la.prev > 0 ? (la.v / la.prev - 1) * 100 : null;
       return `<tr><td class="l"><b>${esc(b.name)}</b></td><td>${b.kind === 'own' ? '<span class="chip ok">우리</span>' : '경쟁사'}</td><td class="l">${esc(b.segment || '')}</td><td>${b.status === 'candidate' ? '<span class="chip new">후보</span>' : '사용'}</td>` +
-        `<td>${la ? num(la.v) : '—'}</td><td>${chg == null ? '—' : `<span class="${chg >= 0 ? 'up' : 'dn'}">${sgn(chg)}%</span>`}</td><td style="color:var(--muted)">2단계</td><td style="color:var(--muted)">2단계</td></tr>`;
+        `<td>${la ? num(la.v) : '—'}</td><td>${chg == null ? '—' : `<span class="${chg >= 0 ? 'up' : 'dn'}">${sgn(chg)}%</span>`}</td><td class="l" style="vertical-align:top">${storeCell(b)}</td><td style="color:var(--muted)">2단계</td></tr>`;
     }).join('') + '</tbody></table>';
 }
 
