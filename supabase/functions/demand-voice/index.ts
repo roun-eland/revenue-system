@@ -167,14 +167,15 @@ ${list}
 3) features: 자주 언급되는 메뉴·가격대·분위기·서비스 특징을 최대 6개 (짧은 문장).
 4) flags: 위생·가격 인상·폐점·논란 등 주의 신호. 없으면 빈 배열.
 5) 목록이 8건 미만이면 headline에 "표본 부족"을 넣는다. headline은 한 문장.
+6) negative_items: 위 목록의 항목을 하나씩 보고, 부정적인 의견·불만(맛·가격·서비스·위생·대기·양 등)이 담긴 항목의 수. 정수, 한 항목은 한 번만 세며, 반복되지 않는 일회성 불만도 포함하고, 광고성 칭찬 글은 제외한다. 목록 건수 이하.
 출력은 JSON만(설명·코드블록 금지):
-{"headline":"","positives":[{"theme":"","count":0,"example":""}],"negatives":[{"theme":"","count":0,"example":""}],"features":[""],"flags":[""]}`;
+{"headline":"","negative_items":0,"positives":[{"theme":"","count":0,"example":""}],"negatives":[{"theme":"","count":0,"example":""}],"features":[""],"flags":[""]}`;
   const SYS = "너는 외식 시장 리서치 분석가다. 주어진 자료만 근거로 간결하고 정확하게 요약하고, 지정한 JSON 형식으로만 답한다.";
   // 키가 있는 쪽을 쓴다: Gemini(무료 등급 가능) 우선, 없으면 Anthropic
   const { text, model } = env("GEMINI_API_KEY") ? await callGemini(SYS, prompt) : await callClaude(SYS, prompt);
   const m = text.match(/\{[\s\S]*\}/);
   if (!m) throw new Error("요약 응답에서 JSON을 찾지 못했습니다.");
-  return { out: JSON.parse(m[0]), model };
+  return { out: JSON.parse(m[0]), model, sampleSize: items.length };
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function callClaude(system: string, prompt: string) {
@@ -320,8 +321,9 @@ Deno.serve(async (req) => {
       let remaining = 0;
       if ((mode === "summarize" || mode === "all") && hasAi) {
         // 이미 만든 요약은 원문 건수가 그대로면 건너뛰고(끊어서 이어 호출할 때 중복 방지), 건수가 늘었으면 다시 만든다. body.force=true면 전부 다시 만든다.
-        const { data: done } = await admin.from("demand_voice_summary").select("brand_id,ym,n_items").in("ym", months);
-        const existing = new Map((done ?? []).map((r) => [`${r.brand_id}|${r.ym}`, r.n_items as number]));
+        const { data: done } = await admin.from("demand_voice_summary").select("brand_id,ym,n_items,neg_items").in("ym", months);
+        // neg_items가 비어 있는(부정 비중 도입 전에 만든) 요약은 건수가 같아도 다시 만든다
+        const existing = new Map((done ?? []).filter((r) => r.neg_items != null).map((r) => [`${r.brand_id}|${r.ym}`, r.n_items as number]));
         const tasks = brands.flatMap((b) => months.map((ym) => ({ b, ym })));
         // 3건씩 동시에 처리하고, 시간이 다 되면 남은 것은 다음 호출로 넘긴다(무료 등급의 분당 한도 안에서)
         await pool(tasks, 3, async ({ b, ym }) => {
@@ -334,9 +336,10 @@ Deno.serve(async (req) => {
           const sources: Record<string, number> = {};
           for (const x of items) sources[x.source] = (sources[x.source] ?? 0) + 1;
           try {
-            const { out, model } = await summarize(b, items, ym);
+            const { out, model, sampleSize } = await summarize(b, items, ym);
             ck(await admin.from("demand_voice_summary").upsert({
               brand_id: b.id, ym, n_items: items.length, sources, headline: String(out.headline ?? ""), model,
+              sample_size: sampleSize, neg_items: Math.max(0, Math.min(Math.round(Number(out.negative_items)) || 0, sampleSize)),
               positives: out.positives ?? [], negatives: out.negatives ?? [], features: out.features ?? [], flags: out.flags ?? [], created_at: new Date().toISOString(),
             }));
             summarized++;

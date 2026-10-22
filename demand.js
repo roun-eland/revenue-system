@@ -346,19 +346,24 @@ function renderVoice() {
   const maxInt = Math.max(1, ...[...interest.values()].map(p => p ? p.v : 0));
   const brands = BRANDS.filter(b => b.status !== 'excluded').sort((a, b) => ((interest.get(b.id) || { v: -1 }).v - (interest.get(a.id) || { v: -1 }).v) || (vol.get(b.id).n - vol.get(a.id).n) || a.id - b.id);
   const rankOf = new Map(brands.map((b, i) => [b.id, i + 1]));
+  const shown = [...brands.filter(b => b.kind === 'own'), ...brands.filter(b => b.kind !== 'own')]; // 우리 브랜드 맨 위 고정(순위 숫자는 관심도 기준 그대로)
   const srcTxt = m => Object.entries(m || {}).map(([k, v]) => `${SRC_LABEL[k] || k} ${v}`).join(' · ') || '—';
-  box.innerHTML = `<table><colgroup><col style="width:130px"><col style="width:130px"><col style="width:170px"><col style="width:230px"><col style="width:260px"><col style="width:260px"><col style="width:230px"><col style="width:200px"></colgroup>
-    <thead><tr><th class="l">브랜드</th><th class="l" title="브랜드 이름의 그 달 월 검색수(네이버 검색광고, PC+모바일). 클수록 고객이 많이 찾는 브랜드. 아래 작은 글씨는 수집한 후기·기사 수(표본)">고객 관심도<br><span style="font-weight:400">월 검색수</span></th><th class="l">표본(출처별)</th><th class="l">한 줄 요약</th><th class="l">좋다는 반응</th><th class="l">아쉽다는 반응</th><th class="l">자주 언급되는 특징</th><th class="l">주의 신호</th></tr></thead><tbody>` +
-    brands.map(b => {
+  box.innerHTML = `<table><colgroup><col style="width:130px"><col style="width:130px"><col style="width:130px"><col style="width:170px"><col style="width:230px"><col style="width:260px"><col style="width:260px"><col style="width:230px"><col style="width:200px"></colgroup>
+    <thead><tr><th class="l">브랜드</th><th class="l" title="브랜드 이름의 그 달 월 검색수(네이버 검색광고, PC+모바일). 클수록 고객이 많이 찾는 브랜드. 아래 작은 글씨는 수집한 후기·기사 수(표본)">고객 관심도<br><span style="font-weight:400">월 검색수</span></th><th class="l" title="AI가 훑어본 후기·기사(표본) 중 부정적인 의견이 담긴 항목의 비율. 일회성 불만도 포함해서 센 값">부정 비중<br><span style="font-weight:400">부정 의견 ÷ 탐색 콘텐츠</span></th><th class="l">표본(출처별)</th><th class="l">한 줄 요약</th><th class="l">좋다는 반응</th><th class="l">아쉽다는 반응</th><th class="l">자주 언급되는 특징</th><th class="l">주의 신호</th></tr></thead><tbody>` +
+    shown.map(b => {
       const s = sumBy.get(b.id), rc = rawCnt.get(b.id);
       const n = s ? s.n_items : Object.values(rc || {}).reduce((a, c) => a + c, 0);
       const thin = n < 8 ? ' <span class="chip new">표본 부족</span>' : '';
       const nm = `<b>${esc(b.name)}</b>${b.kind === 'own' ? ' <span class="chip ok">우리</span>' : ''}`;
       const v = vol.get(b.id);
+      // 부정 비중 = AI가 표본 항목을 하나씩 보고 센 '부정 의견이 담긴 항목' ÷ 탐색한(표본) 항목. 부정 항목 수가 아직 없는 옛 요약은 '—'
+      const hasNeg = s && s.neg_items != null && s.sample_size > 0;
+      const negPct = hasNeg ? s.neg_items / s.sample_size * 100 : null;
+      const negCell = `<td class="l" style="vertical-align:top">${hasNeg ? `<div style="font-weight:700">${negPct.toFixed(1)}%</div><div class="dnote" style="margin:4px 0 0">${num(s.neg_items)}건 / ${num(s.sample_size)}건</div>` : '<span style="color:var(--muted)">—</span>'}</td>`;
       const it = interest.get(b.id);
       const vcell = `<td class="l" style="vertical-align:top"><div style="font-weight:700">${it ? num(it.v) : '—'}${it && !it.actual ? ' <span class="chip">추정</span>' : ''} <span style="color:var(--muted);font-weight:400">${it ? rankOf.get(b.id) + '위' : ''}</span></div>${it ? `<div style="height:5px;background:var(--fill);border-radius:3px;margin-top:4px"><div style="height:5px;width:${Math.max(2, Math.round(it.v / maxInt * 100))}%;background:${b.kind === 'own' ? '#3F9E12' : '#8a8a8a'};border-radius:3px"></div></div>` : ''}<div class="dnote" style="margin:4px 0 0">수집한 글 ${v.n ? (v.capped ? '≥ ' : '') + num(v.n) : 0}건</div></td>`;
-      if (!s) return `<tr><td class="l" style="vertical-align:top">${nm}</td>${vcell}<td class="l" style="white-space:normal;vertical-align:top">${esc(srcTxt(rc))}${thin}</td><td class="l" colspan="5" style="color:var(--muted);white-space:normal;vertical-align:top">${n ? '원문은 수집됐고 AI 요약 대기 중입니다 (요약 키 등록 후 <b>지금 수집·요약</b>).' : '수집된 원문이 없습니다.'}</td></tr>`;
-      return `<tr><td class="l" style="vertical-align:top">${nm}</td>${vcell}<td class="l" style="white-space:normal;vertical-align:top">${esc(srcTxt(s.sources))}${thin}</td>
+      if (!s) return `<tr><td class="l" style="vertical-align:top">${nm}</td>${vcell}${negCell}<td class="l" style="white-space:normal;vertical-align:top">${esc(srcTxt(rc))}${thin}</td><td class="l" colspan="5" style="color:var(--muted);white-space:normal;vertical-align:top">${n ? '원문은 수집됐고 AI 요약 대기 중입니다 (요약 키 등록 후 <b>지금 수집·요약</b>).' : '수집된 원문이 없습니다.'}</td></tr>`;
+      return `<tr><td class="l" style="vertical-align:top">${nm}</td>${vcell}${negCell}<td class="l" style="white-space:normal;vertical-align:top">${esc(srcTxt(s.sources))}${thin}</td>
         <td class="l" style="white-space:normal;vertical-align:top">${esc(s.headline || '')}</td>
         <td class="l" style="white-space:normal;vertical-align:top">${themeList(s.positives, 'dn')}</td>
         <td class="l" style="white-space:normal;vertical-align:top">${themeList(s.negatives, 'up')}</td>
