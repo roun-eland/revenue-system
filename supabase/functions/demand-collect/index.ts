@@ -78,6 +78,8 @@ async function dataLab(keywords: Array<{ id: number; keyword: string }>, start: 
 
 function kstYm(d = new Date()) {
   const k = new Date(d.getTime() + 9 * 3600 * 1000);
+  // 검색광고 월 검색수는 직전 한 달 기준 값이라, 월초(1~5일) 수집분은 지난달로 표기한다 (매월 1일 자동 수집 → 전달 리포트와 맞물림)
+  if (k.getUTCDate() <= 5) k.setUTCMonth(k.getUTCMonth() - 1, 1);
   return `${k.getUTCFullYear()}-${String(k.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 

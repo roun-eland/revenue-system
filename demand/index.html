@@ -74,7 +74,23 @@ td.l,th.l{text-align:left}
     <!-- 요약 -->
     <section id="view-summary" class="view">
       <h2>요약</h2>
-      <p class="view-sub">월간 시장·경쟁사 리서치의 핵심을 한 화면에 모읍니다. 지금은 <b>1단계(검색 지표)</b>만 열려 있고, 나머지는 단계별로 채워집니다.</p>
+      <p class="view-sub">월간 시장·경쟁사 리포트입니다. 매월 2일에 지난달 초안이 자동으로 만들어지고, 기획자가 고쳐 쓴 뒤 <b>승인</b>하면 게시됩니다. 엑셀 원자료도 내려받을 수 있습니다.</p>
+      <div class="card" style="margin-bottom:14px">
+        <div class="filters" style="margin:0 0 6px">
+          <h3 style="margin:0 8px 0 0">월간 리포트</h3>
+          <label>대상 월</label><select id="rpMonth"></select>
+          <span id="rpStatus"></span>
+          <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+            <button id="rpGen" class="btn btn-sm" type="button">초안 생성</button>
+            <button id="rpSave" class="btn btn-sm" type="button" hidden>수정 저장</button>
+            <button id="rpApprove" class="btn btn-sm" type="button" hidden>승인·게시</button>
+            <button id="rpUnapprove" class="btn btn-sm" type="button" hidden>승인 해제</button>
+            <button id="rpXlsx" class="btn btn-sm" type="button" hidden>엑셀 원자료</button>
+          </span>
+        </div>
+        <div class="plan-msg" id="rpMsg" style="margin-bottom:6px"></div>
+        <div id="rpBody"></div>
+      </div>
       <div class="kpis k4" id="sumKpis"></div>
       <div class="card"><h3 style="margin:0 0 8px">진행 현황</h3><div id="sumStages"></div></div>
     </section>
@@ -178,6 +194,7 @@ td.l,th.l{text-align:left}
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
 <script src="../nav.js?v=202610221110"></script>
-<script src="../demand.js?v=202610222330"></script>
+<script src="../demand.js?v=202610230010"></script>
+<script src="../demand-report.js?v=202610230010"></script>
 </body>
 </html>

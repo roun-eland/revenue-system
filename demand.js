@@ -83,7 +83,7 @@ function showView(v) {
 }
 document.querySelectorAll('#dmNav button').forEach(b => { b.onclick = () => showView(b.dataset.view); });
 
-function renderAll() { renderSummary(); renderSearch(); renderCompetitor(); renderVoice(); renderSource(); renderSettings(); }
+function renderAll() { renderSummary(); renderSearch(); renderCompetitor(); renderVoice(); renderSource(); renderSettings(); if (window.renderReportBox) window.renderReportBox(); }
 
 // ---------- 계산 도구 ----------
 const pad2 = n => String(n).padStart(2, '0');
@@ -147,10 +147,10 @@ function renderSummary() {
     <div><div class="k">급상승·신규 키워드</div><div class="v">${last ? rises.length + '개' : '—'}</div><div class="s">전월 비교(두 달 이상 쌓인 뒤)</div></div>`;
   const st = (n, name, ready, note) => `<div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line)"><span class="chip ${ready ? 'ok' : ''}">${n}단계</span><b style="min-width:150px">${name}</b><span style="color:var(--muted);font-size:12px">${note}</span></div>`;
   $('sumStages').innerHTML =
-    st(1, '검색 지표', !!last, last ? '월 검색수·연관어·급상승 (수집 중)' : '화면·DB 준비 완료 — 검색광고·데이터랩 키 등록 후 수집') +
-    st(2, '경쟁사 점포·가격', false, '카카오 지도 점포 수 월 스냅샷, 공식 가격 페이지 변경 감지, 신규 후보 발굴') +
-    st(3, '고객 반응', false, '블로그·카페·유튜브 후기 수집 + AI 요약') +
-    st(4, '월간 리포트', false, '자동 생성 → 기획자 검토·승인 → 게시, 엑셀 원자료, 홈 카드');
+    st(1, '검색 지표', !!last, last ? '월 검색수·연관어·급상승 (매월 1일 자동 수집)' : '수집 대기') +
+    st(2, '경쟁사 점포', true, '공정위 정보공개서 점포 수(연 단위) + 우리 점포·매출(내부 시스템). 가격 감시는 보류') +
+    st(3, '고객 반응', true, '블로그·뉴스·유튜브 후기 수집 + AI 요약·부정 비중 (매월 1일 자동)') +
+    st(4, '월간 리포트', true, '매월 2일 초안 자동 생성 → 기획자 검토·승인 → 게시, 엑셀 원자료');
 }
 
 // ---------- 검색 ----------
