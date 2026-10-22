@@ -45,7 +45,7 @@
   if (q.get('nav') === 'old' || q.get('nav') === 'new') ls.set('roun_nav', q.get('nav'));
   const OLD = q.get('nav') === 'old' || (q.get('nav') !== 'new' && ls.get('roun_nav') === 'old');
 
-  const curId = (location.pathname.match(/\/(home|sales|labor|cost|supply|voc)(\/|$)/) || [])[1] || '';
+  const curId = (location.pathname.match(/\/(home|sales|labor|cost|supply|demand|voc)(\/|$)/) || [])[1] || '';
   const cur = SECTIONS.find(s => s.id === curId);
 
   // 화면 시작 탭: ?v=키 로 들어오면 그 탭을 먼저 연다 (각 화면의 init 끝에서 navStart('기본탭') 호출)

@@ -1,10 +1,11 @@
 // 로운 수요 모니터링 — 검색 지표 수집 (Supabase Edge Function, Deno)
 // 호출: 화면의 "지금 수집" 버튼(기획자 로그인 JWT) 또는 예약 실행(x-cron-secret 헤더 = DEMAND_CRON_SECRET)
-// 필요한 Secrets: NAVERAD_CUSTOMER_ID, NAVERAD_ACCESS_LICENSE, NAVERAD_SECRET_KEY, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET
+// 필요한 Secrets: NAVERAD_CUSTOMER_ID, NAVERAD_ACCESS_LICENSE, NAVERAD_SECRET_KEY (검색광고 API),
+//   NAVERHUB_CLIENT_ID, NAVERHUB_CLIENT_SECRET (NAVER API HUB 검색어 트렌드 — 네이버 개발자센터 데이터랩은 신규 신청 종료로 HUB로 이관됨)
 //   (SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY 는 Supabase가 자동 제공)
 // 하는 일:
 //   1) 네이버 검색광고 API 키워드 도구 → 월 검색수(PC·모바일)·경쟁정도 스냅샷을 demand_search_monthly에 적재, 시장/우리 키워드는 연관검색어도 demand_related에 적재
-//   2) 네이버 데이터랩 검색어트렌드 → 최근 24개월 월별 상대지수를 demand_trend에 적재 (과거 추이 추정용)
+//   2) NAVER API HUB 검색어 트렌드 → 최근 24개월 월별 상대지수를 demand_trend에 적재 (과거 추이 추정용)
 // 주의: 검색광고 API는 과거 월별 값을 주지 않으므로 이 함수를 매월 돌려 스냅샷을 쌓는다. 응답 필드 이름은 실제 키로 첫 호출할 때 확인한다.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -20,6 +21,9 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const enc = new TextEncoder();
+// upsert 실패를 조용히 넘기지 않고 실행 기록(demand_runs)에 남기기 위해 오류를 던진다
+// deno-lint-ignore no-explicit-any
+const ck = (r: any) => { if (r?.error) throw new Error(`DB 저장 실패: ${r.error.message}`); };
 
 // 검색광고 API 서명: base64(HMAC-SHA256(secret, `${timestamp}.${method}.${uri}`))
 async function adSign(ts: string, method: string, uri: string, secret: string) {
@@ -47,11 +51,11 @@ const cnt = (v: unknown): number | null => (typeof v === "number" ? v : typeof v
 const nospace = (s: string) => s.replace(/\s+/g, "");
 
 async function dataLab(keywords: Array<{ id: number; keyword: string }>, start: string, end: string) {
-  const res = await fetch("https://openapi.naver.com/v1/datalab/search", {
+  const res = await fetch("https://naverapihub.apigw.ntruss.com/search-trend/v1/search", {
     method: "POST",
     headers: {
-      "X-Naver-Client-Id": Deno.env.get("NAVER_CLIENT_ID")!,
-      "X-Naver-Client-Secret": Deno.env.get("NAVER_CLIENT_SECRET")!,
+      "X-NCP-APIGW-API-KEY-ID": Deno.env.get("NAVERHUB_CLIENT_ID")!,
+      "X-NCP-APIGW-API-KEY": Deno.env.get("NAVERHUB_CLIENT_SECRET")!,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -59,7 +63,7 @@ async function dataLab(keywords: Array<{ id: number; keyword: string }>, start: 
       keywordGroups: keywords.map((k) => ({ groupName: k.keyword, keywords: [k.keyword] })),
     }),
   });
-  if (!res.ok) throw new Error(`데이터랩 API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) throw new Error(`검색어 트렌드(HUB) API ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return (await res.json()).results as Array<{ title: string; data: Array<{ period: string; ratio: number }> }>;
 }
 
@@ -81,7 +85,7 @@ Deno.serve(async (req) => {
       const { data: prof } = await user.from("ot_profiles").select("role").eq("user_id", u.id).maybeSingle();
       if (!prof || prof.role !== "planner") return json({ error: "기획자 계정만 실행할 수 있습니다." }, 403);
     }
-    for (const n of ["NAVERAD_CUSTOMER_ID", "NAVERAD_ACCESS_LICENSE", "NAVERAD_SECRET_KEY", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"]) {
+    for (const n of ["NAVERAD_CUSTOMER_ID", "NAVERAD_ACCESS_LICENSE", "NAVERAD_SECRET_KEY", "NAVERHUB_CLIENT_ID", "NAVERHUB_CLIENT_SECRET"]) {
       if (!Deno.env.get(n)) return json({ error: `서버 설정에 ${n} 키가 아직 등록되지 않았습니다.` }, 400);
     }
 
@@ -101,7 +105,7 @@ Deno.serve(async (req) => {
         const self = list.find((r) => String(r.relKeyword) === nospace(k.keyword));
         if (self) {
           const pc = cnt(self.monthlyPcQcCnt), mobile = cnt(self.monthlyMobileQcCnt);
-          await admin.from("demand_search_monthly").upsert({ keyword_id: k.id, ym, pc, mobile, total: pc == null && mobile == null ? null : (pc ?? 0) + (mobile ?? 0), comp: (self.compIdx as string) ?? null });
+          ck(await admin.from("demand_search_monthly").upsert({ keyword_id: k.id, ym, pc, mobile, total: pc == null && mobile == null ? null : (pc ?? 0) + (mobile ?? 0), comp: (self.compIdx as string) ?? null }));
           volRows++;
         }
         const rel = list
@@ -109,7 +113,7 @@ Deno.serve(async (req) => {
           .map((r) => { const pc = cnt(r.monthlyPcQcCnt), mobile = cnt(r.monthlyMobileQcCnt); return { r, pc, mobile, total: (pc ?? 0) + (mobile ?? 0) }; })
           .sort((a, b) => b.total - a.total).slice(0, 30)
           .map((x, i) => ({ keyword_id: k.id, ym, related: String(x.r.relKeyword), pc: x.pc, mobile: x.mobile, total: x.total, comp: (x.r.compIdx as string) ?? null, rank: i + 1 }));
-        if (rel.length) { await admin.from("demand_related").upsert(rel); relRows += rel.length; }
+        if (rel.length) { ck(await admin.from("demand_related").upsert(rel)); relRows += rel.length; }
         await sleep(400);
       }
       // 1-b) 나머지(경쟁사·니즈): 5개씩 묶어 월 검색수만
@@ -122,13 +126,13 @@ Deno.serve(async (req) => {
           const r = byName.get(nospace(k.keyword));
           if (!r) continue;
           const pc = cnt(r.monthlyPcQcCnt), mobile = cnt(r.monthlyMobileQcCnt);
-          await admin.from("demand_search_monthly").upsert({ keyword_id: k.id, ym, pc, mobile, total: pc == null && mobile == null ? null : (pc ?? 0) + (mobile ?? 0), comp: (r.compIdx as string) ?? null });
+          ck(await admin.from("demand_search_monthly").upsert({ keyword_id: k.id, ym, pc, mobile, total: pc == null && mobile == null ? null : (pc ?? 0) + (mobile ?? 0), comp: (r.compIdx as string) ?? null }));
           volRows++;
         }
         await sleep(400);
       }
 
-      // 2) 데이터랩: 최근 24개월 월별 상대지수 (한 번에 5개 키워드 그룹)
+      // 2) 검색어 트렌드(HUB): 최근 24개월 월별 상대지수 (한 번에 5개 키워드 그룹)
       const end = new Date(); const start = new Date(end.getFullYear(), end.getMonth() - 23, 1);
       const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       for (let i = 0; i < keywords.length; i += 5) {
@@ -138,7 +142,7 @@ Deno.serve(async (req) => {
           const k = chunk.find((x) => x.keyword === r.title);
           if (!k) continue;
           const rows = r.data.map((d) => ({ keyword_id: k.id, period: d.period, ratio: d.ratio }));
-          if (rows.length) { await admin.from("demand_trend").upsert(rows); trendRows += rows.length; }
+          if (rows.length) { ck(await admin.from("demand_trend").upsert(rows)); trendRows += rows.length; }
         }
         await sleep(300);
       }
