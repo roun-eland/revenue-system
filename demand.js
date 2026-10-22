@@ -15,7 +15,7 @@ const GRP_ORDER = ['market', 'own', 'competitor', 'need'];
 const COLORS = ['#3F9E12', '#D9822B', '#378ADD', '#8E5BD1', '#D4537E', '#2F3030', '#1D9E75', '#BA7517'];
 const ls = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 무시 */ } } };
 
-let BRANDS = [], KW = [], SM = [], TR = [], RL = [], RUNS = [], VS = [], VR = [], VV = [], SC = [];
+let BRANDS = [], KW = [], SM = [], TR = [], RL = [], RUNS = [], VS = [], VR = [], VV = [], SC = [], EST = [];
 let KWMAP = new Map();
 let chart = null;
 
@@ -32,7 +32,7 @@ async function fetchAll(table, cols, orderCol) {
   return acc;
 }
 async function loadAll() {
-  [BRANDS, KW, SM, TR, RL, RUNS, VS, VR, VV, SC] = await Promise.all([
+  [BRANDS, KW, SM, TR, RL, RUNS, VS, VR, VV, SC, EST] = await Promise.all([
     fetchAll('demand_brands', '*', 'id'),
     fetchAll('demand_keywords', '*', 'id'),
     fetchAll('demand_search_monthly', '*', 'ym'),
@@ -42,7 +42,8 @@ async function loadAll() {
     fetchAll('demand_voice_summary', '*', 'ym'),
     fetchAll('demand_voice_raw', 'brand_id,source,ym', 'id'),
     fetchAll('demand_voice_volume', '*', 'ym'),
-    fetchAll('demand_store_counts', '*', 'period')
+    fetchAll('demand_store_counts', '*', 'period'),
+    fetchAll('demand_estimates', '*', 'id')
   ]);
   KWMAP = new Map(KW.map(k => [k.id, k]));
 }
@@ -180,12 +181,12 @@ function renderMarket() {
   const withData = comp.filter(b => years.some(y => val(b.id, y) != null)).sort((a, b) => (val(b.id, years[years.length - 1]) || 0) - (val(a.id, years[years.length - 1]) || 0));
   const tot = y => withData.reduce((s, b) => s + (val(b.id, y) || 0), 0);
   const last = years[years.length - 1], prevY = years[years.length - 2];
-  const head = years.map(y => `<th>${y}</th>`).join('');
+  const head = years.map(y => `<th>${Number(y) - 1}년 말</th>`).join('');
   const ownBrand = BRANDS.find(b => b.kind === 'own');
   const ownRow = ownBrand ? SC.filter(r => r.brand_id === ownBrand.id && r.source === 'own' && r.area === '전체').sort((x, y) => String(y.period).localeCompare(String(x.period)))[0] : null;
   const chgHtml = (b) => { const c = val(b.id, last), p = prevY ? val(b.id, prevY) : null; return c != null && p > 0 ? `<span class="${c - p >= 0 ? 'up' : 'dn'}">${c - p >= 0 ? '+' : ''}${c - p}</span>` : '—'; };
   $('mkStores').innerHTML = `<table><colgroup><col style="width:180px">${years.map(() => '<col style="width:90px">').join('')}<col style="width:110px"></colgroup>
-    <thead><tr><th class="l">브랜드</th>${head}<th>${last} 증감</th></tr></thead><tbody>` +
+    <thead><tr><th class="l">브랜드</th>${head}<th>${Number(last) - 1}년 말 증감</th></tr></thead><tbody>` +
     withData.map(b => `<tr><td class="l"><b>${esc(b.name)}</b></td>${years.map(y => `<td>${val(b.id, y) == null ? '—' : num(val(b.id, y))}</td>`).join('')}<td>${chgHtml(b)}</td></tr>`).join('') +
     `<tr style="font-weight:700;background:var(--bg2,#f6f6f6)"><td class="l">합계(${withData.length}곳)</td>${years.map(y => `<td>${num(tot(y))}</td>`).join('')}<td>${prevY && tot(prevY) > 0 ? (tot(last) - tot(prevY) >= 0 ? '+' : '') + (tot(last) - tot(prevY)) : '—'}</td></tr></tbody></table>` +
     (ownRow ? `<div class="dnote" style="margin-top:6px">참고: 우리(${esc(ownBrand.name)})는 정보공개서 미등록이라 제외했고, 내부 매출 시스템 기준 ${num(ownRow.total)}개 직영점입니다(경쟁사 탭 참고).</div>` : '');
@@ -323,42 +324,137 @@ $('runCollectBtn').onclick = async () => {
 };
 
 // ---------- 경쟁사 ----------
+// ---------- 경쟁사 ----------
+// 공정위 API의 '기준년도'는 정보공개서 등록 연도라, 영업현황은 그 전년도 말 기준이다 (탕화쿵푸 2023→327, 2025→494가 언론의 2022·2024년 말 매장 수와 일치)
+const ftcAsOf = y => `${Number(y) - 1}년 말`;
+const EST_LABEL = { stores: '점포 수', avg_sales: '점포당 연매출', price: '가격' };
+const EST_UNIT = { stores: '개', avg_sales: '억원', price: '원' };
+const SRC_TYPE = { official: '공식', news: '언론', estimate: '추정', manual: '직접 확인' };
+const estOf = (brandId, metric, status) => EST.filter(e => e.brand_id === brandId && e.metric === metric && e.status === status)
+  .sort((a, b) => String(b.as_of || '').localeCompare(String(a.as_of || '')) || b.id - a.id);
+const estFmt = e => e.metric === 'avg_sales' ? `${Number(e.value).toFixed(1)}억` : e.metric === 'price' ? `${num(e.value)}원` : `${num(e.value)}개`;
+// 확정된 최신 확인값 한 칸: 값 + 출처 유형 + 기준일·출처 링크
+function estCell(brandId, metric) {
+  const c = estOf(brandId, metric, 'confirmed')[0], n = estOf(brandId, metric, 'candidate').length;
+  if (c) {
+    const link = c.source_url ? `<a href="${esc(c.source_url)}" target="_blank" rel="noopener noreferrer">출처</a>` : '출처 없음';
+    return `<div style="font-weight:700">${estFmt(c)} <span class="chip ${c.source_type === 'official' ? 'ok' : ''}">${SRC_TYPE[c.source_type] || ''}</span></div><div class="dnote" style="margin:2px 0 0">${esc(c.as_of || '시점 미상')} 기준 · ${link}${c.note ? ' · ' + esc(c.note) : ''}${n ? ` · <span class="chip new">새 후보 ${n}</span>` : ''}</div>`;
+  }
+  return n ? `<span class="chip new">후보 ${n}건</span> <span class="dnote" style="display:inline">아래에서 확인</span>` : '<span style="color:var(--muted)">—</span>';
+}
 function renderCompetitor() {
   const rows = BRANDS.filter(b => b.status !== 'excluded').sort((a, b) => (a.kind === 'own' ? -1 : 1) - (b.kind === 'own' ? -1 : 1) || a.id - b.id);
-  // 점포 수: 공정위 정보공개서 기준(기준년도별, 가맹점+직영점). 브랜드관리번호가 없는 브랜드는 아직 값이 없다.
   const latest = (id, src, area = '전체') => SC.filter(r => r.brand_id === id && r.source === src && r.area === area).sort((x, y) => String(y.period).localeCompare(String(x.period)));
-  const storeCell = b => {
-    // 1) 우리 브랜드: 내부 매출 시스템(전 매장 직영)
+  // 최신 확인값(점포 수): 우리는 내부 매출 시스템, 경쟁사는 확정한 값(출처·기준일 병기)
+  const nowCell = b => {
     const own = latest(b.id, 'own')[0];
-    if (own) return `<div style="font-weight:700">${num(own.total)}개 ${own.open_12m ? `<span class="up" style="font-weight:400">+${own.open_12m}</span>` : ''}</div><div class="dnote" style="margin:2px 0 0">전 매장 직영 · 최근 12개월 신규 ${num(own.open_12m || 0)}개 (내부 매출 시스템 ${esc((own.note || '').match(/\d{4}-\d{2}-\d{2}/)?.[0] || '')})</div>`;
-    // 2) 공정위 정보공개서(연 단위): 가맹+직영, 전 기준년도 대비 증감
-    const rows = latest(b.id, 'ftc');
-    if (rows.length) {
-      const cur = rows[0], prev = rows.find(r => Number(r.period) < Number(cur.period));
+    if (own) return `<div style="font-weight:700">${num(own.total)}개 ${own.open_12m ? `<span class="up" style="font-weight:400">+${own.open_12m}</span>` : ''} <span class="chip ok">내부</span></div><div class="dnote" style="margin:2px 0 0">전 매장 직영 · 최근 12개월 신규 ${num(own.open_12m || 0)}개 (내부 매출 시스템 ${esc((own.note || '').match(/\d{4}-\d{2}-\d{2}/)?.[0] || '')})</div>`;
+    return estCell(b.id, 'stores');
+  };
+  // 공정위 정보공개서(연 단위, 전년도 말 영업현황): 가맹+직영, 이전 기준 대비 증감
+  const ftcCell = b => {
+    const rs = latest(b.id, 'ftc');
+    if (b.kind === 'own') return '<span style="color:var(--muted)" title="정보공개서 미등록(전 매장 직영)">미등록</span>';
+    if (rs.length) {
+      const cur = rs[0], prev = rs.find(r => Number(r.period) < Number(cur.period) && r.total > 0);
       const chg = prev ? cur.total - prev.total : null;
-      return `<div style="font-weight:700">${num(cur.total)}개 ${chg == null ? '' : `<span class="${chg >= 0 ? 'up' : 'dn'}" style="font-weight:400">${chg >= 0 ? '+' : ''}${chg}</span>`}</div><div class="dnote" style="margin:2px 0 0">가맹 ${num(cur.frcs)} · 직영 ${num(cur.dms)} (정보공개서 ${cur.period} 기준)</div>`;
+      return `<div style="font-weight:700">${num(cur.total)}개 ${chg == null ? '' : `<span class="${chg >= 0 ? 'up' : 'dn'}" style="font-weight:400">${chg >= 0 ? '+' : ''}${chg}</span>`}</div><div class="dnote" style="margin:2px 0 0">가맹 ${num(cur.frcs)} · 직영 ${num(cur.dms)} (공정위 ${ftcAsOf(cur.period)} 기준)</div>`;
     }
-    // 3) 공정위에 없으면 소상공인 상가정보에서 상호명으로 센 값(참고용: 업종 분류·상호 표기에 따라 빠질 수 있음)
     const sm = latest(b.id, 'semas')[0];
     if (sm && sm.total > 0) return `<div style="font-weight:700">${num(sm.total)}개 <span class="chip">참고</span></div><div class="dnote" style="margin:2px 0 0">상가정보 ${esc(String(sm.period).replace(/(\d{4})(\d{2})/, '$1-$2'))} 기준, 상호명으로 센 값(누락 가능)</div>`;
-    return b.ftc_brand_no ? '<span style="color:var(--muted)">자료 없음</span>' : '<span style="color:var(--muted)" title="정보공개서에 등록되지 않았거나 이름이 달라 찾지 못했고, 상가정보에서도 상호명으로 찾지 못했습니다">확인 불가</span>';
+    return '<span style="color:var(--muted)" title="정보공개서에 등록되지 않았거나 이름이 달라 찾지 못했습니다">확인 불가</span>';
   };
-  // 점포당 연매출: 우리는 내부 매출 시스템 값, 경쟁사는 공개 자료가 없어 비워 둔다
   const salesCell = b => {
     const own = latest(b.id, 'own')[0];
-    if (own && own.avg_sales_ttm) return `<div style="font-weight:700">${(own.avg_sales_ttm / 1e8).toFixed(1)}억</div><div class="dnote" style="margin:2px 0 0">최근 12개월, 12개월 이상 영업 점포 평균</div>`;
-    return '<span style="color:var(--muted)" title="경쟁사 점포당 매출은 공개 API가 없어 비워 둡니다">—</span>';
+    if (own && own.avg_sales_ttm) return `<div style="font-weight:700">${(own.avg_sales_ttm / 1e8).toFixed(1)}억 <span class="chip ok">내부</span></div><div class="dnote" style="margin:2px 0 0">최근 12개월, 12개월 이상 영업 점포 평균</div>`;
+    return estCell(b.id, 'avg_sales');
   };
-  $('cmpTable').innerHTML = `<table><colgroup><col style="width:180px"><col style="width:70px"><col style="width:170px"><col style="width:90px"><col style="width:130px"><col style="width:110px"><col style="width:200px"><col style="width:150px"><col style="width:110px"></colgroup>
-    <thead><tr><th class="l">브랜드</th><th>구분</th><th class="l">업태</th><th>상태</th><th>월 검색수(전체)</th><th>전월 대비</th><th class="l" title="공정위 정보공개서 기준 점포 수(가맹점+직영점)와 전 기준년도 대비 증감. 연 1회 갱신이라 최신 상황과 차이가 있을 수 있음">점포 수<br><span style="font-weight:400">공정위·상가정보·내부</span></th><th class="l" title="우리는 내부 매출 시스템 기준(최근 12개월). 경쟁사는 공개된 값이 없어 비워 둠">점포당 연매출<br><span style="font-weight:400">최근 12개월</span></th><th>가격</th></tr></thead><tbody>` +
+  $('cmpTable').innerHTML = `<table><colgroup><col style="width:150px"><col style="width:60px"><col style="width:130px"><col style="width:60px"><col style="width:100px"><col style="width:80px"><col style="width:230px"><col style="width:220px"><col style="width:200px"><col style="width:190px"></colgroup>
+    <thead><tr><th class="l">브랜드</th><th>구분</th><th class="l">업태</th><th>상태</th><th>월 검색수(전체)</th><th>전월 대비</th><th class="l" title="언론·공식 자료에서 확인해 확정한 최신 점포 수(출처·기준일 병기). 우리는 내부 매출 시스템 값">점포 수<br><span style="font-weight:400">최신 확인값</span></th><th class="l" title="공정위 정보공개서 점포 수. 연 1회 갱신되며 영업현황은 등록 전년도 말 기준이라 최신과 차이가 큽니다">점포 수<br><span style="font-weight:400">공정위(전년도 말)</span></th><th class="l" title="우리는 내부 매출 시스템 기준(최근 12개월). 경쟁사는 확인한 값만 표시">점포당 연매출<br><span style="font-weight:400">확인값</span></th><th class="l" title="공식 홈페이지·메뉴판에서 확인해 입력한 대표 가격">가격<br><span style="font-weight:400">확인값</span></th></tr></thead><tbody>` +
     rows.map(b => {
       const kw = KW.find(k => k.brand_id === b.id && k.grp !== 'need');
       const la = kw ? latestActual(kw.id, 'total') : null;
       const chg = la && la.prev > 0 ? (la.v / la.prev - 1) * 100 : null;
       return `<tr><td class="l"><b>${esc(b.name)}</b></td><td>${b.kind === 'own' ? '<span class="chip ok">우리</span>' : '경쟁사'}</td><td class="l">${esc(b.segment || '')}</td><td>${b.status === 'candidate' ? '<span class="chip new">후보</span>' : '사용'}</td>` +
-        `<td>${la ? num(la.v) : '—'}</td><td>${chg == null ? '—' : `<span class="${chg >= 0 ? 'up' : 'dn'}">${sgn(chg)}%</span>`}</td><td class="l" style="vertical-align:top">${storeCell(b)}</td><td class="l" style="vertical-align:top">${salesCell(b)}</td><td style="color:var(--muted)">2단계</td></tr>`;
+        `<td>${la ? num(la.v) : '—'}</td><td>${chg == null ? '—' : `<span class="${chg >= 0 ? 'up' : 'dn'}">${sgn(chg)}%</span>`}</td><td class="l" style="vertical-align:top">${nowCell(b)}</td><td class="l" style="vertical-align:top">${ftcCell(b)}</td><td class="l" style="vertical-align:top">${salesCell(b)}</td><td class="l" style="vertical-align:top">${estCell(b.id, 'price')}</td></tr>`;
     }).join('') + '</tbody></table>';
+  renderEstPanel();
 }
+
+// 후보 확인·직접 입력 패널
+function estMsg(t, bad) { const e = $('estMsg'); if (!e) return; e.textContent = t; e.style.color = bad ? 'var(--crit)' : ''; }
+function renderEstPanel() {
+  if (!$('estCands')) return;
+  const names = new Map(BRANDS.map(b => [b.id, b.name]));
+  const byName = (a, b) => (names.get(a.brand_id) || '').localeCompare(names.get(b.brand_id) || '', 'ko') || String(b.as_of || '').localeCompare(String(a.as_of || ''));
+  const cands = EST.filter(e => e.status === 'candidate').sort(byName);
+  $('estCands').innerHTML = cands.length
+    ? `<table><colgroup><col style="width:130px"><col style="width:90px"><col style="width:90px"><col style="width:100px"><col><col style="width:150px"></colgroup>
+      <thead><tr><th class="l">브랜드</th><th>구분</th><th>값</th><th>기준일</th><th class="l">출처 · 인용(검증용)</th><th></th></tr></thead><tbody>` +
+      cands.map(e => `<tr><td class="l"><b>${esc(names.get(e.brand_id) || '')}</b></td><td>${EST_LABEL[e.metric]}</td><td><b>${estFmt(e)}</b></td><td>${esc(e.as_of || '—')}</td>
+        <td class="l" style="white-space:normal">${e.source_url ? `<a href="${esc(e.source_url)}" target="_blank" rel="noopener noreferrer">${esc(e.source_title || e.source_url)}</a>` : esc(e.source_title || '')}<div class="dnote" style="margin:2px 0 0">“${esc(e.quote || '')}”</div></td>
+        <td><button class="btn btn-sm" data-est="ok" data-id="${e.id}" type="button">확정</button> <button class="btn btn-sm" data-est="no" data-id="${e.id}" type="button">제외</button></td></tr>`).join('') + '</tbody></table>'
+    : '<div class="dnote" style="margin:0">확인 대기 중인 후보가 없습니다. “검색으로 후보 찾기”를 누르면 최신 기사에서 점포 수를 찾아 옵니다.</div>';
+  const conf = EST.filter(e => e.status === 'confirmed').sort(byName);
+  $('estConf').innerHTML = conf.length
+    ? conf.map(e => `<span class="chip" style="margin:2px 4px 2px 0">${esc(names.get(e.brand_id) || '')} · ${EST_LABEL[e.metric]} ${estFmt(e)} (${esc(e.as_of || '시점 미상')}, ${SRC_TYPE[e.source_type] || ''}) <a href="#" data-est="undo" data-id="${e.id}" title="이 확정값을 취소">✕</a></span>`).join('')
+    : '<span class="dnote" style="margin:0">아직 확정한 값이 없습니다.</span>';
+  const sel = $('estBrand');
+  if (sel && !sel.options.length) sel.innerHTML = BRANDS.filter(b => b.status !== 'excluded' && b.kind !== 'own').map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
+  if ($('estDate') && !$('estDate').value) $('estDate').value = new Date().toISOString().slice(0, 10);
+  syncEstUnit();
+}
+function syncEstUnit() { const m = $('estMetric'); if (m && $('estUnit')) $('estUnit').textContent = EST_UNIT[m.value] || ''; }
+async function reloadEst() { EST = await fetchAll('demand_estimates', '*', 'id'); renderCompetitor(); }
+async function estSetStatus(id, status) {
+  const { data: { session } } = await sb.auth.getSession();
+  const { error } = await sb.from('demand_estimates').update({ status, confirmed_by: session?.user?.email || null, confirmed_at: new Date().toISOString() }).eq('id', id);
+  if (error) { estMsg('저장 실패: ' + error.message, true); return; }
+  await reloadEst();
+  estMsg(status === 'confirmed' ? '확정했습니다.' : '반영했습니다.');
+}
+async function estAddManual() {
+  const brand_id = Number($('estBrand').value), metric = $('estMetric').value, value = Number($('estValue').value);
+  if (!brand_id || !(value > 0)) { estMsg('브랜드와 값을 입력하세요.', true); return; }
+  const url = $('estUrl').value.trim();
+  if (url && !/^https?:\/\//i.test(url)) { estMsg('출처 주소는 http(s)://로 시작해야 합니다.', true); return; }
+  const { data: { session } } = await sb.auth.getSession();
+  const note = $('estNote').value.trim().slice(0, 100);
+  const row = { brand_id, metric, value, unit: EST_UNIT[metric], as_of: $('estDate').value || null, source_url: url || null, source_title: note || null, source_type: $('estType').value, note: note || null, status: 'confirmed', confirmed_by: session?.user?.email || null, confirmed_at: new Date().toISOString() };
+  const { error } = await sb.from('demand_estimates').insert(row);
+  if (error) { estMsg('저장 실패: ' + error.message, true); return; }
+  $('estValue').value = ''; $('estUrl').value = ''; $('estNote').value = '';
+  await reloadEst();
+  estMsg('저장했습니다.');
+}
+async function runStoreSearch() {
+  const btn = $('estSearchBtn'); btn.disabled = true;
+  try {
+    let offset = 0, saved = 0;
+    for (let i = 0; i < 6; i++) {
+      estMsg(`검색 중… (${offset + 1}번째 브랜드부터, 한 번에 4곳·약 1~2분)`);
+      const r = await invokeFn('demand-storesearch', { offset });
+      saved += r.saved || 0;
+      if (r.note) estMsg(r.note, true);
+      if (r.done) break;
+      offset = r.next;
+    }
+    await reloadEst();
+    estMsg(`완료: 새 후보 ${saved}건. 아래 목록에서 값과 출처를 확인하고 확정하세요.`);
+  } catch (e) { estMsg('검색 실패: ' + (e.message || e), true); }
+  btn.disabled = false;
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-est]'); if (!t) return;
+  e.preventDefault();
+  const id = Number(t.dataset.id);
+  if (t.dataset.est === 'ok') estSetStatus(id, 'confirmed');
+  else if (t.dataset.est === 'no') estSetStatus(id, 'rejected');
+  else if (t.dataset.est === 'undo' && confirm('이 확정값을 취소할까요?')) estSetStatus(id, 'rejected');
+});
+$('estSearchBtn').onclick = runStoreSearch;
+$('estAddBtn').onclick = estAddManual;
+$('estMetric').onchange = syncEstUnit;
 
 // ---------- 고객 반응 (3단계) ----------
 const SRC_LABEL = { youtube_video: '유튜브 영상', youtube_comment: '유튜브 댓글', blog: '블로그', cafe: '카페', news: '뉴스' };
