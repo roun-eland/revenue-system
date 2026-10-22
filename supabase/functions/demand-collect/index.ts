@@ -85,8 +85,17 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
     // ---- 권한: 기획자 JWT 또는 예약 실행 비밀값 ----
+    // 예약 실행(pg_cron)은 DB(demand_private)에 보관된 비밀값과 일치할 때만 통과. 환경 변수 DEMAND_CRON_SECRET도 계속 허용.
     const cron = req.headers.get("x-cron-secret");
-    if (!(cron && cron === Deno.env.get("DEMAND_CRON_SECRET"))) {
+    let isCron = false;
+    if (cron) {
+      if (cron === Deno.env.get("DEMAND_CRON_SECRET")) isCron = true;
+      else {
+        const { data: sec } = await createClient(SUPABASE_URL, SERVICE_KEY).from("demand_private").select("value").eq("key", "cron_secret").maybeSingle();
+        isCron = !!sec && sec.value === cron;
+      }
+    }
+    if (!isCron) {
       const jwt = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
       const user = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: `Bearer ${jwt}` } } });
       const { data: { user: u } } = await user.auth.getUser(jwt);
