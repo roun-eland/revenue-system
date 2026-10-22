@@ -1,6 +1,7 @@
 // 로운 수요 모니터링 — 3단계 고객 반응 수집·요약 (Supabase Edge Function, Deno)
 // 호출: 화면의 "지금 수집" 버튼(기획자 JWT) 또는 예약 실행(x-cron-secret = DB demand_private.cron_secret)
-// body: { mode?: "collect" | "summarize" | "all"(기본), brand_id?: number }
+// body: { mode?: "collect" | "summarize" | "all"(기본), brand_id?: number, ym?: "YYYY-MM" }
+// 기간: ym이 있으면 그 달에 발행된 글만, 없으면 지난달 + 이번 달(진행분). 모든 원문은 발행월에 귀속해 월별로 요약한다.
 // 필요한 Secrets(있는 출처만 사용, 없으면 그 출처는 건너뜀):
 //   YOUTUBE_API_KEY                      유튜브 영상·댓글
 //   NAVERHUB_CLIENT_ID / _SECRET         네이버 블로그·뉴스·카페 검색 (NAVER API HUB에 '검색' API 등록 필요)
@@ -29,6 +30,10 @@ function kstYm(d = new Date()) {
   const k = new Date(d.getTime() + 9 * 3600 * 1000);
   return `${k.getUTCFullYear()}-${String(k.getUTCMonth() + 1).padStart(2, "0")}`;
 }
+// ---- 월 계산(한국시간 기준). 모든 원문은 '발행된 달'에 귀속시킨다 ----
+const monthOf = (iso: string) => kstYm(new Date(iso));
+const monthStart = (ym: string) => `${ym}-01T00:00:00+09:00`;
+const addMonths = (ym: string, n: number) => { const [y, m] = ym.split("-").map(Number); const t = y * 12 + (m - 1) + n; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, "0")}`; };
 async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>) {
   let i = 0;
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const x = items[i++]; await fn(x); } }));
@@ -52,9 +57,18 @@ async function yt(path: string, params: Record<string, string | number>) {
   if (!r.ok) throw new Error(`YouTube ${path} ${r.status}: ${(await r.text()).replaceAll(env("YOUTUBE_API_KEY"), "***").slice(0, 160)}`);
   return await r.json();
 }
-async function collectYoutube(b: Brand): Promise<Item[]> {
-  const after = new Date(Date.now() - 90 * 864e5).toISOString();
-  const s = await yt("search", { part: "snippet", type: "video", q: `${b.name} 후기`, maxResults: 25, order: "relevance", publishedAfter: after, regionCode: "KR", relevanceLanguage: "ko" });
+// 월마다 따로 검색해 그 달에 올라온 영상만 가져온다
+async function collectYoutube(b: Brand, months: string[]): Promise<Item[]> {
+  const out: Item[] = [];
+  for (const ym of months) {
+    const after = new Date(monthStart(ym)).toISOString();
+    const before = new Date(Math.min(new Date(monthStart(addMonths(ym, 1))).getTime(), Date.now())).toISOString();
+    out.push(...await collectYoutubeMonth(b, after, before));
+  }
+  return out;
+}
+async function collectYoutubeMonth(b: Brand, after: string, before: string): Promise<Item[]> {
+  const s = await yt("search", { part: "snippet", type: "video", q: `${b.name} 후기`, maxResults: 25, order: "relevance", publishedAfter: after, publishedBefore: before, regionCode: "KR", relevanceLanguage: "ko" });
   // deno-lint-ignore no-explicit-any
   const vids = (s.items ?? []).map((i: any) => ({ id: i.id.videoId as string, title: strip(i.snippet.title), desc: strip(i.snippet.description), at: i.snippet.publishedAt as string }))
     .filter((v: { title: string; desc: string }) => matches(b, v.title + " " + v.desc));
@@ -81,31 +95,40 @@ async function collectYoutube(b: Brand): Promise<Item[]> {
 }
 
 // ---------- 네이버 검색 (NAVER API HUB) ----------
-async function naverSearch(kind: "blog" | "news" | "cafearticle", q: string) {
+async function naverSearch(kind: "blog" | "news" | "cafearticle", q: string, start = 1) {
   const id = env("NAVERSEARCH_CLIENT_ID") || env("NAVERHUB_CLIENT_ID");
   const sec = env("NAVERSEARCH_CLIENT_SECRET") || env("NAVERHUB_CLIENT_SECRET");
-  const sort = kind === "news" ? "date" : "sim";
-  const r = await fetch(`https://naverapihub.apigw.ntruss.com/search/v1/${kind}?query=${encodeURIComponent(q)}&display=50&sort=${sort}`, {
+  // 날짜 내림차순으로 100건씩 넘기며 수집 기간 시작일을 지날 때까지 가져온다 (start는 최대 1000)
+  const r = await fetch(`https://naverapihub.apigw.ntruss.com/search/v1/${kind}?query=${encodeURIComponent(q)}&display=100&start=${start}&sort=date`, {
     headers: { "X-NCP-APIGW-API-KEY-ID": id, "X-NCP-APIGW-API-KEY": sec },
   });
   if (!r.ok) throw new Error(`네이버 검색(${kind}) ${r.status}: ${(await r.text()).slice(0, 120)}`);
   // deno-lint-ignore no-explicit-any
   return ((await r.json()).items ?? []) as any[];
 }
-async function collectNaver(b: Brand, errs: string[]): Promise<Item[]> {
+// since~until(ISO) 사이에 발행된 글만 모은다. 카페글은 API가 작성일을 주지 않아 posted_at=null로 두고 호출부에서 기준월을 붙인다.
+async function collectNaver(b: Brand, errs: string[], since: number, until: number): Promise<Item[]> {
   const out: Item[] = [];
-  const cutoff = Date.now() - 90 * 864e5;
-  const jobs: Array<["blog" | "news" | "cafearticle", string, string]> = [["blog", "blog", `${b.name} 후기`], ["cafearticle", "cafe", `${b.name} 후기`], ["news", "news", b.name]];
-  for (const [kind, source, q] of jobs) {
+  const jobs: Array<["blog" | "news" | "cafearticle", string, string, number]> = [["blog", "blog", `${b.name} 후기`, 500], ["cafearticle", "cafe", `${b.name} 후기`, 100], ["news", "news", b.name, 500]];
+  for (const [kind, source, q, maxItems] of jobs) {
     try {
-      for (const it of await naverSearch(kind, q)) {
-        const title = strip(it.title), snippet = strip(it.description);
-        if (!matches(b, title + " " + snippet)) continue;
-        let at: string | null = null;
-        if (it.postdate && /^\d{8}$/.test(it.postdate)) at = `${it.postdate.slice(0, 4)}-${it.postdate.slice(4, 6)}-${it.postdate.slice(6, 8)}T00:00:00+09:00`;
-        else if (it.pubDate) { const d = new Date(it.pubDate); if (!isNaN(d.getTime())) at = d.toISOString(); }
-        if (at && new Date(at).getTime() < cutoff) continue;
-        out.push({ source, title, snippet: snippet.slice(0, 220), url: String(it.originallink || it.link), posted_at: at, metric: null });
+      let done = false;
+      for (let start = 1; start <= maxItems && !done; start += 100) {
+        const page = await naverSearch(kind, q, start);
+        if (page.length < 100) done = true;
+        for (const it of page) {
+          const title = strip(it.title), snippet = strip(it.description);
+          let at: string | null = null;
+          if (it.postdate && /^\d{8}$/.test(it.postdate)) at = `${it.postdate.slice(0, 4)}-${it.postdate.slice(4, 6)}-${it.postdate.slice(6, 8)}T12:00:00+09:00`;
+          else if (it.pubDate) { const d = new Date(it.pubDate); if (!isNaN(d.getTime())) at = d.toISOString(); }
+          if (at) {
+            const t = new Date(at).getTime();
+            if (t < since) { done = true; continue; } // 날짜 내림차순이라 이후는 모두 기간 밖
+            if (t >= until) continue;
+          }
+          if (!matches(b, title + " " + snippet)) continue;
+          out.push({ source, title, snippet: snippet.slice(0, 220), url: String(it.originallink || it.link), posted_at: at, metric: null });
+        }
       }
     } catch (e) { errs.push(`${b.name}/${source}: ${(e as Error).message}`); if (/ 40[134] /.test((e as Error).message)) break; }
   }
@@ -113,10 +136,10 @@ async function collectNaver(b: Brand, errs: string[]): Promise<Item[]> {
 }
 
 // ---------- AI 요약 ----------
-async function summarize(b: Brand, items: Array<{ source: string; title: string; snippet: string }>) {
+async function summarize(b: Brand, items: Array<{ source: string; title: string; snippet: string }>, ym: string) {
   const list = items.slice(0, 120).map((x, i) => `[${i + 1}](${x.source}) ${x.title.slice(0, 80)} / ${x.snippet.slice(0, 160)}`).join("\n");
   const prompt = `브랜드: ${b.name} (업태: ${b.segment ?? "미확인"})
-아래는 최근 90일간 수집한 고객 후기·언급 ${items.length}건이다.
+아래는 ${ym}에 발행된 고객 후기·언급 ${items.length}건이다.
 ${list}
 
 규칙:
@@ -171,42 +194,54 @@ Deno.serve(async (req) => {
       let q = admin.from("demand_brands").select("id,name,kind,segment,aliases").neq("status", "excluded").order("id");
       if (body.brand_id) q = q.eq("id", body.brand_id);
       const brands = ((await q).data ?? []) as Brand[];
-      const ym = kstYm();
+      // ---- 대상 기간: body.ym(YYYY-MM)이 있으면 그 달만, 없으면 지난달 + 이번 달(진행분) ----
+      const nowYm = kstYm(), prevYm = addMonths(nowYm, -1);
+      const target = typeof body.ym === "string" && /^\d{4}-\d{2}$/.test(body.ym) ? body.ym : null;
+      const months = target ? [target] : [prevYm, nowYm];
+      const sinceMs = new Date(monthStart(months[0])).getTime();
+      const untilMs = Math.min(new Date(monthStart(addMonths(months[months.length - 1], 1))).getTime(), Date.now() + 1000);
+      // 카페글은 작성일이 없어 '수집 시점 최신글'을 기준월에 귀속(월초 5일 이내 실행이면 지난달)
+      const kstDay = new Date(Date.now() + 9 * 3600 * 1000).getUTCDate();
+      const cafeYm = target ?? (kstDay <= 5 ? prevYm : nowYm);
       const errs: string[] = [];
       let collected = 0, summarized = 0;
 
       if (mode === "collect" || mode === "all") {
         await pool(brands, 3, async (b) => {
           const items: Item[] = [];
-          if (hasYt) { try { items.push(...await collectYoutube(b)); } catch (e) { errs.push(`${b.name}/youtube: ${(e as Error).message}`); } }
-          if (hasNaver) items.push(...await collectNaver(b, errs));
+          if (hasYt) { try { items.push(...await collectYoutube(b, months)); } catch (e) { errs.push(`${b.name}/youtube: ${(e as Error).message}`); } }
+          if (hasNaver) items.push(...await collectNaver(b, errs, sinceMs, untilMs));
           const seen = new Set<string>();
-          const rows = items.filter((x) => x.url && !seen.has(x.source + x.url) && seen.add(x.source + x.url)).map((x) => ({ brand_id: b.id, ym, ...x }));
+          // 발행월로 귀속, 대상 기간 밖은 버림
+          const rows = items.filter((x) => x.url && !seen.has(x.source + x.url) && seen.add(x.source + x.url))
+            .map((x) => ({ brand_id: b.id, ym: x.posted_at ? monthOf(x.posted_at) : cafeYm, ...x }))
+            .filter((x) => months.includes(x.ym));
           if (rows.length) { ck(await admin.from("demand_voice_raw").upsert(rows, { onConflict: "brand_id,source,url" })); collected += rows.length; }
         });
       }
 
       if ((mode === "summarize" || mode === "all") && hasAi) {
-        await pool(brands, 3, async (b) => {
+        const tasks = brands.flatMap((b) => months.map((ym) => ({ b, ym })));
+        await pool(tasks, 3, async ({ b, ym }) => {
           const { data: raw } = await admin.from("demand_voice_raw").select("source,title,snippet").eq("brand_id", b.id).eq("ym", ym).limit(300);
           const items = raw ?? [];
+          if (items.length < 3) return; // 표본이 너무 적으면 요약하지 않음(화면에는 원문 건수만 표시)
           const sources: Record<string, number> = {};
           for (const x of items) sources[x.source] = (sources[x.source] ?? 0) + 1;
-          if (!items.length) { errs.push(`${b.name}: 수집된 원문이 없어 요약하지 않았습니다.`); return; }
           try {
-            const { out, model } = await summarize(b, items);
+            const { out, model } = await summarize(b, items, ym);
             ck(await admin.from("demand_voice_summary").upsert({
               brand_id: b.id, ym, n_items: items.length, sources, headline: String(out.headline ?? ""), model,
               positives: out.positives ?? [], negatives: out.negatives ?? [], features: out.features ?? [], flags: out.flags ?? [], created_at: new Date().toISOString(),
             }));
             summarized++;
-          } catch (e) { errs.push(`${b.name}/요약: ${(e as Error).message}`); }
+          } catch (e) { errs.push(`${b.name}/${ym}/요약: ${(e as Error).message}`); }
         });
       } else if ((mode === "summarize" || mode === "all") && !hasAi) {
-        errs.push("ANTHROPIC_API_KEY가 없어 요약은 건너뛰었습니다.");
+        errs.push("요약 키가 없어 요약은 건너뛰었습니다.");
       }
 
-      const summary = `원문 ${collected}건 수집 · ${summarized}개 브랜드 요약 (${ym})${errs.length ? " · 확인 필요 " + errs.length + "건: " + errs.slice(0, 2).join(" | ") : ""}`;
+      const summary = `${months.join("·")} 발행분 원문 ${collected}건 수집 · 브랜드×월 ${summarized}건 요약${errs.length ? " · 확인 필요 " + errs.length + "건: " + errs.slice(0, 2).join(" | ") : ""}`;
       await finish(errs.length && !collected && !summarized ? "error" : "ok", summary.slice(0, 300));
       return json({ ok: true, summary, errors: errs });
     } catch (e) {
