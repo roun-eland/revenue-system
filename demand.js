@@ -264,7 +264,12 @@ $('runCollectBtn').onclick = async () => {
   btn.disabled = true; msg.className = 'plan-msg'; msg.textContent = '수집 중… (키워드 수에 따라 1~2분)';
   try {
     const { data, error } = await sb.functions.invoke('demand-collect', { body: { mode: 'search' } });
-    if (error) throw error;
+    if (error) {
+      // 서버가 보낸 실제 오류 문구를 꺼내 보여준다 (기본 문구는 'non-2xx status code'뿐)
+      let m = error.message;
+      try { if (error.context && error.context.json) { const j = await error.context.json(); if (j && j.error) m = j.error; } } catch (_) { /* 무시 */ }
+      throw new Error(m);
+    }
     if (data && data.error) throw new Error(data.error);
     msg.className = 'plan-msg ok'; msg.textContent = `수집 완료${data && data.summary ? ' · ' + data.summary : ''}`;
     await loadAll(); renderAll();
