@@ -501,6 +501,7 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
 // dashMonth/dashSort를 빠르게 연속 변경하면 먼저 시작한 비동기 요청이 나중에 끝나며 최신 결과를
 // 옛날 결과로 덮어쓸 수 있다(경쟁 상태) — renderDash가 매 호출마다 올리는 dashReqId로 막는다.
 let dashReqId = 0;
+let dashChartData = null; // 산점도(ot-charts.js)에 넘길 {rows, label} — 표와 같은 행
 async function renderDashMTD(ym, myReq) {
   $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">누적 실적 집계 중…</p>';
   const [y, m] = ym.split('-').map(Number);
@@ -516,6 +517,7 @@ async function renderDashMTD(ym, myReq) {
   const last = rows.reduce((a, r) => r.last > a ? r.last : a, ''), first = rows.reduce((a, r) => !a || r.first < a ? r.first : a, '');
   $('dashSub').textContent = `${ym} 누적 실적 (${first.slice(5)}~${last.slice(5)}) — 예상이 아니라 입력된 매출·근태 실적 기준입니다. ` +
     '누적 인건비율은 메이트 급여가 등록된 날짜까지만 계산합니다(급여대장이 10일까지면 매출·인건비 모두 10일까지 누적). 인건비 = 메이트 실제 급여(급여대장) + 정직원 급여(맨파워 직급 구성×직급 단가+직책수당)·연차수당(1인 10만원)·퇴직급여(1인 30만원)를 (기준일÷그 달 일수)로 환산한 값이고, 급여대장이 없는 매장은 마지막 근태일까지 메이트 근무시간×실질시급 추정으로 계산합니다. 전사 합계에는 본부 인건비 안분액을 같은 비율로 환산해 더했습니다(매장별 값에는 미포함). 4대보험 회사부담분은 제외. 생산성·목표생산성·초과시간은 급여와 무관하게 마지막 근태일까지 전체 기간입니다. 목표생산성은 표준표 등록 매장은 그 표(평일/주말)를 이번 달 실제 매출에 그대로 적용했을 때의 생산성, 그 외는 72,000원/MH 엔진(운영 제약 포함) 기준입니다. 메이트 초과시간 = 실제 메이트MH − 목표생산성 달성에 필요한 메이트MH. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
+  dashChartData = { rows, label: `${+ym.slice(5)}월 누적 (~${last.slice(5).replace('-', '/')})` };
   const tSales = rows.reduce((t, r) => t + r.sales, 0), tMH = rows.reduce((t, r) => t + r.mh, 0);
   const tNeed = rows.reduce((t, r) => t + r.need, 0);
   const rCut = rows.reduce((a, r) => r.cutIso > a ? r.cutIso : a, ''); // 누적 인건비율 기준일 = 매장들의 급여 등록일 중 가장 늦은 날
@@ -569,6 +571,7 @@ async function renderDash() {
                prod: s.aug.prod, need, over: s.aug.mh - need, needTheory: s.aug.need,
                labor, ratio: labor / (s.augM / 1.1) * 100 };
     }));
+    dashChartData = { rows, label: '8월 실측' };
     const tSales = rows.reduce((t, r) => t + r.sales, 0);
     const tMH = rows.reduce((t, r) => t + r.mh, 0);
     const tOver = rows.reduce((t, r) => t + Math.max(0, r.over), 0);
@@ -651,6 +654,7 @@ async function renderDash() {
       return { code, name: s.name, sales: M, mh: plan.totMH, prod,
                ratio: plan.std ? plan.ratio : (p?.output?.ratio ?? plan.ratio), src: srcBase + stdTag };
     }));
+    dashChartData = { rows, label: `${+ym.slice(5)}월 계획` };
     const tSales = rows.reduce((t, r) => t + r.sales, 0);
     const tMH = rows.reduce((t, r) => t + r.mh, 0);
     const nOk = rows.filter(r => r.prod >= TARGET).length;
@@ -675,7 +679,7 @@ async function renderDash() {
     $('dashTable').innerHTML = html + '</tbody></table>';
   }
 
-  if (window.ocRenderScatter) ocRenderScatter(ym); // 표 점검 산점도 (ot-charts.js) — 조회 월 기준
+  if (window.ocRenderScatter && myReq === dashReqId) ocRenderScatter(dashChartData); // 매출 대비 근무시간·인건비율 산점도 (ot-charts.js) — 위 표와 같은 행
   $('dashTable').querySelectorAll('tr.rowlink').forEach(tr => {
     tr.onclick = async () => {
       sel.value = tr.dataset.code; await onStoreChange();

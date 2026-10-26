@@ -1,5 +1,5 @@
 // 로운 생산성 — 표 점검 그래프 (2026-10-26)
-//  · 전사 대시보드: 같은 매출에서 표(표준 사용 계획표) 근무시간 비교 산점도
+//  · 전사 대시보드: 매출 대비 근무시간 / 인건비율 산점도 (표와 같은 행을 사용)
 //  · 매장 피드백: 매장별 그래프(시간대별 표 vs 실제, 하루 근무시간 표/달성선/실제, 포지션별 편차)
 // 달성선 = 그 매장의 일별 실적(8월~)에서 "근무시간 ~ 객수" 직선을 긋고, 잔차 하위 25%(잘 운영한 날)만큼 낮춘 선.
 // 정답이 아니라 "그 매장이 실제로 해낸 수준"이며, 인원이 모자랐던 날도 섞일 수 있다 — 논의용 지표.
@@ -134,49 +134,18 @@ const ocValueLabels = { id: 'ocValueLabels', afterDatasetsDraw(chart, _a, opts) 
   })); ctx.restore(); } };
 function ocDestroyFb() { OC.fbCharts.forEach(c => c.destroy()); OC.fbCharts = []; }
 
-// ---------- 전사 대시보드: 산점도 (조회 월 기준) ----------
-// 조회 월의 실제 영업일(근태·매출 둘 다 있는 날)마다 표(평일/주말)를 적용한 근무시간 합 vs 그 기간 외형매출.
-// 진행 중인 달은 누적 기간끼리 비교한다(예: 10월 누적 ~10/19 → 그 날짜까지의 매출과 표 근무시간).
-function ocMonthPoints(ym) {
-  const rows = [];
-  for (const code of Object.keys(OT_STD)) {
-    const days = (OC.byStore[code] || []).filter(d => d.ym === ym);
-    const pw = ocPlan(code, 'weekday'), pe = ocPlan(code, 'weekend');
-    if (!days.length || !pw || !pe) continue;
-    const nWd = days.filter(d => d.dt === 'weekday').length, nWe = days.length - nWd;
-    rows.push({ code, name: OT_DATA[code] ? OT_DATA[code].name : code, n: days.length, sales: days.reduce((s, d) => s + d.sales, 0), plan: pw.totMH * nWd + pe.totMH * nWe, last: days.reduce((m, d) => d.date > m ? d.date : m, '') });
-  }
-  const maxN = Math.max(0, ...rows.map(r => r.n));
-  return { all: rows, rows: rows.filter(r => r.n >= maxN * 0.8) }; // 그 달 내내 영업한 매장만 직선 기준에 사용(오픈 직후 매장 제외)
-}
-async function ocRenderScatter(ymArg) {
-  const card = $('dashScatterCard'); if (!card || typeof Chart === 'undefined') return;
-  const ym = ymArg || ($('dashMonth') ? $('dashMonth').value : '2026-09'), note = $('ocScatterNote'), key = ym + ':' + Date.now();
-  OC.scKey = key;
-  try { await ocLoad(); } catch (e) { card.style.display = ''; note.textContent = '그래프 데이터를 불러오지 못했습니다: ' + (e.message || e); return; }
-  if (OC.scKey !== key) return; // 그 사이 다른 월을 골랐음
-  const { all, rows } = ocMonthPoints(ym);
-  if (rows.length < 3) { card.style.display = 'none'; return; } // 실적이 없는 달(계획 모드)은 그리지 않는다
-  card.style.display = ''; ocFontInit();
-  const last = rows.reduce((m, r) => r.last > m ? r.last : m, ''), y = +ym.slice(0, 4), mo = +ym.slice(5);
-  const endIso = `${ym}-${String(new Date(y, mo, 0).getDate()).padStart(2, '0')}`, partial = last < endIso;
-  const label = partial ? `${mo}월 누적 (~${+last.slice(5, 7)}/${+last.slice(8)}) 기준` : `${mo}월 기준`;
-  if ($('ocScatterSub')) $('ocScatterSub').textContent = `${label} · 표(표준 사용 계획표) 점검`;
-  const xs = rows.map(r => r.sales / 1e8), ys = rows.map(r => r.plan), mx = ocMean(xs), my = ocMean(ys);
-  let sxy = 0, sxx = 0; xs.forEach((x, i) => { sxy += (x - mx) * (ys[i] - my); sxx += (x - mx) ** 2; });
-  const sl = sxx ? sxy / sxx : 0, ic = my - sl * mx;
-  const pts = all.map(r => { const x = r.sales / 1e8, fitY = ic + sl * x; return { x, y: r.plan, code: r.code, name: r.name, pct: (r.plan / fitY - 1) * 100, inFit: rows.includes(r) }; });
-  const px = pts.map(p => p.x), x0 = Math.min(...px) - 0.05 * (Math.max(...px) - Math.min(...px)) - 0.02, x1 = Math.max(...px) + 0.06 * (Math.max(...px) - Math.min(...px)) + 0.02;
-  const colorOf = p => !p.inFit ? OC_COL.gray : p.pct > 8 ? OC_COL.red : p.pct < -8 ? OC_COL.blue : OC_COL.ink;
-  if (OC.scatter) OC.scatter.destroy();
-  // 점 이름: 겹치지 않는 자리(오른쪽 위 → 오른쪽 아래 → 왼쪽 …)를 골라 쓴다
-  const labels = { id: 'ocPtLabels', afterDatasetsDraw(chart) {
+// ---------- 전사 대시보드: 매출 대비 근무시간 / 인건비율 산점도 (조회 월의 실적·계획 행을 그대로 사용) ----------
+// data = { rows: [{code, name, sales(원), mh, ratio(%)}], label: '10월 누적 (~10/19)' } — ot.js renderDash가 표와 같은 행을 넘겨 준다.
+// 근무시간: 같은 매출에서 전사 평균(직선)보다 많이/적게 쓰는지. 인건비율: 24%/28%/상한 38% 기준선 대비 위치.
+function ocMetric() { if (OC.met) return OC.met; try { return localStorage.getItem('oc_met') === 'ratio' ? 'ratio' : 'hours'; } catch (e) { return 'hours'; } }
+function ocSetMetric(m) { OC.met = m; try { localStorage.setItem('oc_met', m); } catch (e) { /* 저장 불가여도 이 화면에서는 바뀐다 */ } ocRenderScatter(OC.scData); }
+function ocLabelPlugin(pts, colorOf) {
+  return { id: 'ocPtLabels', afterDatasetsDraw(chart) {
     const ctx = chart.ctx, area = chart.chartArea, els = chart.getDatasetMeta(0).data, placed = [], h = 13;
     ctx.save(); ctx.font = '12px sans-serif'; ctx.textBaseline = 'top';
     const hit = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
     const dots = els.map(e => ({ x: e.x - 7, y: e.y - 7, w: 14, h: 14 }));
-    const order = els.map((_, i) => i).sort((a, b) => els[a].x - els[b].x);
-    for (const i of order) {
+    for (const i of els.map((_, k) => k).sort((a, b) => els[a].x - els[b].x)) {
       const el = els[i], p = pts[i], w = ctx.measureText(p.name).width;
       const cand = [[8, -h - 2], [8, 3], [-8 - w, -h - 2], [-8 - w, 3], [-w / 2, -h - 9], [-w / 2, 9], [8, -h - 17], [8, 17], [-8 - w, -h - 17], [-8 - w, 17]];
       let pick = null;
@@ -190,20 +159,52 @@ async function ocRenderScatter(ymArg) {
       placed.push(pick); ctx.fillStyle = colorOf(p); ctx.fillText(p.name, pick.x, pick.y);
     }
     ctx.restore(); } };
+}
+function ocRenderScatter(data) {
+  const card = $('dashScatterCard'); if (!card || typeof Chart === 'undefined') return;
+  OC.scData = data;
+  const rows = data && data.rows ? data.rows.filter(r => r.sales > 0 && r.mh > 0 && r.ratio != null && isFinite(r.ratio)) : [];
+  if (rows.length < 3) { card.style.display = 'none'; return; }
+  card.style.display = ''; ocFontInit();
+  const met = ocMetric();
+  [['ocMetHrs', 'hours'], ['ocMetRatio', 'ratio']].forEach(([id, m]) => { const b = $(id); if (!b) return; b.style.background = m === met ? '#2f3030' : ''; b.style.color = m === met ? '#fff' : ''; });
+  if ($('ocScatterSub')) $('ocScatterSub').textContent = `${data.label} · 매장별`;
+  if ($('ocScatterTitle')) $('ocScatterTitle').textContent = met === 'hours' ? '매출 대비 근무시간' : '매출 대비 인건비율';
+  const note = $('ocScatterNote'), shortOf = s => s;
+  let pts, colorOf, datasets, yTitle, tip, noteHtml;
+  const xs = rows.map(r => r.sales / 1e8), px0 = Math.min(...xs), px1 = Math.max(...xs), pad = (px1 - px0) * 0.06 + 0.02, x0 = px0 - pad, x1 = px1 + pad;
+  if (met === 'hours') {
+    const ys = rows.map(r => r.mh), mx = ocMean(xs), my = ocMean(ys);
+    let sxy = 0, sxx = 0; xs.forEach((x, i) => { sxy += (x - mx) * (ys[i] - my); sxx += (x - mx) ** 2; });
+    const sl = sxx ? sxy / sxx : 0, ic = my - sl * mx;
+    pts = rows.map(r => { const x = r.sales / 1e8, fy = ic + sl * x; return { x, y: r.mh, code: r.code, name: shortOf(r.name), pct: (r.mh / fy - 1) * 100 }; });
+    colorOf = p => p.pct > 8 ? OC_COL.red : p.pct < -8 ? OC_COL.blue : OC_COL.ink;
+    datasets = [{ label: '매장', data: pts, pointRadius: 6, pointHoverRadius: 8, pointBackgroundColor: pts.map(colorOf), pointBorderColor: '#fff' },
+      { type: 'line', label: `${rows.length}개점 평균 직선 (${won(ic)}h + 매출 1억당 ${won(sl)}h)`, data: [{ x: x0, y: ic + sl * x0 }, { x: x1, y: ic + sl * x1 }], borderColor: OC_COL.orange, borderDash: [6, 4], borderWidth: 1.6, pointRadius: 0 }];
+    yTitle = '총 근무시간 (h, 정직원+메이트)';
+    tip = c => `${pts[c.dataIndex].name}: ${won(pts[c.dataIndex].y)}h · 같은 매출 평균 대비 ${pts[c.dataIndex].pct >= 0 ? '+' : ''}${pts[c.dataIndex].pct.toFixed(0)}% (클릭 → 매장 피드백)`;
+    noteHtml = '직선 = 같은 매출에서 전사 평균 근무시간. <b>직선 아래(파랑)일수록 같은 매출을 적은 시간으로</b> 해내는 매장, 위(빨강)는 평균보다 시간을 많이 쓰는 매장입니다(±8% 기준). 매출이 클수록 근무시간도 늘어 직선이 올라갑니다.';
+  } else {
+    pts = rows.map(r => ({ x: r.sales / 1e8, y: r.ratio, code: r.code, name: shortOf(r.name) }));
+    colorOf = p => p.y > LABOR_CAP * 100 ? '#8b1a1a' : p.y > 28 ? OC_COL.red : p.y > 24 ? OC_COL.orange : OC_COL.green;
+    const hl = (v, col, lab, dash) => ({ type: 'line', label: lab, data: [{ x: x0, y: v }, { x: x1, y: v }], borderColor: col, borderDash: dash, borderWidth: 1.2, pointRadius: 0 });
+    datasets = [{ label: '매장', data: pts, pointRadius: 6, pointHoverRadius: 8, pointBackgroundColor: pts.map(colorOf), pointBorderColor: '#fff' },
+      hl(24, OC_COL.green, '24% (목표권)', [5, 4]), hl(28, OC_COL.orange, '28% (관리)', [5, 4]), hl(LABOR_CAP * 100, '#8b1a1a', `${Math.round(LABOR_CAP * 100)}% (상한)`, [2, 3])];
+    yTitle = '인건비율 (%)';
+    tip = c => `${pts[c.dataIndex].name}: 인건비율 ${pts[c.dataIndex].y.toFixed(1)}% · 매출 ${pts[c.dataIndex].x.toFixed(2)}억 (클릭 → 매장 피드백)`;
+    noteHtml = '<b>아래쪽(초록)일수록 효율적</b>입니다. 색 = 인건비율 밴드(24% 이하 초록 · 24~28% 주황 · 28% 초과 빨강 · 상한 38% 초과 진한 빨강). 매출이 낮은 매장은 최소 인원이 고정이라 비율이 높아지기 쉽습니다.';
+  }
+  if (OC.scatter) OC.scatter.destroy();
   OC.scatter = new Chart($('ocScatter'), {
-    type: 'scatter',
-    data: { datasets: [
-      { label: '매장', data: pts, pointRadius: 6, pointHoverRadius: 8, pointBackgroundColor: pts.map(colorOf), pointBorderColor: '#fff' },
-      { type: 'line', label: `${rows.length}개점 평균 직선 (${partial ? '누적 기간 ' : '월 '}${won(ic)}h + 매출 1억당 ${won(sl)}h)`, data: [{ x: x0, y: ic + sl * x0 }, { x: x1, y: ic + sl * x1 }], borderColor: OC_COL.orange, borderDash: [6, 4], borderWidth: 1.6, pointRadius: 0 }] },
+    type: 'scatter', data: { datasets },
     options: { responsive: true, maintainAspectRatio: false,
       onClick: (_e, els) => { const el = els.find(x => x.datasetIndex === 0); if (!el) return; const code = pts[el.index].code; showView('feedback'); const s = $('fbStore'); if (s) { s.value = code; if (typeof loadFeedback === 'function') loadFeedback(); } },
       onHover: (e, els) => { e.native.target.style.cursor = els.some(x => x.datasetIndex === 0) ? 'pointer' : 'default'; },
-      plugins: { legend: { display: true, position: 'bottom', labels: { filter: it => it.datasetIndex === 1, boxWidth: 24 } },
-        tooltip: { callbacks: { label: c => c.datasetIndex === 0 ? `${pts[c.dataIndex].name}: 표 ${won(pts[c.dataIndex].y)}h · 직선 대비 ${pts[c.dataIndex].pct >= 0 ? '+' : ''}${pts[c.dataIndex].pct.toFixed(0)}% (클릭 → 매장 피드백)` : c.dataset.label } } },
-      scales: { x: { title: { display: true, text: `${label.replace(' 기준', '')} 외형매출 (억원)` }, min: x0, max: x1 }, y: { title: { display: true, text: partial ? '표 기준 근무시간 (h, 같은 기간 누적)' : '표 기준 월 근무시간 (h)' } } } },
-    plugins: [labels] });
-  const excl = all.filter(r => !rows.includes(r)).map(r => r.name);
-  note.innerHTML = `직선 위(빨강) = 같은 매출 대비 표 근무시간이 큼, 아래(파랑) = 작음 (±8% 기준). 표 근무시간 = 표(평일/주말)를 ${partial ? '이 기간' : '그 달'}의 실제 영업일에 적용한 합 · 점을 누르면 그 매장의 피드백 그래프로 이동합니다. 직선은 ${rows.length}개점 기준${excl.length ? ` (${excl.join('·')}은 영업일이 짧아 점만 회색으로 표시)` : ''}. 표는 선임점장 확정 전이라 <b>논의용 지표</b>입니다.`;
+      plugins: { legend: { display: true, position: 'bottom', labels: { filter: it => it.datasetIndex > 0, boxWidth: 24 } },
+        tooltip: { filter: c => c.datasetIndex === 0, callbacks: { label: tip } } },
+      scales: { x: { title: { display: true, text: `${data.label} 외형매출 (억원)` }, min: x0, max: x1 }, y: { title: { display: true, text: yTitle }, ...(met === 'ratio' ? { min: Math.max(0, Math.floor(Math.min(...pts.map(p => p.y), 20) - 2)), max: Math.ceil(Math.max(...pts.map(p => p.y), LABOR_CAP * 100) + 2) } : {}) } } },
+    plugins: [ocLabelPlugin(pts, colorOf)] });
+  note.innerHTML = `${noteHtml} 점을 누르면 그 매장의 피드백 그래프로 이동합니다.`;
 }
 
 // ---------- 매장 피드백: 매장별 그래프 ----------
@@ -276,4 +277,4 @@ async function ocRenderFeedback(code, ym) {
       options: { ...base, indexAxis: 'y', plugins: { title: { display: true, text: `${OC_DT[dt]} 포지션별: 같은 매출 평균 매장 대비(h)`, align: 'start' }, legend: { display: false }, ocValueLabels: { on: true } }, scales: { x: { grace: '25%' } } }, plugins: [ocValueLabels] });
   }
 }
-window.ocRenderFeedback = ocRenderFeedback; window.ocRenderScatter = ocRenderScatter;
+window.ocRenderFeedback = ocRenderFeedback; window.ocRenderScatter = ocRenderScatter; window.ocSetMetric = ocSetMetric;
