@@ -675,6 +675,7 @@ async function renderDash() {
     $('dashTable').innerHTML = html + '</tbody></table>';
   }
 
+  if (window.ocRenderScatter) ocRenderScatter(); // 표 점검 산점도 (ot-charts.js) — 월과 무관한 9월 기준이라 한 번만 그려도 되지만 재호출해도 가볍다
   $('dashTable').querySelectorAll('tr.rowlink').forEach(tr => {
     tr.onclick = async () => {
       sel.value = tr.dataset.code; await onStoreChange();

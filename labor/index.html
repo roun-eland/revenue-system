@@ -66,6 +66,11 @@
         <button id="dashExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
       <div class="kpis" id="dashKpis"></div>
+      <div class="card" id="dashScatterCard" style="margin-bottom:14px;display:none">
+        <h3 style="margin:0 0 4px">같은 매출에서 표 근무시간 비교 <span style="font-size:11px;font-weight:400;color:var(--muted2)">9월 기준 · 표(표준 사용 계획표) 점검</span></h3>
+        <div style="position:relative;height:400px"><canvas id="ocScatter"></canvas></div>
+        <p class="dnote" id="ocScatterNote" style="margin-top:8px"></p>
+      </div>
       <div class="card">
         <div class="tblwrap" id="dashTable"></div>
         <p class="dnote">생산성 = 외형매출 ÷ 총투입 MH (정직원 포함) · 목표 72,000원/MH · <b>생산성 점수 = 생산성 ÷ 목표(100% = 달성)</b> · 필요 MH = 실측 매출을 목표 생산성으로 환산하되 운영 제약(시간대 최소 2명·09시 준비 2명) 포함 — 피드백 화면과 동일 산식 · 과잉 MH = 실투입 − 필요. 밴드: <span class="band g">목표권 ≥72,000</span> <span class="band w">관리 60,000~72,000</span> <span class="band c">미달 &lt;60,000</span></p>
@@ -171,7 +176,11 @@
         <label class="fld" style="min-width:150px">월<select id="fbMonth"></select></label>
         <button id="fbExportBtn" class="btn btn-sm" type="button" style="align-self:flex-end">엑셀 다운로드 ⬇</button>
       </div>
-      <div id="fbBody"></div>
+      <div id="fbGraphs"></div>
+      <details id="fbOld" style="margin-top:6px">
+        <summary style="cursor:pointer;font-weight:700;padding:8px 0">상세 실적표 · 주차별 인건비율 · 과잉 일자 원인 태그 (기존 화면)</summary>
+        <div id="fbBody"></div>
+      </details>
     </section>
 
     <!-- S4 실적 입력 -->
@@ -274,7 +283,9 @@
 <script src="../ot-std.js?v=202610150900"></script>
 <script src="../ot-roster.js?v=202610150900"></script>
 <script src="../labor-calc.js?v=202610192200"></script>
-<script src="../ot.js?v=202610192230"></script>
-<script src="../ot-actuals.js?v=202610150900"></script>
+<script src="../vendor/chart.umd.min.js"></script>
+<script src="../ot.js?v=202610260100"></script>
+<script src="../ot-actuals.js?v=202610260100"></script>
+<script src="../ot-charts.js?v=202610260100"></script>
 </body>
 </html>

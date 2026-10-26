@@ -29,7 +29,7 @@ function buildFbControls() {
     const o = document.createElement('option'); o.value = v; o.textContent = `${y}년 ${m}월`; mo.appendChild(o);
     m++; if (m > 12) { m = 1; y++; } if (y === 2028) break;
   }
-  st.value = 'RU019'; mo.value = '2026-08';
+  st.value = 'RU019'; mo.value = '2026-09'; // 표 비교 기준월(9월)이 기본 — 그래프와 표가 같은 달을 보게
   st.onchange = loadFeedback; mo.onchange = loadFeedback;
 }
 
@@ -39,6 +39,7 @@ async function loadFeedback() {
   const s = OT_DATA[code];
   const box = $('fbBody');
   box.innerHTML = '<p class="dnote">실적 불러오는 중…</p>';
+  if (window.ocRenderFeedback) ocRenderFeedback(code, ym); // 표 점검 그래프 (ot-charts.js) — 기존 상세 화면과 별도로 위에 표시
 
   // 월 마지막 날을 정확히 계산 (9월을 '-31'로 조회하면 date 파싱 에러)
   const mdays = new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
