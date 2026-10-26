@@ -2839,7 +2839,7 @@ async function computeActualCostPerGram(seasonId, rangeOverride) {
     };
   });
 
-  return { results, costMonth, rawCodePricePerGram, clusterMembers, aliasNameByCode, find };
+  return { results, costMonth, rawCodePricePerGram, clusterMembers, aliasNameByCode, find, priceForCode };
 }
 
 // RPC(material_usage_totals_for_range_by_store)는 PostgREST 기본 응답 상한(1000행)에 걸릴 수 있어서
@@ -5112,6 +5112,7 @@ function mergePivotCompareData(dateRange, parts) {
     clusterMembers: _mapUnion(parts.map(p => p.clusterMembers)),
     aliasNameByCode: _mapUnion(parts.map(p => p.aliasNameByCode)),
     findMaterial: first.findMaterial,
+    priceForCode: code => { for (const p of parts) { const r = p.priceForCode && p.priceForCode(code); if (r) return r; } return null; }, // 시즌 경계를 걸친 기간은 시즌별 단가를 순서대로 찾는다
     usageByStoreRawCode,
     splitInfo: parts.map(p => `${state.seasons.find(x => x.id === p.seasonId)?.name || ''} ${p.dateRange.start.slice(5)}~${p.dateRange.end.slice(5)}`),
   };
@@ -5217,6 +5218,7 @@ async function loadPivotCompareDataOne(explicitRange) {
     dateRange, seasonId, results, designByMenu, costByMenu, costByMenuStore, stores, flat, targetByCategory, targetPrice, fromCache,
     rawCodePricePerGram: costResult.rawCodePricePerGram, clusterMembers: costResult.clusterMembers,
     aliasNameByCode: costResult.aliasNameByCode, findMaterial: costResult.find,
+    priceForCode: costResult.priceForCode, // ②모델별 비교 자재 펼침에서 자재별 금액을 (그램 × g당단가) 비율로 나누는 데 씀
     usageByStoreRawCode: usageByStoreRawCodeForPeriod,
   };
 }
@@ -5488,14 +5490,25 @@ function renderPivotCompare() {
           H += '</tr>';
         });
       } else if (hasParts && pivotOpenIng[mid]) {
-        [...ings.entries()].sort((a, b) => b[1] - a[1]).forEach(([code, g]) => {
-          const share = g / cookedWeight;
+        // 자재별 금액 = 메뉴 금액을 (그램 × g당 단가) 비율로 나눈다 — 메뉴 g당원가(computeActualCostPerGram)가
+        // Σ(그램 × 단가) ÷ 레시피 총 그램이라 똑같은 가중이면 줄 합계가 메뉴 줄과 정확히 맞는다(2026-10-27).
+        // 예전에는 무게 비율로 나눠서 단가가 0인 물(음용수·정제수)도 비용을 가진 것처럼 보였다.
+        // 물과 가격 근거가 없는 자재는 메뉴 원가에도 안 들어가므로 0으로 둔다. 단가 함수가 없으면(옛 캐시) 무게 비율로 대체.
+        const priceOf = code => (WATER_CODES.includes(code) || typeof data.priceForCode !== 'function') ? null : data.priceForCode(code);
+        const costW = new Map([...ings.entries()].map(([code, g]) => { const p = priceOf(code); return [code, p ? g * p.price : 0]; }));
+        const wSum = [...costW.values()].reduce((a, b) => a + b, 0);
+        const byPrice = typeof data.priceForCode === 'function' && wSum > 0;
+        const costShare = (code, g) => byPrice ? costW.get(code) / wSum : g / cookedWeight;
+        [...ings.entries()].sort((a, b) => costShare(b[0], b[1]) - costShare(a[0], a[1]) || b[1] - a[1]).forEach(([code, g]) => {
+          const share = g / cookedWeight;             // 그램 표시용(무게 비율)
+          const cshare = costShare(code, g);          // 금액 표시용(그램×단가 비율)
           const ingName = data.flat.rawMaterialNameByCode.get(code) || code;
-          H += `<tr class="pivot-ing"><td title="${esc(ingName)}">└ ${esc(ingName)} <span class="pivot-badge">${fmtNum(g, 1)}g/${fmtNum(cookedWeight, 0)}g</span></td><td class="pivot-na pivot-target-col">—</td>`;
+          const pr = priceOf(code);
+          H += `<tr class="pivot-ing"><td title="${esc(ingName)}">└ ${esc(ingName)} <span class="pivot-badge">${fmtNum(g, 1)}g/${fmtNum(cookedWeight, 0)}g${byPrice ? ` · g당${pr ? fmtNum(pr.price, 1) : '0'}원` : ''}</span></td><td class="pivot-na pivot-target-col">—</td>`;
           columns.forEach(c => {
             const gv = pivotGroupValue(m.result, c.codes);
             if (gv.grams == null) { H += '<td class="pivot-na">—</td>'; return; }
-            const amt = gv.grams * share * (m.costPerGram || 0);
+            const amt = byPrice ? gv.grams * (m.costPerGram || 0) * cshare : gv.grams * share * (m.costPerGram || 0);
             const t = pivotValueTxt(mode, amt, gv.grams * share, gv.customers, c.netSales);
             H += `<td class="pivot-d">${t.main}</td>`;
           });
