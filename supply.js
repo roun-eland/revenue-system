@@ -317,6 +317,15 @@ function renderKpis() {
     <div><div class="k">불용 보관비 청구 예정</div><div class="v" style="${fee ? 'color:var(--crit)' : ''}">${won(fee)}원</div><div class="s">출고부진 재고 ${eok(sum(slow))} (${slow.length}로트)</div></div>`;
 }
 
+// 단위당 단가 = 재고금액 ÷ 재고수량 (자재 단위 기준, 로트 합계). 로트별 단가가 서로 다르면 평균이고 툴팁에 최소~최대를 보여준다.
+function priceCell(g) {
+  if (!(g.qty > 0) || g.amount == null) return '<span style="color:var(--muted2)">—</span>';
+  const p = g.amount / g.qty, costs = g.lots.map(l => l.unit_cost).filter(v => v != null && v > 0);
+  const lo = costs.length ? Math.min(...costs) : null, hi = costs.length ? Math.max(...costs) : null;
+  const tip = lo != null && Math.round(lo) !== Math.round(hi) ? ` title="로트별 단가 ${won(lo)} ~ ${won(hi)}원 (평균 표시)"` : '';
+  return `<span${tip}>${won(p)}원 <span style="font-size:11px;color:var(--muted2)">(${esc(g.unit || '')})</span></span>`;
+}
+
 function itemRows(items) {
   return items.map(g => {
     const storeTip = g.store == null ? '' : `매장 재고 ${num(g.store, g.store % 1 ? 1 : 0)}${g.unit || ''} · 일평균 사용 ${g.storeDaily != null ? num(g.storeDaily, 1) : '—'}${g.unit || ''}(최근 4주)`;
@@ -327,15 +336,15 @@ function itemRows(items) {
     const gapTxt = g.shelfMin == null ? '—' : `<span class="${g.shelfMin < 0 ? 'neg' : ''}">${num(g.shelfMin)}일</span>`;
     return `<tr><td class="l"><span class="chip ${g.tier === 1 ? 't1' : g.tier === 2 ? 't2' : ''}">${TIER_LABEL[g.tier]}</span></td>
       <td class="l"><b>${esc(g.name)}</b><br><span style="font-size:11px;color:var(--muted2)">${esc(g.code)} · ${esc(g.spec || '')}</span></td>
-      <td>${esc(g.unit || '')}</td><td>${num(g.qty, g.qty % 1 ? 1 : 0)}</td><td>${won(g.amount)}</td>
+      <td>${esc(g.unit || '')}</td><td>${num(g.qty, g.qty % 1 ? 1 : 0)}</td><td>${priceCell(g)}</td><td>${won(g.amount)}</td>
       <td>${g.daily ? `${num(g.daily, 1)} <span style="font-size:11px;color:var(--muted2)">${esc(g.unit || '')}</span>` : '—'}</td><td>${g.days == null ? '—' : num(g.days, 1)}</td>
       <td>${storeTxt}</td><td><b>${g.comb == null ? '—' : num(g.comb, 1)}</b></td>
       <td>${g.expiry || '—'}</td><td>${gapTxt}</td>
       <td>${sigChip(g.sig.lv)}</td><td class="why">${esc(g.sig.why.join(' · ')) || '—'}</td></tr>`;
   }).join('');
 }
-const ITEM_HEAD = `<colgroup><col style="width:100px"><col style="width:270px"><col style="width:44px"><col style="width:76px"><col style="width:104px"><col style="width:100px"><col style="width:84px"><col style="width:84px"><col style="width:84px"><col style="width:96px"><col style="width:84px"><col style="width:60px"><col style="width:240px"></colgroup>
-  <thead><tr><th>구분</th><th>자재</th><th>단위</th><th>본부 재고</th><th>재고금액(원)</th><th title="본부가 매장으로 하루 평균 내보내는 양 (자재 단위: kg·ea 등)">일 출고량</th><th title="본부 재고 ÷ 일 출고량 — 이 재고로 매장에 며칠 공급할 수 있는지">비축일수(일)</th><th title="매장 재고 ÷ 매장 일평균 사용량(최근 4주) — 매장이 가진 재고로 며칠 쓸 수 있는지">매장재고(일)</th><th title="비축일수 + 매장재고(일)">합산 재고일수</th><th>만료일(최단)</th><th title="가장 먼저 끝나는 로트의 유통기한까지 남은 일수">유통기한(일)</th><th>신호</th><th style="text-align:left">사유</th></tr></thead>`;
+const ITEM_HEAD = `<colgroup><col style="width:100px"><col style="width:270px"><col style="width:44px"><col style="width:76px"><col style="width:112px"><col style="width:104px"><col style="width:100px"><col style="width:84px"><col style="width:84px"><col style="width:84px"><col style="width:96px"><col style="width:84px"><col style="width:60px"><col style="width:240px"></colgroup>
+  <thead><tr><th>구분</th><th>자재</th><th>단위</th><th>본부 재고</th><th title="재고금액 ÷ 재고수량 — 자재 단위(kg·ea 등) 1개당 단가">단가(원)</th><th>재고금액(원)</th><th title="본부가 매장으로 하루 평균 내보내는 양 (자재 단위: kg·ea 등)">일 출고량</th><th title="본부 재고 ÷ 일 출고량 — 이 재고로 매장에 며칠 공급할 수 있는지">비축일수(일)</th><th title="매장 재고 ÷ 매장 일평균 사용량(최근 4주) — 매장이 가진 재고로 며칠 쓸 수 있는지">매장재고(일)</th><th title="비축일수 + 매장재고(일)">합산 재고일수</th><th>만료일(최단)</th><th title="가장 먼저 끝나는 로트의 유통기한까지 남은 일수">유통기한(일)</th><th>신호</th><th style="text-align:left">사유</th></tr></thead>`;
 
 function renderCore() {
   const core = ITEMS.filter(g => g.tier <= 2).sort((a, b) => a.tier - b.tier || b.amount - a.amount);
