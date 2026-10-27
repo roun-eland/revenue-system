@@ -145,19 +145,49 @@ function trendFor(code, cutoff) {
   return Math.min(1.1, Math.max(0.9, s1 / s2));
 }
 
-// 전체 예측 산출 — sf_forecast_runs.daily에 그대로 저장되는 스냅샷
 // 실적 마지막 날짜 — 월말 전에 다음 달을 미리 발행할 때 컷오프(전월 말)가 아직 안 온 경우가 있다
 function lastSalesDate() {
   let mx = '';
   for (const m of Object.values(SALES)) for (const d of m.keys()) if (d > mx) mx = d;
   return mx;
 }
-function computeForecast(ym, cutoffDate) {
-  // 컷오프 이후 날짜는 아직 실적이 없으므로, BASE·추세는 "컷오프와 실적 마지막 날 중 이른 날"을 기준으로 잡는다.
-  // (안 그러면 빈 날짜가 0으로 합산돼 추세가 0.9 하한에 붙는다.) 컷오프 이후 실적이 이미 완결된 재발행은 영향 없음.
-  const last = lastSalesDate();
-  const cutoff = last && last < cutoffDate ? last : cutoffDate;
+// BASE·추세에 실제로 쓰이는 기준일 — 컷오프 이후 날짜는 아직 실적이 없으므로 "컷오프와 실적 마지막 날 중 이른 날".
+// (안 그러면 빈 날짜가 0으로 합산돼 추세가 0.9 하한에 붙는다.) 컷오프 이후 실적이 이미 완결된 재발행은 영향 없음.
+const dataCutoff = cutoffDate => { const last = lastSalesDate(); return last && last < cutoffDate ? last : cutoffDate; };
+
+// ---------- 날씨 보정 (SF-M2) — 입력은 전부 자동 수집(weather_* 테이블, Open-Meteo) ----------
+// 효과 = 기준기간(최근 4주) 대비 기온 편차 x(평년 대비 차이의 차)에 대한 매출 증감률. 추울수록 +, 많이 더우면 −.
+// 비·눈은 이 매장들(백화점·몰 입점)에서 감소 효과가 확인되지 않아 제외 — 근거는 weather_fit_v 분석.
+let WX_STORE = null, WX_COEF = null;
+async function loadWeatherInputs(ym, baseTo) {
+  try {
+    if (!WX_STORE) {
+      const [a, b] = await Promise.all([
+        sb.from('weather_store_region').select('store_code,region'),
+        sb.from('weather_coef').select('value').eq('key', 'temp_v1').maybeSingle()]);
+      if (a.error || b.error) return null;
+      WX_STORE = Object.fromEntries((a.data || []).map(r => [r.store_code, r.region]));
+      WX_COEF = b.data && b.data.value;
+    }
+    if (!WX_COEF || !Object.keys(WX_STORE).length) return null;
+    const [r, f] = await Promise.all([
+      sb.rpc('weather_inputs', { p_ym: ym, p_base_to: baseTo }),
+      sb.from('weather_daily').select('d').eq('kind', 'fcst').order('d', { ascending: false }).limit(1)]);
+    if (r.error || !r.data || !Object.keys(r.data.days || {}).length) return null;
+    return { inputs: r.data, coef: WX_COEF, store: WX_STORE, fcstLast: f.data && f.data[0] ? f.data[0].d : null };
+  } catch (e) { return null; }
+}
+function wxEffect(x, c) {
+  const xc = Math.max(-c.clip_c, Math.min(c.clip_c, x));
+  if (xc < 0) return Math.min(c.cold_cap, c.cold_per_c * -xc);
+  return xc <= c.warm_start_c ? 0 : -Math.min(c.warm_cap, c.warm_per_c * (xc - c.warm_start_c));
+}
+
+// 전체 예측 산출 — sf_forecast_runs.daily에 그대로 저장되는 스냅샷 (wx: loadWeatherInputs 결과, 없으면 날씨 보정 없이)
+function computeForecast(ym, cutoffDate, wx) {
+  const cutoff = dataCutoff(cutoffDate);
   const sr = srTable(ym);
+  let wxFcSum = 0, wxRawSum = 0, wxBaseW = 0, wxAnomW = 0, wxW = 0;
   const stores = {};
   for (const code of Object.keys(OT_DATA)) {
     const s = OT_DATA[code], daily = {};
@@ -176,19 +206,34 @@ function computeForecast(ym, cutoffDate) {
       const baseMean = present.length ? avg(present) : 0;
       const { v: srv, src } = sr(code);
       const t = trendFor(code, cutoff);
+      const region = wx && wx.store[code], wBase = region != null ? wx.inputs.base[region] : null, wDays = region != null ? wx.inputs.days[region] : null;
+      const useWx = wBase != null && wDays;
+      let raw = 0, nOpen = 0, sumA = 0, sumF = 0;
       for (const d of monthDates(ym)) {
         if (isClosed(code, d)) { daily[d] = 0; continue; }
         const idx = dowIdx(d);
         // 평일 공휴일 = 요일 정체성 상실 → 평균×공휴일지수. 주말 공휴일 = 요일 유지.
         const b = (isHol(d) && idx < 5) ? baseMean * s.hol : (base[idx] !== null ? base[idx] : baseMean);
-        daily[d] = Math.round(b * srv * t / 1000) * 1000;
+        const plain = Math.round(b * srv * t / 1000) * 1000;
+        let f = 0;
+        if (useWx && wDays[d] != null) { f = wxEffect(wDays[d] - wBase, wx.coef); sumA += wDays[d]; sumF += f; }
+        raw += plain; nOpen++;
+        daily[d] = Math.round(plain * (1 + f) / 1000) * 1000;
       }
       meta = { sr: +srv.toFixed(4), trend: +t.toFixed(4), src };
+      if (useWx && nOpen) {
+        meta.wx = { region, base: wBase, anom: +(sumA / nOpen).toFixed(2), f: +(sumF / nOpen).toFixed(4), raw_total: raw };
+        const tot = Object.values(daily).reduce((a, v) => a + v, 0);
+        wxFcSum += tot; wxRawSum += raw; wxBaseW += wBase * tot; wxAnomW += (sumA / nOpen) * tot; wxW += tot;
+      }
     }
     const total = Object.values(daily).reduce((t, v) => t + v, 0);
     stores[code] = { name: s.name, total, ...meta, daily };
   }
-  return { model_version: MODEL_VERSION, ym, cutoff_date: cutoffDate, data_through: cutoff, stores };
+  const out = { model_version: MODEL_VERSION, ym, cutoff_date: cutoffDate, data_through: cutoff, stores };
+  if (wxW) out.weather = { model: 'temp_v1', coef: wx.coef, bias: wx.inputs.bias, shrink: wx.inputs.shrink, fcst_last: wx.fcstLast,
+    effect: +(wxFcSum / wxRawSum - 1).toFixed(4), base: +(wxBaseW / wxW).toFixed(2), anom: +(wxAnomW / wxW).toFixed(2) };
+  return out;
 }
 
 // ---------- 인증 (생산성과 동일 — 로그인은 랜딩에서) ----------
@@ -384,8 +429,14 @@ function brandMethodNote(run, ym, rows) {
     t += '.';
   }
   if (clip) t += ` 추세가 상·하한(±10%)에 걸린 매장 ${clip}개점.`;
+  const w = run.daily.weather;
+  if (w) {
+    const sg = v => (v >= 0 ? '+' : '') + v.toFixed(1);
+    t += ` <b>날씨 보정 <span style="color:${signColor(w.effect)}">${pct(w.effect * 100)}</span></b>: 기준 4주 기온이 평년 대비 ${sg(w.base)}℃였고 ${mm}월은 ${sg(w.anom)}℃ 전망` +
+      `(${w.fcst_last ? `~${w.fcst_last.slice(5).replace('-', '/')} 단기예보 + 이후 계절전망 축소 반영` : '계절전망'}) → ${Math.abs(w.effect) < 0.001 ? '영향 미미' : w.effect > 0 ? '기준 기간보다 추워 수요↑ 반영' : '기준 기간보다 더워 수요↓ 반영'}. 비·눈은 영향이 확인되지 않아 제외.`;
+  }
   if (closing.length) t += ` ${closing.join('·')} 폐점 반영.`;
-  return t + ' <span style="color:var(--muted2)">날씨·행사는 모델에 미반영.</span>';
+  return t + ` <span style="color:var(--muted2)">${w ? '행사는' : '날씨·행사는'} 모델에 미반영.</span>`;
 }
 
 function renderBrand() {
@@ -957,14 +1008,19 @@ $('pubBtn').onclick = async () => {
   if (existing.length && !confirm(`${ymLabel(ym)} 확정 예측이 이미 v${existing[0].version}까지 발행되어 있습니다.\nv${version}(으)로 재발행할까요? (기존 버전은 이력으로 보존)`)) return;
   const last = lastSalesDate();
   if (last && last < cutoff && !confirm(`실적이 ${last}까지만 있어 컷오프(${cutoff})보다 이릅니다.\n${last}까지의 실적으로 ${ymLabel(ym)} 예측을 확정 발행할까요?\n(발행 후엔 불변이며, 필요하면 월말 실적 반영해 새 버전으로 재발행할 수 있습니다)`)) return;
-  msg.textContent = '계산 중…'; msg.className = 'plan-msg';
+  msg.textContent = '날씨 불러오는 중…'; msg.className = 'plan-msg';
+  const wx = await loadWeatherInputs(ym, dataCutoff(cutoff)); // 자동 수집된 기상·예보 — 입력할 것 없음
+  if (!wx && !confirm('날씨 데이터를 불러오지 못했습니다.\n날씨 보정 없이 발행할까요?')) { msg.textContent = ''; return; }
+  msg.textContent = '계산 중…';
   try {
-    const fc = computeForecast(ym, cutoff);
+    const fc = computeForecast(ym, cutoff, wx);
     const early = fc.data_through < cutoff; // 월말 전 선발행 — 실적이 컷오프보다 이른 날까지만 있음
+    const w = fc.weather;
     const { error } = await sb.from('sf_forecast_runs').insert({
       ym, version, kind: '확정', model_version: MODEL_VERSION, cutoff_date: cutoff,
       daily: fc, created_by: currentUser.id,
-      note: `sfv1 확정 발행 (컷오프 ${cutoff}${early ? `, 실적 ${fc.data_through}까지 반영한 월중 선발행` : ''}, 199전환 이전 데이터 미사용, RU046 가정치)`,
+      note: `sfv1 확정 발행 (컷오프 ${cutoff}${early ? `, 실적 ${fc.data_through}까지 반영한 월중 선발행` : ''}, 199전환 이전 데이터 미사용, RU046 가정치` +
+        (w ? `, 기온 보정 ${(w.effect * 100).toFixed(1)}% — 최근 4주 평년 대비 ${w.base >= 0 ? '+' : ''}${w.base}℃ → ${ymLabel(ym)} ${w.anom >= 0 ? '+' : ''}${w.anom}℃ 전망` : ', 날씨 미반영') + ')',
     });
     if (error) throw error;
     await loadRuns();
