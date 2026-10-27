@@ -146,7 +146,17 @@ function trendFor(code, cutoff) {
 }
 
 // 전체 예측 산출 — sf_forecast_runs.daily에 그대로 저장되는 스냅샷
-function computeForecast(ym, cutoff) {
+// 실적 마지막 날짜 — 월말 전에 다음 달을 미리 발행할 때 컷오프(전월 말)가 아직 안 온 경우가 있다
+function lastSalesDate() {
+  let mx = '';
+  for (const m of Object.values(SALES)) for (const d of m.keys()) if (d > mx) mx = d;
+  return mx;
+}
+function computeForecast(ym, cutoffDate) {
+  // 컷오프 이후 날짜는 아직 실적이 없으므로, BASE·추세는 "컷오프와 실적 마지막 날 중 이른 날"을 기준으로 잡는다.
+  // (안 그러면 빈 날짜가 0으로 합산돼 추세가 0.9 하한에 붙는다.) 컷오프 이후 실적이 이미 완결된 재발행은 영향 없음.
+  const last = lastSalesDate();
+  const cutoff = last && last < cutoffDate ? last : cutoffDate;
   const sr = srTable(ym);
   const stores = {};
   for (const code of Object.keys(OT_DATA)) {
@@ -178,7 +188,7 @@ function computeForecast(ym, cutoff) {
     const total = Object.values(daily).reduce((t, v) => t + v, 0);
     stores[code] = { name: s.name, total, ...meta, daily };
   }
-  return { model_version: MODEL_VERSION, ym, cutoff_date: cutoff, stores };
+  return { model_version: MODEL_VERSION, ym, cutoff_date: cutoffDate, data_through: cutoff, stores };
 }
 
 // ---------- 인증 (생산성과 동일 — 로그인은 랜딩에서) ----------
@@ -250,11 +260,14 @@ function buildSelectors() {
   }
   const ps = $('pubMonth');
   if (isPlanner && !ps.options.length) {
-    for (const ym of ['2026-09', '2026-10']) {
+    // 2026-09부터 "다음 달"까지 — 월말 전에 다음 달 예상매출을 미리 뽑는 운영 방식(10월분은 9/22 첫 발행)
+    const now = new Date(), thisYm = dStr(now).slice(0, 7), lastYm = shiftYm(thisYm, 1);
+    for (let ym = '2026-09'; ym <= lastYm; ym = shiftYm(ym, 1)) {
       const o = document.createElement('option');
-      o.value = ym; o.textContent = `${ymLabel(ym)} (컷오프 ${cutoffOf(ym)})`;
+      o.value = ym; o.textContent = `${ymLabel(ym)} (컷오프 ${cutoffOf(ym)})` + (getRun(ym) ? '' : ' · 미발행');
       ps.appendChild(o);
     }
+    ps.value = lastYm;
   }
   const ws = $('wkStore');
   if (!ws.options.length) {
@@ -889,13 +902,16 @@ $('pubBtn').onclick = async () => {
   const existing = RUNS.filter(r => r.ym === ym && r.kind === '확정');
   const version = existing.length ? Math.max(...existing.map(r => r.version)) + 1 : 1;
   if (existing.length && !confirm(`${ymLabel(ym)} 확정 예측이 이미 v${existing[0].version}까지 발행되어 있습니다.\nv${version}(으)로 재발행할까요? (기존 버전은 이력으로 보존)`)) return;
+  const last = lastSalesDate();
+  if (last && last < cutoff && !confirm(`실적이 ${last}까지만 있어 컷오프(${cutoff})보다 이릅니다.\n${last}까지의 실적으로 ${ymLabel(ym)} 예측을 확정 발행할까요?\n(발행 후엔 불변이며, 필요하면 월말 실적 반영해 새 버전으로 재발행할 수 있습니다)`)) return;
   msg.textContent = '계산 중…'; msg.className = 'plan-msg';
   try {
     const fc = computeForecast(ym, cutoff);
+    const early = fc.data_through < cutoff; // 월말 전 선발행 — 실적이 컷오프보다 이른 날까지만 있음
     const { error } = await sb.from('sf_forecast_runs').insert({
       ym, version, kind: '확정', model_version: MODEL_VERSION, cutoff_date: cutoff,
       daily: fc, created_by: currentUser.id,
-      note: `sfv1 확정 발행 (컷오프 ${cutoff}, 199전환 이전 데이터 미사용, RU046 가정치)`,
+      note: `sfv1 확정 발행 (컷오프 ${cutoff}${early ? `, 실적 ${fc.data_through}까지 반영한 월중 선발행` : ''}, 199전환 이전 데이터 미사용, RU046 가정치)`,
     });
     if (error) throw error;
     await loadRuns();
