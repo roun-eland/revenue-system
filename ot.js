@@ -542,19 +542,22 @@ async function renderDashMTD(ym, myReq) {
     `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">누적 생산성 ≥ 매장별 목표생산성 · 인건비율 ${Math.round(LABOR_CAP * 100)}% 초과 ${nCap}곳</div></div>` +
     `<div><div class="k">과잉 투입 인건비 (누적)</div><div class="v" style="color:var(--crit)">+${won(overCost / 10000)}만원</div><div class="s">메이트 초과 +${won(overMH)}h · 인건비의 ${overPct.toFixed(1)}%</div></div>`;
   const maxOver = Math.max(...rows.map(r => Math.abs(r.over)), 1);
-  let html = '<table><colgroup><col style="width:150px"><col style="width:85px"><col style="width:90px"><col style="width:95px"><col style="width:80px"><col style="width:95px"><col style="width:170px"><col style="width:100px"></colgroup>' +
-    '<thead><tr><th>매장</th><th>누적매출(억)</th><th>목표생산성</th><th>누적 생산성</th><th>생산성 점수</th><th>누적 인건비율</th><th>메이트 초과시간</th><th>기준</th></tr></thead><tbody>';
+  let html = '<table><colgroup><col style="width:150px"><col style="width:85px"><col style="width:90px"><col style="width:95px"><col style="width:80px"><col style="width:95px"><col style="width:170px"></colgroup>' +
+    '<thead><tr><th>매장</th><th>누적매출(억)</th><th>목표생산성</th><th>누적 생산성</th><th>생산성 점수</th><th>누적 인건비율</th><th>메이트 초과시간</th></tr></thead><tbody>';
   for (const r of rows) {
     const w = Math.round(Math.abs(r.over) / maxOver * 90);
     const rb = r.ratio > LABOR_CAP * 100 ? 'c' : r.ratio <= 24 ? 'g' : r.ratio <= 28 ? 'w' : 'c';
     const capMark = r.ratio > LABOR_CAP * 100 ? ` title="상한 ${Math.round(LABOR_CAP * 100)}% 초과"` : '';
     const scorePct = r.targetProd ? (r.prod / r.targetProd * 100) : (r.prod / TARGET * 100);
     const overColor = r.over > 0 ? 'var(--crit)' : 'var(--good)';
-    html += `<tr class="rowlink" data-code="${r.code}"><td>${r.name}</td><td>${(r.sales / 1e8).toFixed(2)}</td>` +
+    // 기준 열을 없애는 대신 매장명 툴팁으로 이관 — 급여 추정·시간차는 눈에 띄게 표식만 남김
+    const basis = `${r.std ? '표준표' : '엔진'} ${r.days}일 · ` + (r.estDays ? `급여 추정 ${r.estDays}일` : `급여 실제 ~${r.cutIso.slice(5).replace('-', '/')}`) +
+      (r.badPeriods.length ? ` · 급여대장 시간이 출퇴근 기록과 ±20% 넘게 다른 구간(계산엔 급여대장 그대로 사용): ${r.badPeriods.join(', ')}` : '');
+    const flag = r.estDays ? ' <span style="color:var(--crit);font-size:11px">급여 추정</span>' : r.badPeriods.length ? ' <span style="color:var(--warn);font-size:11px">시간차 확인</span>' : '';
+    html += `<tr class="rowlink" data-code="${r.code}"><td title="${basis}">${r.name}${flag}</td><td>${(r.sales / 1e8).toFixed(2)}</td>` +
       `<td>${r.targetProd != null ? won(r.targetProd) : '-'}</td><td><b>${won(r.prod)}</b></td><td><b>${scorePct.toFixed(0)}%</b></td>` +
       `<td><span class="band ${rb}"${capMark}>${r.ratio.toFixed(1)}%</span></td>` +
-      `<td style="color:${overColor};font-weight:700">${r.over > 0 ? '+' + won(r.over) : won(r.over)}h <span class="mini" style="width:${w}px;background:${overColor}"></span></td>` +
-      `<td class="d" style="font-size:11px">${r.std ? '표준표' : '엔진'}<br>${r.days}일<br>${r.estDays ? `<span style="color:var(--crit)" title="${r.badPeriods.length ? '급여대장 시간이 출퇴근 기록과 어긋난 구간: ' + r.badPeriods.join(', ') : '급여대장이 아직 없는 날짜 포함'}">급여 추정 ${r.estDays}일</span>` : `급여 실제 ~${r.cutIso.slice(5).replace('-', '/')}`}${r.badPeriods.length ? `<br><span style="color:var(--warn)" title="급여대장 시간이 출퇴근 기록과 ±20% 넘게 다른 구간(계산엔 급여대장 그대로 사용): ${r.badPeriods.join(', ')}">시간차 확인</span>` : ''}</td></tr>`;
+      `<td style="color:${overColor};font-weight:700">${r.over > 0 ? '+' + won(r.over) : won(r.over)}h <span class="mini" style="width:${w}px;background:${overColor}"></span></td></tr>`;
   }
   $('dashTable').innerHTML = html + '</tbody></table>';
 }
