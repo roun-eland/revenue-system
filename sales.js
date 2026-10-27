@@ -414,36 +414,26 @@ function brandMethodNote(run, ym, rows) {
   const prevYm = shiftYm(ym, -1), pAsOf = lastActualDate(prevYm);
   const rg = pAsOf ? sameStoreGrowth(prevYm, pAsOf) : null;
   const clip = rows.filter(r => r.trend != null && (r.trend >= 1.0999 || r.trend <= 0.9001)).length;
-  const closing = Object.keys(OT_CLOSE_FROM).filter(c => run.daily.stores[c] && OT_CLOSE_FROM[c].slice(0, 7) <= ym).map(c => OT_DATA[c].name);
   const pct = v => (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
-  let t = `<b>${mm}월 예상 ${eok1(fcT)}</b> = 최근 4주(~${through.slice(5).replace('-', '/')}) 요일별 실적`;
-  if (sr != null) t += ` × 전년 ${mm}월/${pm}월 계절비(평균 ${sr.toFixed(2)})`;
-  if (tr != null) t += ` × 최근 추세(평균 ${tr.toFixed(2)})`;
-  t += '.';
-  if (fg) {
-    t += ` 동일매장 전년 대비 <b style="color:${growColor(fg.g)}">${pct(fg.g)}</b>(${fg.n}개점)로 추정`;
-    if (rg) {
-      const d = fg.g - rg.g;
-      t += ` — 직전 ${pm}월 실적 ${pct(rg.g)}에서 ${d > 1.5 ? '낙폭이 줄거나 개선되는' : d < -1.5 ? '더 나빠지는' : '비슷하게 이어지는'} 흐름`;
-    }
-    t += '.';
-  }
-  if (clip) t += ` 추세가 상·하한(±10%)에 걸린 매장 ${clip}개점.`;
+  const sg = v => (v >= 0 ? '+' : '') + v.toFixed(1);
   const w = run.daily.weather;
-  if (w) {
-    const sg = v => (v >= 0 ? '+' : '') + v.toFixed(1);
-    t += ` <b>날씨 보정 <span style="color:${signColor(w.effect)}">${pct(w.effect * 100)}</span></b>: 기준 4주 기온이 평년 대비 ${sg(w.base)}℃였고 ${mm}월은 ${sg(w.anom)}℃ 전망` +
-      `(${w.fcst_last ? `~${w.fcst_last.slice(5).replace('-', '/')} 단기예보 + 이후 계절전망 축소 반영` : '계절전망'}) → ${Math.abs(w.effect) < 0.001 ? '영향 미미' : w.effect > 0 ? '기준 기간보다 추워 수요↑ 반영' : '기준 기간보다 더워 수요↓ 반영'}. 비·눈은 영향이 확인되지 않아 제외.`;
-  }
-  if (closing.length) t += ` ${closing.join('·')} 폐점 반영.`;
-  return t + ` <span style="color:var(--muted2)">${w ? '행사는' : '날씨·행사는'} 모델에 미반영.</span>`;
+  const parts = [`<b>${mm}월 예상 ${eok1(fcT)}</b>`];
+  if (fg) parts.push(`동일매장 전년 대비 <b style="color:${growColor(fg.g)}">${pct(fg.g)}</b>`);
+  if (w) parts.push(`날씨 보정 <b style="color:${signColor(w.effect)}">${pct(w.effect * 100)}</b> <span style="color:var(--muted2)">(기온 평년 대비 ${sg(w.anom)}℃ 전망)</span>`);
+  const cl = Object.keys(OT_CLOSE_FROM).filter(c => run.daily.stores[c] && OT_CLOSE_FROM[c].slice(0, 7) <= ym);
+  if (cl.length) parts.push('특이: ' + cl.map(c => `${OT_DATA[c].name.replace(/점$/, '')}점 폐점(${+OT_CLOSE_FROM[c].slice(5, 7)}/${+OT_CLOSE_FROM[c].slice(8)}~)`).join(', '));
+  // 자세한 근거는 마우스를 올리면 (화면은 짧게)
+  const tip = `실적 ${through.slice(5).replace('-', '/')}까지의 요일별 값 × 전년 ${mm}월/${pm}월 계절비(평균 ${sr != null ? sr.toFixed(2) : '-'}) × 최근 추세(평균 ${tr != null ? tr.toFixed(2) : '-'})` +
+    (fg && rg ? ` · 직전 ${pm}월 동일매장 ${pct(rg.g)}` : '') + (clip ? ` · 추세 상·하한 ${clip}개점` : '') +
+    (w ? ` · 기준 4주 기온 평년 대비 ${sg(w.base)}℃, 비·눈은 영향 미확인으로 제외` : '') + ' · 행사는 미반영';
+  return { html: parts.join(' · '), tip };
 }
 
 function renderBrand() {
   const ym = $('brandMonth').value;
   const run = getRun(ym);
   if (!run) {
-    $('brandNote').innerHTML = '';
+    $('brandNote').innerHTML = ''; $('brandNote').title = '';
     $('brandKpis').innerHTML = '';
     $('brandTable').innerHTML = `<div class="placeholder-box"><b>${ymLabel(ym)} 확정 예측이 아직 발행되지 않았습니다.</b><br>발행 관리에서 확정 예측을 발행하면 여기에 표시됩니다.</div>`;
     if (brandChartObj) { brandChartObj.destroy(); brandChartObj = null; }
@@ -473,7 +463,8 @@ function renderBrand() {
   $('brandSub').textContent = `${ymLabel(ym)} 확정 v${run.version} · 모델 ${run.model_version} · 컷오프 ${run.cutoff_date} · 발행 ${String(run.published_at).slice(0, 10)}` +
     (asOf ? ` · 실적 반영 ~${asOf.slice(5).replace('-', '/')}` : ' · 이 달 실적 미적재 (생산성 > 실적 입력에서 일별매출 업로드 시 자동 반영)');
 
-  $('brandNote').innerHTML = brandMethodNote(run, ym, rows);
+  const note = brandMethodNote(run, ym, rows);
+  $('brandNote').innerHTML = note.html; $('brandNote').title = note.tip;
   const ssg = sameStoreGrowth(ym, asOf);
   const vsT = fcT ? (landT / fcT - 1) * 100 : 0;
   $('brandKpis').innerHTML = `
