@@ -337,10 +337,62 @@ function sameStoreGrowth(ym, asOf) {
 const growColor = g => g < 0 ? 'var(--crit)' : g < 5 ? 'var(--warn)' : 'var(--good)';
 const signColor = v => v >= 0 ? 'var(--good)' : 'var(--crit)';
 
+// 예측 월의 동일매장 전년 대비 — 실적 대신 발행된 예측 일별값으로 계산(정의는 sameStoreGrowth와 동일: -364일·공휴일 쌍 제외).
+// 한 달에 15쌍 미만인 매장(폐점·신규)은 비교가 왜곡되므로 제외.
+function forecastSameStore(run, ym) {
+  let cur = 0, prv = 0, n = 0;
+  for (const [code, f] of Object.entries(run.daily.stores)) {
+    const m = SALES[code]; if (!m) continue;
+    let c = 0, p = 0, k = 0;
+    for (const d of monthDates(ym)) {
+      const pd = addD(d, -364);
+      if (isHolCmp(d) || isHolCmp(pd)) continue;
+      const fv = f.daily[d], pv = m.get(pd);
+      if (fv > 0 && pv > 0) { c += fv; p += pv; k++; }
+    }
+    if (k >= 15) { cur += c; prv += p; n++; }
+  }
+  return prv ? { g: (cur / prv - 1) * 100, n } : null;
+}
+
+// 추정 방식 한 줄 — 모델에 실제로 들어간 요소만 적는다(날씨·행사는 아직 모델에 없음)
+function brandMethodNote(run, ym, rows) {
+  const mm = +ym.slice(5), pm = +shiftYm(ym, -1).slice(5);
+  const fcT = rows.reduce((t, r) => t + r.fc, 0);
+  const wavg = k => {
+    const rs = rows.filter(r => r[k] != null && r.fc > 0), w = rs.reduce((t, r) => t + r.fc, 0);
+    return w ? rs.reduce((t, r) => t + r[k] * r.fc, 0) / w : null;
+  };
+  const sr = wavg('sr'), tr = wavg('trend');
+  const through = run.daily.data_through || run.cutoff_date;
+  const fg = forecastSameStore(run, ym);
+  const prevYm = shiftYm(ym, -1), pAsOf = lastActualDate(prevYm);
+  const rg = pAsOf ? sameStoreGrowth(prevYm, pAsOf) : null;
+  const clip = rows.filter(r => r.trend != null && (r.trend >= 1.0999 || r.trend <= 0.9001)).length;
+  const closing = Object.keys(OT_CLOSE_FROM).filter(c => run.daily.stores[c] && OT_CLOSE_FROM[c].slice(0, 7) <= ym).map(c => OT_DATA[c].name);
+  const pct = v => (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+  let t = `<b>${mm}월 예상 ${eok1(fcT)}</b> = 최근 4주(~${through.slice(5).replace('-', '/')}) 요일별 실적`;
+  if (sr != null) t += ` × 전년 ${mm}월/${pm}월 계절비(평균 ${sr.toFixed(2)})`;
+  if (tr != null) t += ` × 최근 추세(평균 ${tr.toFixed(2)})`;
+  t += '.';
+  if (fg) {
+    t += ` 동일매장 전년 대비 <b style="color:${growColor(fg.g)}">${pct(fg.g)}</b>(${fg.n}개점)로 추정`;
+    if (rg) {
+      const d = fg.g - rg.g;
+      t += ` — 직전 ${pm}월 실적 ${pct(rg.g)}에서 ${d > 1.5 ? '낙폭이 줄거나 개선되는' : d < -1.5 ? '더 나빠지는' : '비슷하게 이어지는'} 흐름`;
+    }
+    t += '.';
+  }
+  if (clip) t += ` 추세가 상·하한(±10%)에 걸린 매장 ${clip}개점.`;
+  if (closing.length) t += ` ${closing.join('·')} 폐점 반영.`;
+  return t + ' <span style="color:var(--muted2)">날씨·행사는 모델에 미반영.</span>';
+}
+
 function renderBrand() {
   const ym = $('brandMonth').value;
   const run = getRun(ym);
   if (!run) {
+    $('brandNote').innerHTML = '';
     $('brandKpis').innerHTML = '';
     $('brandTable').innerHTML = `<div class="placeholder-box"><b>${ymLabel(ym)} 확정 예측이 아직 발행되지 않았습니다.</b><br>발행 관리에서 확정 예측을 발행하면 여기에 표시됩니다.</div>`;
     if (brandChartObj) { brandChartObj.destroy(); brandChartObj = null; }
@@ -370,6 +422,7 @@ function renderBrand() {
   $('brandSub').textContent = `${ymLabel(ym)} 확정 v${run.version} · 모델 ${run.model_version} · 컷오프 ${run.cutoff_date} · 발행 ${String(run.published_at).slice(0, 10)}` +
     (asOf ? ` · 실적 반영 ~${asOf.slice(5).replace('-', '/')}` : ' · 이 달 실적 미적재 (생산성 > 실적 입력에서 일별매출 업로드 시 자동 반영)');
 
+  $('brandNote').innerHTML = brandMethodNote(run, ym, rows);
   const ssg = sameStoreGrowth(ym, asOf);
   const vsT = fcT ? (landT / fcT - 1) * 100 : 0;
   $('brandKpis').innerHTML = `
