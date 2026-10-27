@@ -105,6 +105,7 @@ async function fillSales() {
   const { data: runs, error } = await sb.from('sf_forecast_runs').select('ym,version,kind,daily').eq('kind', '확정').order('ym', { ascending: false }).order('version', { ascending: false });
   if (error) throw error;
   if (!runs || !runs.length) { setCard('sales', noData('../sales/', '매출', '현재월', '발행된 확정 예측이 없습니다.')); return; }
+  if (typeof otApplyClosures === 'function') otApplyClosures(runs); // 폐점 매장은 폐점 이후 예측 0 (ot-seed.js)
   const run = runs.find(r => r.ym === CUR_YM) || runs[0];
   const ym = run.ym, dates = monthDates(ym);
   const py0 = addD(ym + '-01', -364);

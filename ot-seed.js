@@ -13,4 +13,28 @@ const OT_CLOSED_DATES = new Set(["2026-09-25","2027-02-07","2027-09-15"]); // �
 const OT_CLOSED_ACTUAL = {
   "2026-09": { RU025: [24, 25], RU042: [13, 25], RU043: [9, 25], RU044: [14, 28] },
 };
+// 폐점 예정 매장 — 값 = 폐점 첫날(그 전날이 마지막 영업일). 이 날짜부터 휴점으로 보고 예상매출·인원 계획에서 뺀다.
+// 로운 신촌점: 2026-11-01까지 영업, 11-02부터 폐점 (사용자 확정 2026-10-27)
+const OT_CLOSE_FROM = { RU019: '2026-11-02' };
+// 그 달 중 폐점 전 영업 가능 일수 비율: 1 = 영향 없음, 0 = 그 달 전체가 폐점 후 (정직원 급여 등 월 고정비를 일할로 줄일 때 사용)
+function otCloseFrac(code, ym) {
+  const cf = OT_CLOSE_FROM[code]; if (!cf) return 1;
+  const dim = new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
+  if (cf <= ym + '-01') return 0;
+  if (cf > ym + '-' + String(dim).padStart(2, '0')) return 1;
+  return (+cf.slice(8) - 1) / dim;
+}
+// 확정 예측 스냅샷(sf_forecast_runs.daily)을 읽을 때 폐점 이후 날짜를 0으로 덮어쓴다 — 화면 메모리에서만, DB의 불변 스냅샷은 그대로.
+function otApplyClosures(runs) {
+  for (const r of runs || []) {
+    const stores = r && r.daily && r.daily.stores; if (!stores) continue;
+    for (const [code, cf] of Object.entries(OT_CLOSE_FROM)) {
+      const st = stores[code]; if (!st || !st.daily) continue;
+      let changed = false;
+      for (const d of Object.keys(st.daily)) if (d >= cf && st.daily[d] > 0) { st.daily[d] = 0; changed = true; }
+      if (changed) { st.total = Object.values(st.daily).reduce((t, v) => t + v, 0); st.closed_from = cf; }
+    }
+  }
+  return runs;
+}
 for (const c of Object.keys(OT_DATA)) OT_DATA[c].code = c; // 엔진에서 매장 코드 역참조용

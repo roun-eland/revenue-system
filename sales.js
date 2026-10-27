@@ -34,6 +34,7 @@ const ymLabel = ym => `${ym.slice(0, 4)}년 ${+ym.slice(5)}월`;
 const nthOfDow = s => Math.ceil(+s.slice(8) / 7); // 그 달의 몇 번째 해당 요일인지
 const isHol = s => OT_HOLIDAYS.has(s);
 function isClosed(code, s) {
+  if (OT_CLOSE_FROM[code] && s >= OT_CLOSE_FROM[code]) return true; // 폐점 이후 (ot-seed.js OT_CLOSE_FROM)
   // 유통점 공지 확정치가 있는 달은 그 날짜만 휴점 (규칙·전점휴무 무시 — 예: 해운대 2026-09-25 영업)
   const ov = OT_CLOSED_ACTUAL[s.slice(0, 7)] && OT_CLOSED_ACTUAL[s.slice(0, 7)][code];
   if (ov) return ov.includes(+s.slice(8));
@@ -64,7 +65,7 @@ async function loadRuns() {
     .select('id,ym,version,kind,model_version,cutoff_date,published_at,daily,note')
     .order('ym', { ascending: false }).order('version', { ascending: false });
   if (error) throw error;
-  RUNS = data || [];
+  RUNS = otApplyClosures(data || []); // 폐점 매장은 폐점 이후 날짜 예측을 0으로 (표시용, DB 스냅샷 불변)
 }
 let SF_EVENTS = []; // 매장 이벤트 기록 (가격변경·공사·오픈 등) — 주차별 특이사항 주석에 사용
 async function loadEvents() {

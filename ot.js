@@ -86,7 +86,7 @@ async function loadSfRuns() {
   try {
     const { data } = await sb.from('sf_forecast_runs').select('ym,kind,daily')
       .order('ym', { ascending: false }).order('version', { ascending: false });
-    SF_RUNS = data || [];
+    SF_RUNS = otApplyClosures(data || []); // 폐점 매장은 폐점 이후 날짜 예측 0 (ot-seed.js OT_CLOSE_FROM)
   } catch (e) { /* 테이블 접근 실패 시 폴백만 사용 */ }
 }
 function forecastSales(code, ym) {
@@ -371,13 +371,17 @@ function prodBand(p) { return p >= TARGET ? 'g' : p >= 60000 ? 'w' : 'c'; }
 
 // 한 매장의 월 계획치(엔진과 동일 로직): 계획 총 MH·메이트 MH·예상 인건비율
 function computeMonthPlan(code, ym, M, nfull, fullpay) {
+  // 폐점 예정 매장: 폐점 후 달은 계획 없음, 폐점이 낀 달은 정직원 급여·인원을 영업 일수 비율로 줄인다(영업일만 계산되므로)
+  const closeFrac = otCloseFrac(code, ym);
+  if (closeFrac === 0) return { totMH: 0, ratio: 0, closed: true };
   const s = { ...OT_DATA[code], nfull };
-  const att = attendance(s), holAtt = Math.max(...att);
+  const att = attendance(s), holAtt = Math.max(...att);   // 출근 배치는 원래 정직원 수 기준 (일할 전 값)
+  const sc = { ...s, nfull: nfull * closeFrac }, fullpayEff = fullpay * closeFrac; // 비용·연차만 영업 일수 비율로 줄인다
   const dates = monthDates(ym, s), open = dates.filter(x => !x.closed);
   if (OT_STD[code]) { // 표준 사용 계획표 적용 매장 — 표 + 인건비율 상한
     const sm = stdMonthMH(code, open);
-    const cap = stdApplyCap(s, M, fullpay, sm.mMH, sm.mMHhol);
-    return { totMH: sm.ftMH + cap.mMH + cap.mMHhol + nfull * 8, ratio: cap.ratio, std: true, capped: cap.capped, cutMH: cap.cutMH, structural: cap.structural };
+    const cap = stdApplyCap(sc, M, fullpayEff, sm.mMH, sm.mMHhol);
+    return { totMH: sm.ftMH + cap.mMH + cap.mMHhol + sc.nfull * 8, ratio: cap.ratio, std: true, capped: cap.capped, cutMH: cap.cutMH, structural: cap.structural };
   }
   const wsum = open.reduce((t, x) => t + (x.hol ? s.hol : s.wd[x.wd]), 0);
   let mMH = 0, mMHhol = 0, totMH = 0;
@@ -392,9 +396,9 @@ function computeMonthPlan(code, ym, M, nfull, fullpay) {
     totMH += cache[key].tot;
     if (x.hol) mMHhol += cache[key].mate; else mMH += cache[key].mate;
   }
-  const leaveMH = nfull * 8;
+  const leaveMH = sc.nfull * 8;
   const mateCost = (mMH + mMHhol * 1.5 + leaveMH) * s.effBase;
-  const cost = mateCost + fullpay + nfull * 100000 + M / 1.1 * 0.006;
+  const cost = mateCost + fullpayEff + sc.nfull * 100000 + M / 1.1 * 0.006;
   return { totMH: totMH + leaveMH, ratio: cost / (M / 1.1) * 100 };
 }
 
@@ -640,7 +644,7 @@ async function renderDash() {
       for (const d of Object.keys(act)) if (!(d in f.daily)) landing += act[d];
       return landing;
     }
-    const rows = sortDashRows(Object.entries(OT_DATA).map(([code, s]) => {
+    const rows = sortDashRows(Object.entries(OT_DATA).filter(([code]) => otCloseFrac(code, ym) > 0).map(([code, s]) => { // 폐점 후 달의 폐점 매장은 제외
       const p = saved[code];
       const live = landingFor(code);
       const M = p ? Number(p.forecast_sales) : (live != null ? live : s.augM);
@@ -881,6 +885,7 @@ function monthDates(ym, s) {
       const nth = Math.ceil(d / 7), isLast = d + 7 > n;
       closed = s.closed.nth.includes(nth) || (s.closed.nth.includes(9) && isLast);
     }
+    if (s && s.code && OT_CLOSE_FROM[s.code] && iso >= OT_CLOSE_FROM[s.code]) closed = true; // 폐점 이후 (ot-seed.js)
     out.push({ d, wd, hol: OT_HOLIDAYS.has(iso) && wd < 5 && !closed, closed, iso });
   }
   return out;
@@ -891,8 +896,18 @@ let lastResult = null; // 계획 확정 저장용 최근 산출
 function render() {
   if (!sel.value) return;
   const s0 = OT_DATA[sel.value], M = +$('msales').value || s0.augM, ym = msel.value;
-  const { nf, fullpay } = staffTotals(sel.value);
+  // 폐점 예정 매장 — 폐점 후 달은 계획 없음, 폐점이 낀 달은 정직원 급여·연차를 영업 일수 비율로 줄인다(ot-seed.js OT_CLOSE_FROM)
+  const closeFrac = otCloseFrac(sel.value, ym);
+  if (closeFrac === 0) {
+    $('ratio').textContent = '—'; $('ratioNote').textContent = `폐점 후 달 — ${OT_CLOSE_FROM[sel.value].slice(5).replace('-', '/')}부터 폐점이라 계획이 없습니다`;
+    ['mateMH', 'mateWon', 'totCost'].forEach(id => { if ($(id)) $(id).textContent = '—'; });
+    lastResult = null; $('planMsg').textContent = '';
+    const hl0 = $('holLine'); hl0.hidden = false; hl0.innerHTML = `<div class="holline">이 매장은 ${OT_CLOSE_FROM[sel.value]}부터 폐점 — 이 달은 영업일이 없습니다.</div>`;
+    return;
+  }
+  const st0 = staffTotals(sel.value), nf = st0.nf, fullpay = st0.fullpay * closeFrac;
   const s = { ...s0, nfull: nf };
+  const sc = { ...s, nfull: nf * closeFrac };   // 비용·연차 계산용(일할). 출근 배치(attendance)는 원래 인원 기준
   const att = attendance(s);
   const holAtt = Math.max(...att);
   const dates = monthDates(ym, s);
@@ -904,7 +919,7 @@ function render() {
   let mMH = 0, mMHhol = 0, capInfo = null;
   if (std) {
     const sm = stdMonthMHAdaptive(sel.value, open, dailyOf, s);
-    capInfo = stdApplyCap(s, M, fullpay, sm.mMH, sm.mMHhol);
+    capInfo = stdApplyCap(sc, M, fullpay, sm.mMH, sm.mMHhol);
     mMH = capInfo.mMH; mMHhol = capInfo.mMHhol;
   } else {
     const cache = {};
@@ -918,9 +933,9 @@ function render() {
     }
   }
   const totMateMH = mMH + mMHhol;
-  const leaveMH = s.nfull * 8;
+  const leaveMH = sc.nfull * 8;
   const mateCost = (mMH + mMHhol * 1.5 + leaveMH) * s.effBase;
-  const cost = mateCost + fullpay + s.nfull * 100000 + M / 1.1 * 0.006;
+  const cost = mateCost + fullpay + sc.nfull * 100000 + M / 1.1 * 0.006;
   const ratio = cost / (M / 1.1) * 100;
   $('ratio').textContent = ratio.toFixed(1) + "%";
   const t = $('ratioTile'); t.classList.remove("g", "w", "c");
@@ -937,13 +952,13 @@ function render() {
   $('basisChip').innerHTML = std
     ? `산출 기준: <b>표준 사용 계획표</b> (선임점장${std.weekday.verified && std.weekend.verified ? "" : " · 합계 대조 대기"}) · 인건비율 상한 ${Math.round(LABOR_CAP * 100)}%`
     : `산출 기준: <b>임시 기준 (엔진 · 72,000원/MH)</b> — 이 매장은 표준 사용 계획표 미등록`;
-  $('mateMH').textContent = won(totMateMH + s.nfull * 8);
+  $('mateMH').textContent = won(totMateMH + sc.nfull * 8);
   $('mateWon').textContent = "약 " + won(mateCost / 10000) + "만원";
   $('totCost').textContent = won(cost / 10000) + "만";
 
   lastResult = {
     store_code: sel.value, ym, forecast_sales: M,
-    staffing: { ...staffCnt }, nfull: s.nfull, fullpay: Math.round(fullpay),
+    staffing: { ...staffCnt }, nfull: s.nfull, fullpay: Math.round(st0.fullpay), // 저장값은 일할 전(원래) 정직원 급여 — 대시보드가 다시 일할 계산한다
     ratio: +ratio.toFixed(2), mate_mh: Math.round(totMateMH + leaveMH),
     mate_cost: Math.round(mateCost), total_cost: Math.round(cost),
     daily_idx_sum: +wsum.toFixed(3),
@@ -955,7 +970,10 @@ function render() {
   const hl = $('holLine');
   let hlHtml = "";
   if (hols.length) hlHtml += `<div class="holline">이달 공휴일 ${hols.length}일 — ${hols.map(x => x.d + "일(" + WD[x.wd] + ")").join(", ")} · 공휴일지수 ×${s.hol.toFixed(2)} 적용</div>`;
-  if (closedD.length) hlHtml += `<div class="holline">휴점일 ${closedD.length}일 — ${closedD.map(x => x.d + "일(" + WD[x.wd] + ")").join(", ")} · 정기 휴점·명절 당일, 매출·인원 산정에서 제외</div>`;
+  const closureDays = OT_CLOSE_FROM[sel.value] ? dates.filter(x => x.iso >= OT_CLOSE_FROM[sel.value]) : [];
+  const otherClosed = closedD.filter(x => !closureDays.includes(x));
+  if (otherClosed.length) hlHtml += `<div class="holline">휴점일 ${otherClosed.length}일 — ${otherClosed.map(x => x.d + "일(" + WD[x.wd] + ")").join(", ")} · 정기 휴점·명절 당일, 매출·인원 산정에서 제외</div>`;
+  if (closureDays.length) hlHtml += `<div class="holline">폐점 예정 — ${OT_CLOSE_FROM[sel.value].slice(5).replace('-', '/')}부터 폐점(마지막 영업일 ${closureDays[0].d - 1}일). 이후 ${closureDays.length}일은 매출·인원에서 제외하고, 정직원 급여·연차는 영업 일수 비율(${Math.round(closeFrac * 100)}%)로 계산했습니다.</div>`;
   if (s.aug) hlHtml += `<div class="holline">8월 실측 — 총투입 ${won(s.aug.mh)}MH·생산성 ${won(s.aug.prod)}원/MH, 목표(72,000원/MH) 필요 ${won(s.aug.need)}MH 대비 <b>${s.aug.mh > s.aug.need ? "+" + won(s.aug.mh - s.aug.need) + "MH 과잉" : won(s.aug.need - s.aug.mh) + "MH 여유"}</b></div>`;
   hl.hidden = !hlHtml; hl.innerHTML = hlHtml;
 
