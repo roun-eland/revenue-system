@@ -130,7 +130,12 @@ function srTable(ym) {
     const vs = valid.filter(([c]) => PMODEL(c) === g).map(([, v]) => v);
     groupSR[g] = vs.length ? avg(vs) : null;
   }
-  return code => own[code] !== null && own[code] !== undefined
+  // 199·프리미어의 자체/모델군 계절비는 오염돼 있다 — 199는 2025-09 가격모델 전환 직후의 감쇠, 프리미어는 오픈 감쇠 + 2025 추석(10월) 효과.
+  // (2026-10-27 점검: 프리미어 4개점이 계절비 0.875로 최근 실적보다 12~19% 낮게 예측됨.) 깨끗한 2개년 쌍이 쌓이기 전까지 일반 매장군 평균 계절비로 대체.
+  const genVals = valid.filter(([c]) => PMODEL(c) === '일반').map(([, v]) => v);
+  const genSR = genVals.length ? avg(genVals) : null;
+  return code => (P199.has(code) || PREMIER.has(code)) && genSR !== null ? { v: genSR, src: '일반군 대체' }
+    : own[code] !== null && own[code] !== undefined
     ? { v: own[code], src: '자체' }
     : groupSR[PMODEL(code)] !== null ? { v: groupSR[PMODEL(code)], src: '모델군' } : { v: companySR, src: '전사' };
 }
@@ -205,7 +210,9 @@ function computeForecast(ym, cutoffDate, wx) {
       const present = base.filter(v => v !== null);
       const baseMean = present.length ? avg(present) : 0;
       const { v: srv, src } = sr(code);
-      const t = trendFor(code, cutoff);
+      // 추세 T 미적용(=1). 2026-10-27 백테스트(140 매장·월): 최근4주/이전4주 모멘텀은 계절 성분을 빼면 예측력이 없고(기울기 -0.04),
+      // 적용하면 오차가 오히려 커짐(MAE 9.1% → 10.1%). 추세로 보이던 것은 대부분 계절(9→10월 회복)이며 이미 계절비가 담당.
+      const t = 1;
       const region = wx && wx.store[code], wBase = region != null ? wx.inputs.base[region] : null, wDays = region != null ? wx.inputs.days[region] : null;
       const useWx = wBase != null && wDays;
       let raw = 0, nOpen = 0, sumA = 0, sumF = 0;
@@ -423,7 +430,8 @@ function brandMethodNote(run, ym, rows) {
   const cl = Object.keys(OT_CLOSE_FROM).filter(c => run.daily.stores[c] && OT_CLOSE_FROM[c].slice(0, 7) <= ym);
   if (cl.length) parts.push('특이: ' + cl.map(c => `${OT_DATA[c].name.replace(/점$/, '')}점 폐점(${+OT_CLOSE_FROM[c].slice(5, 7)}/${+OT_CLOSE_FROM[c].slice(8)}~)`).join(', '));
   // 자세한 근거는 마우스를 올리면 (화면은 짧게)
-  const tip = `실적 ${through.slice(5).replace('-', '/')}까지의 요일별 값 × 전년 ${mm}월/${pm}월 계절비(평균 ${sr != null ? sr.toFixed(2) : '-'}) × 최근 추세(평균 ${tr != null ? tr.toFixed(2) : '-'})` +
+  const tip = `실적 ${through.slice(5).replace('-', '/')}까지의 요일별 값 × 전년 ${mm}월/${pm}월 계절비(평균 ${sr != null ? sr.toFixed(2) : '-'})` +
+    (tr != null && Math.abs(tr - 1) > 0.0005 ? ` × 최근 추세(평균 ${tr.toFixed(2)})` : '') +
     (fg && rg ? ` · 직전 ${pm}월 동일매장 ${pct(rg.g)}` : '') + (clip ? ` · 추세 상·하한 ${clip}개점` : '') +
     (w ? ` · 기준 4주 기온 평년 대비 ${sg(w.base)}℃, 비·눈은 영향 미확인으로 제외` : '') + ' · 행사는 미반영';
   return { html: parts.join(' · '), tip };
@@ -1010,7 +1018,7 @@ $('pubBtn').onclick = async () => {
     const { error } = await sb.from('sf_forecast_runs').insert({
       ym, version, kind: '확정', model_version: MODEL_VERSION, cutoff_date: cutoff,
       daily: fc, created_by: currentUser.id,
-      note: `sfv1 확정 발행 (컷오프 ${cutoff}${early ? `, 실적 ${fc.data_through}까지 반영한 월중 선발행` : ''}, 199전환 이전 데이터 미사용, RU046 가정치` +
+      note: `sfv1 확정 발행 (컷오프 ${cutoff}${early ? `, 실적 ${fc.data_through}까지 반영한 월중 선발행` : ''}, 199전환 이전 데이터 미사용, RU046 가정치, 추세 미적용, 199·프리미어 계절비=일반군 평균` +
         (w ? `, 기온 보정 ${(w.effect * 100).toFixed(1)}% — 최근 4주 평년 대비 ${w.base >= 0 ? '+' : ''}${w.base}℃ → ${ymLabel(ym)} ${w.anom >= 0 ? '+' : ''}${w.anom}℃ 전망` : ', 날씨 미반영') + ')',
     });
     if (error) throw error;
