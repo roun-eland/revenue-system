@@ -5351,8 +5351,14 @@ function renderPivotCompare() {
     c.perCustomer = c.guests > 0 ? c.sales / c.guests : null;
   });
 
+  const unmatched = data.unmatched || [];
+  const otherOf = (items, codes) => {
+    let amt = 0, grams = 0;
+    items.forEach(e => codes.forEach(sc => { const s = e.byStore.get(sc); if (s) { amt += s.amount; grams += s.grams; } }));
+    return { amt, grams };
+  };
   const resultByMenu = new Map(data.results.map(r => [r.menu_name, r]));
-  const zonesPresent = [...new Set([...data.designByMenu.values()].map(d => d.category).filter(Boolean))]
+  const zonesPresent =[...new Set([...data.designByMenu.values()].map(d => d.category).filter(Boolean))]
     .sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b));
 
   // 모든 메뉴의 통계를 한 번만 계산해서, 전체 합계 행과 존별 행이 같은 값을 공유한다.
@@ -5407,11 +5413,12 @@ function renderPivotCompare() {
   // 전체 조닝 합계 행 — 존 합계와 같은 원리로 손님수는 매장군 전체 손님수 하나로 통일한다.
   {
     const brandTarget = weightedTotals([...data.targetByCategory.values()], 'target');
-    H += '<tr class="pivot-zone pivot-met"><td>【로운 전체】</td>' +
+    H += '<tr class="pivot-zone pivot-met"><td>【로운 전체】' + (unmatched.length ? ' <span class="pivot-badge">기타 포함</span>' : '') + '</td>' +
       `<td class="pivot-target-col">${pivotTargetTxt(mode, brandTarget.costPerGram, brandTarget.consumption, data.targetPrice)}</td>`;
     columns.forEach(c => {
       let amt = 0, grams = 0;
       allMenuStats.forEach(m => { if (!m.result) return; const g = pivotGroupValue(m.result, c.codes); if (g.grams != null) grams += g.grams; amt += pivotGroupAmount(m.result, c.codes, data.costByMenuStore.get(m.design.menu_name)).amt; });
+      const ot = otherOf(unmatched, c.codes); amt += ot.amt; grams += ot.grams; // 레시피에 안 붙은 자재도 실제 원가에 포함
       const t = pivotValueTxt(mode, amt, grams, c.guests, c.netSales);
       H += `<td>${t.main}${t.secondary}</td>`;
     });
@@ -5517,6 +5524,30 @@ function renderPivotCompare() {
       }
     });
   });
+
+  // 【기타】 — 레시피에 연결되지 않은 자재(위 【로운 전체】에 이미 포함). 누르면 자재별 목록이 나온다.
+  if (unmatched.length) {
+    H += `<tr class="pivot-zone" onclick="pivotToggleOther()"><td>${pivotOtherOpen ? '▾' : '▸'} 【기타】 <span class="pivot-badge">미매칭 자재 ${unmatched.length}종</span></td><td class="pivot-na pivot-target-col">—</td>`;
+    columns.forEach(c => {
+      const ot = otherOf(unmatched, c.codes);
+      const t = pivotValueTxt(mode, ot.amt, ot.grams, c.guests, c.netSales);
+      H += `<td>${t.main}${t.secondary}</td>`;
+    });
+    H += '</tr>';
+    if (pivotOtherOpen) {
+      unmatched.forEach(e => {
+        const codeTxt = [...e.codes].join(', ');
+        H += `<tr class="pivot-ing"><td title="${esc(e.name)} (${esc(codeTxt)})">└ ${esc(e.name)} <span class="pivot-badge">${esc(codeTxt)}</span></td><td class="pivot-na pivot-target-col">—</td>`;
+        columns.forEach(c => {
+          const ot = otherOf([e], c.codes);
+          if (!ot.amt && !ot.grams) { H += '<td class="pivot-na">—</td>'; return; }
+          const t = pivotValueTxt(mode, ot.amt, ot.grams, c.guests, c.netSales);
+          H += `<td class="pivot-d">${t.main}</td>`;
+        });
+        H += '</tr>';
+      });
+    }
+  }
   H += '</tbody>';
   tbl.innerHTML = H;
 }
@@ -5563,6 +5594,38 @@ async function refreshPivotFromLatest(ev) {
 $('#pivotRefreshBtnAB')?.addEventListener('click', refreshPivotFromLatest);
 $('#pivotRefreshBtnC')?.addEventListener('click', refreshPivotFromLatest);
 
+// ②③ 표 맨 아래 "기타" — 이 기간 레시피 어디에도 연결(별칭 포함)되지 않은 자재의 실제 사용액.
+// 실제 원가에 들어가는 돈이므로 【로운 전체】 원가율에 더해 보여주고, 행을 펼치면 자재별로 나열한다.
+// 기준: 시즌 레시피를 끝까지 펼친 자재 코드(flatByMenu)와 별칭 클러스터로 연결되는 자재는 "매칭됨".
+async function attachPivotUnmatched(data) {
+  data.unmatched = [];
+  try {
+    const covered = new Set();
+    data.flat.flatByMenu.forEach(ings => ings.forEach((_, code) => covered.add(data.findMaterial(code))));
+    const acc = new Map(); // 클러스터 대표코드 -> { code, codes, byStore, amount }
+    data.usageByStoreRawCode.forEach((codes, store) => codes.forEach((u, code) => {
+      if (WATER_CODES.includes(code)) return;
+      const root = data.findMaterial(code);
+      if (covered.has(root) || (!u.amount && !u.grams)) return;
+      let e = acc.get(root);
+      if (!e) acc.set(root, e = { code, codes: new Set(), byStore: new Map(), amount: 0 });
+      e.codes.add(code);
+      const s = e.byStore.get(store) || { grams: 0, amount: 0 };
+      s.grams += u.grams || 0; s.amount += u.amount || 0;
+      e.byStore.set(store, s); e.amount += u.amount || 0;
+    }));
+    const items = [...acc.values()].filter(e => Math.abs(e.amount) >= 1).sort((a, b) => b.amount - a.amount);
+    if (items.length) {
+      const { data: rows } = await fetchAllRpcPages('material_usage_names_for_range', { p_start: data.dateRange.start, p_end: nextDay(data.dateRange.end) });
+      const names = new Map((rows || []).map(r => [r.material_code, r.material_name]));
+      items.forEach(e => { e.name = [...e.codes].map(c => names.get(c)).find(Boolean) || data.aliasNameByCode?.get(e.code) || e.code; });
+    }
+    data.unmatched = items;
+  } catch (err) { console.error('기타(미매칭 자재) 계산 실패:', err); }
+}
+let pivotOtherOpen = false;
+function pivotToggleOther() { pivotOtherOpen = !pivotOtherOpen; renderPivotCompare(); }
+
 async function loadPivotCompareView() {
   if (pivotTab === 'S') return loadSignalView();   // 신호등 탭은 같은 기간 컨트롤을 공유 — 기간을 바꾸면 신호등을 다시 계산
   const myToken = ++pivotLoadToken;
@@ -5570,6 +5633,10 @@ async function loadPivotCompareView() {
   tbl.innerHTML = '<tbody><tr><td style="padding:24px;color:var(--muted)">불러오는 중...</td></tr></tbody>';
   const data = await loadPivotCompareData();
   if (myToken !== pivotLoadToken) return; // 그 사이 다른 탭/필터로 넘어감 — 이 결과는 버린다
+  if (!data.error) {
+    await attachPivotUnmatched(data);
+    if (myToken !== pivotLoadToken) return;
+  }
   pivotCompareCache = data;
   if (!data.error && pivotTab === 'A') {
     const sel = $('#pivotStoreSelect');
