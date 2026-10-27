@@ -5369,6 +5369,10 @@ function renderPivotCompare() {
     const brandAmt = (brandVal.grams || 0) * (costPerGram || 0);
     return { design: d, result: r, costPerGram, brandAmt };
   });
+  // 실사용 상한을 적용한 메뉴 금액 합 / 기타 / 미배분 — 열(매장군)별. 전체 = 메뉴(상한 적용) + 기타 + 미배분 = 실제 사용액.
+  const AL = buildPivotAlloc(data);
+  const colMenus = columns.map(c => allMenuStats.reduce((a, m) => a + AL.menuAmt(m.design.menu_name, c.codes), 0));
+  const colLeft = columns.map((c, ci) => AL.actualTotal(c.codes) - colMenus[ci] - otherOf(unmatched, c.codes).amt);
 
   // 인당소비량(g)/인당소비액(원) 모드는 같은 셀에 "주값(부값)"을 같이 보여줘 글자수가 길어지므로
   // 열 폭을 더 넓게 준다 — 좁은 채로 두면 매장이 여러 개일 때 옆 열 값과 겹쳐 보인다.
@@ -5413,12 +5417,13 @@ function renderPivotCompare() {
   // 전체 조닝 합계 행 — 존 합계와 같은 원리로 손님수는 매장군 전체 손님수 하나로 통일한다.
   {
     const brandTarget = weightedTotals([...data.targetByCategory.values()], 'target');
-    H += '<tr class="pivot-zone pivot-met"><td>【로운 전체】' + (unmatched.length ? ' <span class="pivot-badge">기타 포함</span>' : '') + '</td>' +
+    H += '<tr class="pivot-zone pivot-met"><td>【로운 전체】 <span class="pivot-badge">기타·미배분 포함 = 실제 사용액</span></td>' +
       `<td class="pivot-target-col">${pivotTargetTxt(mode, brandTarget.costPerGram, brandTarget.consumption, data.targetPrice)}</td>`;
-    columns.forEach(c => {
+    columns.forEach((c, ci) => {
       let amt = 0, grams = 0;
-      allMenuStats.forEach(m => { if (!m.result) return; const g = pivotGroupValue(m.result, c.codes); if (g.grams != null) grams += g.grams; amt += pivotGroupAmount(m.result, c.codes, data.costByMenuStore.get(m.design.menu_name)).amt; });
-      const ot = otherOf(unmatched, c.codes); amt += ot.amt; grams += ot.grams; // 레시피에 안 붙은 자재도 실제 원가에 포함
+      allMenuStats.forEach(m => { if (!m.result) return; const g = pivotGroupValue(m.result, c.codes); if (g.grams != null) grams += g.grams; });
+      amt = colMenus[ci];
+      const ot = otherOf(unmatched, c.codes); amt += ot.amt + colLeft[ci]; grams += ot.grams; // 레시피에 안 붙은 자재(기타)·배분 안 된 몫(미배분)도 실제 원가에 포함
       const t = pivotValueTxt(mode, amt, grams, c.guests, c.netSales);
       H += `<td>${t.main}${t.secondary}</td>`;
     });
@@ -5440,7 +5445,7 @@ function renderPivotCompare() {
       // 존 합계는 메뉴마다 분모(패턴별 손님수)가 달라 그냥 더하면 안 된다 — 그램/금액만 메뉴 합산하고,
       // 손님수는 그 매장군의 전체 손님수(c.guests) 하나로 통일해서 나눈다(이번 세션 인당소비액 합산 버그와 동일 원리).
       let amt = 0, grams = 0;
-      menuStats.forEach(m => { if (!m.result) return; const g = pivotGroupValue(m.result, c.codes); if (g.grams != null) grams += g.grams; amt += pivotGroupAmount(m.result, c.codes, data.costByMenuStore.get(m.design.menu_name)).amt; });
+      menuStats.forEach(m => { if (!m.result) return; const g = pivotGroupValue(m.result, c.codes); if (g.grams != null) grams += g.grams; amt += AL.menuAmt(m.design.menu_name, c.codes); });
       const t = pivotValueTxt(mode, amt, grams, c.guests, c.netSales);
       H += `<td>${t.main}${t.secondary}</td>`;
     });
@@ -5473,7 +5478,7 @@ function renderPivotCompare() {
         // (2026-08-28, 베이컨크림파스타 사례 — 자재 2개가 이번 시즌엔 안 팔려서 매장별 원가가
         // 전부 없었는데 0.0%로 표시돼 문제없어 보였음).
         if (mode !== 'g' && ga.grams == null) { H += '<td class="pivot-na">—</td>'; return; }
-        const t = pivotValueTxt(mode, ga.amt, g.grams, g.customers, c.netSales);
+        const t = pivotValueTxt(mode, AL.menuAmt(menuName, c.codes), g.grams, g.customers, c.netSales);
         H += `<td>${t.main}${t.secondary}</td>`;
       });
       H += '</tr>';
@@ -5515,7 +5520,7 @@ function renderPivotCompare() {
           columns.forEach(c => {
             const gv = pivotGroupValue(m.result, c.codes);
             if (gv.grams == null) { H += '<td class="pivot-na">—</td>'; return; }
-            const amt = byPrice ? gv.grams * (m.costPerGram || 0) * cshare : gv.grams * share * (m.costPerGram || 0);
+            const amt = byPrice ? AL.ingAmt(menuName, code, c.codes) : gv.grams * share * (m.costPerGram || 0);
             const t = pivotValueTxt(mode, amt, gv.grams * share, gv.customers, c.netSales);
             H += `<td class="pivot-d">${t.main}</td>`;
           });
@@ -5542,6 +5547,40 @@ function renderPivotCompare() {
           const ot = otherOf([e], c.codes);
           if (!ot.amt && !ot.grams) { H += '<td class="pivot-na">—</td>'; return; }
           const t = pivotValueTxt(mode, ot.amt, ot.grams, c.guests, c.netSales);
+          H += `<td class="pivot-d">${t.main}</td>`;
+        });
+        H += '</tr>';
+      });
+    }
+  }
+
+  // 【미배분】 — 실사용 상한을 적용하고도 메뉴에 배분되지 않은 실사용액(레시피로 안 잡히는 튀김유 같은 자재, 배분 부족 등).
+  // 위 【로운 전체】에 포함돼 있어, 존 합계 + 기타 + 미배분 = 전체 = 실제 사용액.
+  if (colLeft.some(v => Math.abs(v) >= 1)) {
+    const left = AL.leftovers();
+    // 별칭 묶음은 이 기간 실사용액이 가장 큰 코드의 이름으로 표시 (묶음 안 아무 코드나 고르면 엉뚱한 이름이 나온다)
+    const amtByCode = new Map();
+    data.usageByStoreRawCode.forEach(codes => codes.forEach((u, code) => amtByCode.set(code, (amtByCode.get(code) || 0) + (u.amount || 0))));
+    const nameOfRoot = r => {
+      const members = [...(data.clusterMembers?.get(r) || new Set([r]))].sort((a, b) => (amtByCode.get(b) || 0) - (amtByCode.get(a) || 0));
+      for (const code of members) { const n = data.flat.rawMaterialNameByCode.get(code) || data.aliasNameByCode?.get(code); if (n) return n; }
+      return members[0] || r;
+    };
+    H += `<tr class="pivot-zone" onclick="pivotToggleLeft()"><td>${pivotLeftOpen ? '▾' : '▸'} 【미배분】 <span class="pivot-badge">실제 − (메뉴+기타)</span></td><td class="pivot-na pivot-target-col">—</td>`;
+    columns.forEach((c, ci) => {
+      const t = pivotValueTxt(mode, colLeft[ci], null, c.guests, c.netSales);
+      H += `<td>${t.main}${t.secondary}</td>`;
+    });
+    H += '</tr>';
+    if (pivotLeftOpen) {
+      const items = [...left.entries()].map(([r, m]) => ({ r, m, tot: [...m.values()].reduce((a, b) => a + b, 0) })).sort((a, b) => b.tot - a.tot);
+      items.forEach(e => {
+        const nm = nameOfRoot(e.r);
+        H += `<tr class="pivot-ing"><td title="${esc(nm)}">└ ${esc(nm)} <span class="pivot-badge">${e.tot >= 0 ? '메뉴 배분 부족' : '배분 초과'}</span></td><td class="pivot-na pivot-target-col">—</td>`;
+        columns.forEach(c => {
+          let amt = 0, any = false; c.codes.forEach(sc => { const v = e.m.get(sc); if (v != null) { amt += v; any = true; } });
+          if (!any) { H += '<td class="pivot-na">—</td>'; return; }
+          const t = pivotValueTxt(mode, amt, null, c.guests, c.netSales);
           H += `<td class="pivot-d">${t.main}</td>`;
         });
         H += '</tr>';
@@ -5625,6 +5664,90 @@ async function attachPivotUnmatched(data) {
 }
 let pivotOtherOpen = false;
 function pivotToggleOther() { pivotOtherOpen = !pivotOtherOpen; renderPivotCompare(); }
+let pivotLeftOpen = false;
+function pivotToggleLeft() { pivotLeftOpen = !pivotLeftOpen; renderPivotCompare(); }
+
+// ②③ 메뉴 원가 배분의 "실사용 상한" (2026-10-27).
+// 메뉴 원가는 (추정 그램 × 레시피 비율)로 자재마다 나뉘는데, 그 자재가 이번 기간에 실제로 쓰였는지는 보지 않아서
+// 레시피에만 남은 자재(예: 쓰지 않게 된 두부튀김)에도 원가가 붙고 합계가 실제보다 커졌다(4주차 +1.0%p).
+// → 매장×자재(별칭 클러스터)별로 "메뉴들이 배분받은 금액 합"이 그 자재의 실제 사용액을 넘으면 비율대로 줄인다.
+//    줄이고도 실제와 안 맞는 몫(튀김유처럼 레시피로 안 잡히는 자재, 배분 부족)은 【미배분】으로 따로 보여준다.
+function buildPivotAlloc(data) {
+  if (data.__alloc && data.__allocFor === data.results) return data.__alloc;
+  const hasPrice = typeof data.priceForCode === 'function';
+  const root = code => data.findMaterial(code);
+  const actual = new Map(); // store -> root -> 실사용액(물 제외)
+  data.usageByStoreRawCode.forEach((codes, store) => {
+    const m = new Map();
+    codes.forEach((u, code) => { if (WATER_CODES.includes(code)) return; const r = root(code); m.set(r, (m.get(r) || 0) + (u.amount || 0)); });
+    actual.set(store, m);
+  });
+  const resultByMenu = new Map(data.results.map(r => [r.menu_name, r]));
+  const share = new Map(); // menu -> Map(code -> 원가 비중)  (표 자재 펼침의 byPrice 비중과 동일)
+  const amt0 = new Map();  // menu -> Map(store -> 상한 적용 전 금액)
+  data.designByMenu.forEach((des, menu) => {
+    const r = resultByMenu.get(menu); if (!r) return;
+    const costBy = data.costByMenuStore.get(menu), m = new Map();
+    (r.per_store || []).forEach(ps => {
+      if (ps.grams == null) return;
+      const c = costBy?.get(ps.store_code)?.actual_cost_per_gram; if (c == null) return;
+      m.set(ps.store_code, (m.get(ps.store_code) || 0) + ps.grams * c);
+    });
+    amt0.set(menu, m);
+    const ings = data.flat.flatByMenu.get(menu);
+    if (!hasPrice || !ings || !ings.size) return;
+    const cw = new Map([...ings.entries()].map(([code, g]) => { const p = WATER_CODES.includes(code) ? null : data.priceForCode(code); return [code, p ? g * p.price : 0]; }));
+    const wSum = [...cw.values()].reduce((a, b) => a + b, 0); if (wSum <= 0) return;
+    share.set(menu, new Map([...cw.entries()].map(([c, w]) => [c, w / wSum])));
+  });
+  const alloc = new Map(); // store -> root -> 상한 적용 전 배분 합
+  amt0.forEach((stMap, menu) => {
+    const sh = share.get(menu); if (!sh) return;
+    stMap.forEach((a, store) => {
+      let am = alloc.get(store); if (!am) alloc.set(store, am = new Map());
+      sh.forEach((s, code) => { if (s) { const r = root(code); am.set(r, (am.get(r) || 0) + a * s); } });
+    });
+  });
+  const scale = (store, r) => {
+    const al = alloc.get(store)?.get(r) || 0; if (al <= 0) return 1;
+    return Math.min(1, Math.max(0, actual.get(store)?.get(r) || 0) / al);
+  };
+  const covered = new Set(); data.flat.flatByMenu.forEach(ings => ings.forEach((_, code) => covered.add(root(code))));
+  const AL = {
+    // 메뉴의 (상한 적용) 금액 — codes 매장들 합
+    menuAmt(menu, codes) {
+      const stMap = amt0.get(menu), sh = share.get(menu); if (!stMap) return 0;
+      let tot = 0;
+      stMap.forEach((a, store) => {
+        if (!codes.includes(store)) return;
+        if (!sh) { tot += a; return; }
+        let f = 0; sh.forEach((s, code) => { if (s) f += s * scale(store, root(code)); });
+        tot += a * f;
+      });
+      return tot;
+    },
+    ingAmt(menu, code, codes) {
+      const stMap = amt0.get(menu), s = share.get(menu)?.get(code); if (!stMap || !s) return 0;
+      let tot = 0; stMap.forEach((a, store) => { if (codes.includes(store)) tot += a * s * scale(store, root(code)); });
+      return tot;
+    },
+    actualTotal(codes) { let t = 0; codes.forEach(sc => actual.get(sc)?.forEach(v => { t += v; })); return t; },
+    // 레시피에 연결돼 있는데 상한 적용 후에도 메뉴에 배분되지 않은 실사용액(자재별·매장별)
+    leftovers() {
+      const out = new Map(); // root -> Map(store -> amt)
+      actual.forEach((m, store) => m.forEach((act, r) => {
+        if (!covered.has(r)) return;
+        const al = alloc.get(store)?.get(r) || 0;
+        const capped = al > 0 ? Math.min(al, Math.max(0, act)) : 0;
+        const rem = act - capped; if (Math.abs(rem) < 1) return;
+        let e = out.get(r); if (!e) out.set(r, e = new Map()); e.set(store, rem);
+      }));
+      return out;
+    },
+  };
+  data.__alloc = AL; data.__allocFor = data.results;
+  return AL;
+}
 
 async function loadPivotCompareView() {
   if (pivotTab === 'S') return loadSignalView();   // 신호등 탭은 같은 기간 컨트롤을 공유 — 기간을 바꾸면 신호등을 다시 계산
