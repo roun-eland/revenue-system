@@ -213,7 +213,7 @@ async function loadFeedback() {
     if (!x.byHour) return;
     const a = hourAgg[+x.dk]; a.n++;
     const nb = needByHour(s, x.sales, x.dk);
-    for (let i = 0; i < 13; i++) { a.used[i] += Number(x.byHour[i]) || 0; a.need[i] += nb[i]; }
+    for (let i = 0; i < 13; i++) { a.used[i] += Number(hourIdx(x.byHour, 9 + i)) || 0; a.need[i] += nb[i]; }
   });
   let hh = '<tr><th>시간</th>' + WD.map(w => `<th>${w}</th>`).join('') + '</tr>';
   let hb = '';
@@ -464,7 +464,7 @@ async function uploadAtt(file) {
       if (th <= 0) return;
       const d = normDate(r[4]);
       const key = code + '|' + d;
-      const o = (day[key] = day[key] || { code, d, mate: 0, ft: 0, hours: Array(13).fill(0) });
+      const o = (day[key] = day[key] || { code, d, mate: 0, ft: 0, hours: Array(16).fill(0) }); // 8~23시 (예전엔 9~21시 13칸이라 9시 이전·21시 이후 근무가 빠졌음)
       const bucket = FT_ROLE_SET.has(String(r[3]).trim()) ? 'ft' : 'mate';
       o[bucket] += th;
       const ai = tmin(r[6]), ao = tmin(r[8]);
@@ -472,8 +472,8 @@ async function uploadAtt(file) {
         const brk = num(r[13]);
         const span = (ao - ai) / 60;
         const f = span > 0 ? Math.max(0, (span - brk / 60) / span) : 0;
-        for (let slot = 0; slot < 13; slot++) {
-          const s0 = (9 + slot) * 60, s1 = (10 + slot) * 60;
+        for (let slot = 0; slot < 16; slot++) {
+          const s0 = (8 + slot) * 60, s1 = (9 + slot) * 60;
           o.hours[slot] += Math.max(0, Math.min(ao, s1) - Math.max(ai, s0)) / 60 * f;
         }
       }

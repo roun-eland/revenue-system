@@ -253,8 +253,10 @@ const OC_BANDS = [['오픈 9~11시', [9, 10]], ['런치 11~14시', [11, 12, 13]]
 function ocMonthStat(code, ym) {
   const days = (OC.byStore[code] || []).filter(d => d.ym === ym); if (days.length < 5) return null;
   const sales = days.reduce((t, d) => t + d.sales, 0), mh = days.reduce((t, d) => t + d.mh, 0);
-  const band = OC_BANDS.map(([, hs]) => ocMean(days.map(d => ocMean(hs.map(h => d.byHour[h - 9] || 0)))));
-  return { n: days.length, sales, mh, x: sales / days.length / 1e6, prod: sales / mh, band, mhDay: mh / days.length };
+  const band = OC_BANDS.map(([, hs]) => ocMean(days.map(d => ocMean(hs.map(h => hourIdx(d.byHour, h) || 0)))));
+  // 저장된 시간대(예전 업로드는 9~21시) 밖의 근무 = 총 근무시간 − 시간대 합. 8시 출근·22시 이후 마감이 여기에 해당 (새 형식 행은 거의 0)
+  const legacy = days.filter(d => d.byHour.length === 13), outside = legacy.length ? ocMean(legacy.map(d => d.mh - d.byHour.reduce((t, v) => t + v, 0))) : null;
+  return { outside, nLegacy: legacy.length, n: days.length, sales, mh, x: sales / days.length / 1e6, prod: sales / mh, band, mhDay: mh / days.length };
 }
 // 반환: { html, top:[{name, diff, eff}], score, target, me } — 효과(%p) = 인원차 × 구간시간 × 영업일 × 실질시급 ÷ 순매출 (+이면 피어보다 많이 쓰는 만큼 줄일 여지)
 function ocPeerCompare(code, ym) {
@@ -282,7 +284,7 @@ function ocPeerCompare(code, ym) {
     <tr><td>생산성(원/MH)</td><td style="text-align:right">${won(me.prod)}</td><td style="text-align:right">${won(peerProd)}</td><td style="text-align:right">${ocF1((me.prod / peerProd - 1) * 100)}%</td><td></td></tr></tbody></table>
     <p class="dnote" style="margin:6px 0 0">${ym.slice(5)}월 실적 평균(요일 구분 없이). 빨강 = 피어보다 많이 쓰는 구간(줄일 여지, 효과 큰 순으로 확인), 초록 = 피어보다 적게 쓰는 구간. 포지션별 비교는 매장마다 역할명이 달라 구간 인원으로 대체했습니다. 정직원·고정비 구조 차이는 이 표에 포함되지 않습니다.</p>`;
   const top = rows.filter(r => r.eff > 0.3).sort((a, b) => b.eff - a.eff).slice(0, 3).map(r => ({ name: r.name, diff: r.diff, eff: r.eff }));
-  return { html, top, score: sc, target, me };
+  return { html, top, score: sc, target, me, outside: me.outside, nLegacy: me.nLegacy };
 }
 
 function ocSentences(dg, ym, extra) {
@@ -294,6 +296,7 @@ function ocSentences(dg, ym, extra) {
   }
   const w = dg.dt.weekday;
   out.push(`평일 상시 인원(영업시간 하위 25% 시간대) ${w.baseN.toFixed(1)}명, 피크 ${w.peakN.toFixed(1)}명(${w.peakH}시)`);
+  if (extra && extra.outside != null && extra.outside >= 0.5) out.push(`<b>9시 이전·21시 이후 근무</b>: ${ym.slice(5)}월 하루 평균 ${extra.outside.toFixed(1)}h (${extra.nLegacy}일 기록) — 시간대 그래프 범위 밖이라 그래프에는 빠져 있습니다. 출퇴근 기록부를 다시 업로드하면 8시부터 시간대별로 보이고, 8시 출근 매장은 9시 이후 출근으로 조정 피드백 대상입니다.`);
   if (extra && extra.score) {
     const sc = extra.score, col = sc.level === 'g' ? '#2d7a0b' : sc.level === 'w' ? '#b35a10' : '#b32d2d';
     out.unshift(`<b>생산성 점수</b>: ${ym.slice(5)}월 ${won(extra.me.prod)}원/MH ÷ 곡선 목표 ${won(extra.target)}원/MH(일평균 매출 ${extra.me.x.toFixed(1)}백만) = <b style="color:${col}">${sc.shown.toFixed(0)}%</b>${sc.surplus > 0.5 ? ` (+${sc.surplus.toFixed(0)}% 여유)` : ''}`);
@@ -330,13 +333,13 @@ async function ocRenderFeedback(code, ym) {
     <ul style="margin:10px 0 6px;padding-left:20px;font-size:13px;line-height:1.7">${ocSentences(dg, ym, peer).map(s => `<li>${s}</li>`).join('')}</ul>
     ${planner ? `<div style="background:#f3fbe7;border-left:4px solid #82dc28;padding:8px 14px;font-size:13px"><b>확인 사항</b><ul style="margin:4px 0 0;padding-left:18px">${ocQuestions(dg, peer).map(q => `<li>${q}</li>`).join('')}</ul></div>` : ''}
     <p class="dnote" style="margin-top:8px">주황 음영 = 표가 실제보다 많이 배치한 시간 · 파랑 음영 = 실제가 표보다 많이 일한 시간. 파란 점선(기준) = 전 매장 V2.1 표의 평균 시간대 형태 × 이 매출대에서 곡선이 요구하는 하루 근무시간. 피어 비교 표의 빨강 = 같은 매출대 매장보다 시간을 더 쓰는 구간. 달성선은 정답이 아니라 "실제로 해낸 수준"이며 인원이 부족했던 날도 섞일 수 있습니다 — 확정 판단이 아닌 <b>논의용</b> 자료입니다.</p></div>`;
-  const hrs = []; for (let h = 9; h <= 21; h++) hrs.push(h);
+  const hrs = []; for (let h = 8; h <= 21; h++) hrs.push(h);
   const mk = (id, cfg) => { const c = new Chart($(id), cfg); OC.fbCharts.push(c); return c; };
   const base = { responsive: true, maintainAspectRatio: false };
   for (const [id, dt] of [['ocHrWd', 'weekday'], ['ocHrWe', 'weekend']]) {
     const hm = ocHourMap(ocPlan(code, dt)), plan = hrs.map(h => hm[h] || 0);
     const days = (OC.byStore[code] || []).filter(d => d.ym === ym && d.dt === dt);
-    const act = days.length ? hrs.map((_, i) => ocMean(days.map(d => d.byHour[i] || 0))) : null;
+    const act = days.length ? hrs.map(h => { const v = days.map(d => hourIdx(d.byHour, h)).filter(x => x != null); return v.length ? ocMean(v) : null; }) : null;
     const ds = [{ label: '표(계획)', data: plan, stepped: 'middle', borderColor: OC_COL.ink, borderWidth: 2, pointRadius: 0, fill: act ? { target: 1, above: 'rgba(217,130,43,.22)', below: 'rgba(55,138,221,.22)' } : false }];
     if (act) ds.push({ label: `${+ym.slice(5)}월 실제 평균`, data: act, borderColor: OC_COL.green, backgroundColor: OC_COL.green, borderWidth: 2, pointRadius: 3, tension: .15, fill: false });
     const rs = ocRefSeries(code, ym, dt, hrs);

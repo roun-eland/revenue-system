@@ -6,6 +6,12 @@ const LABOR_CAP = 0.38;
 let OT_STD = {}; // { 매장코드: { weekday: plan, weekend: plan } }
 
 // 밥차(직원 식사시간)는 근무 시간에서 제외 — 별도 집계(mealMH)만 한다 (사용자 확정 2026-09-21)
+// 시간대별 투입(ot_labor_daily.by_hour): 예전 업로드 = 9~21시 13칸, 2026-10-28 이후 업로드 = 8~23시 16칸. h시의 값, 그 시간이 저장 범위 밖이면 null.
+function hourIdx(arr, h) {
+  if (!arr) return null;
+  if (arr.length === 13) return (h >= 9 && h <= 21) ? arr[h - 9] : null;
+  return (h >= 8 && h <= 8 + arr.length - 1) ? arr[h - 8] : null;
+}
 const STD_CATS = ["홀", "콜파트", "핫파트", "육절기", "프랩", "DMO", "관리·기타"];
 
 // "6-27,30-31" → [6,7,...,27,30,31]   (슬롯 1 = 08:00, 30분 단위, 32 = 23:30)
