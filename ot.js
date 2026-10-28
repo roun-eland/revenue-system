@@ -475,7 +475,7 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
       const sr = S[x.iso], lr = L[x.iso];
       if (!sr || !lr || sr.is_closed || !(+sr.total > 0)) continue;
       const A = +sr.total;
-      dayRows.push({ iso: x.iso, mate_mh: +lr.mate_mh || 0, sales: A });
+      dayRows.push({ iso: x.iso, mate_mh: +lr.mate_mh || 0, ft_mh: +lr.ft_mh || 0, sales: A });
       sales += A; mate += +lr.mate_mh || 0; ft += +lr.ft_mh || 0; n++;
       if (!first) first = x.iso;
       last = x.iso;
@@ -490,6 +490,21 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
     const lc = lcStoreCost({ dim, eff: s0.eff, staff: sf, dayRows, attByDate, periods: pBy[code] });
     const labor = lc.labor;
     const mh = mate + ft;
+    // 목표 인건비율(생산성 100%) = 이 매장이 목표(곡선) 생산성을 정확히 달성했을 때의 누적 인건비율.
+    //   메이트 = 필요 총 MH(매출÷목표생산성 − 정직원 MH) × 시급단가(급여대장 ÷ 가산 반영 근무시간, 급여대장 없으면 실질시급), 정직원 고정비는 그대로. 기간은 누적 인건비율과 같음(급여 등록일까지).
+    const cutI = lc.cutIso; let Sc = 0, ftc = 0;
+    for (const d of dayRows) { if (d.iso > cutI) break; Sc += d.sales; ftc += d.ft_mh; }
+    let mateC = 0, wAllC = 0;
+    for (const iso of Object.keys(L)) { if (iso > cutI) continue; const mm = +L[iso].mate_mh || 0; mateC += mm; wAllC += mm * (OT_HOLIDAYS.has(iso) ? 1.5 : 1); }
+    let payRate = s0.eff;
+    if (lc.hasPay) {
+      const lastIso = dayRows[dayRows.length - 1].iso, cov = new Set();
+      (pBy[code] || []).filter(p => p.period_end <= lastIso).forEach(p => { for (let d = p.period_start; d <= p.period_end; d = lcAddDay(d, 1)) cov.add(d); });
+      let wCov = 0; for (const iso of Object.keys(L)) if (cov.has(iso)) wCov += (+L[iso].mate_mh || 0) * (OT_HOLIDAYS.has(iso) ? 1.5 : 1);
+      if (wCov > 0) payRate = lc.payActual / wCov;
+    }
+    const tProd = prodTargetAt(sales / n / 1e6);
+    const costTarget = lc.fixed + payRate * Math.max(0, Sc / tProd - ftc) * (mateC > 0 ? wAllC / mateC : 1);
     // 목표생산성 = 그 매장 표준표(평일/주말, 없으면 72,000원/MH 엔진)를 9월 실제 매출에 그대로 적용했을 때
     // 나왔을 생산성(=매출÷필요MH) — "메이트 초과시간"도 이 기준(필요MH) 대비로 재정의한다(값은 동일, 관점만 전환:
     // 필요MH=필요총MH-FT 고정이므로 mh-need = mate-(need-ft) = 메이트 몫 초과분과 대수적으로 같다).
@@ -497,7 +512,8 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
     // 표준표를 실제 매출에 적용했을 때의 생산성은 tableProd로 남겨 둔다(참고·메이트 초과시간 계산은 그대로 표 기준 need).
     out.push({ code, name: s0.name, sales, mh, mate, ft, prod: sales / mh, need, over: mh - need,
                targetProd: prodTargetAt(sales / n / 1e6), tableProd: need ? sales / need : null, dailyX: sales / n / 1e6,
-               ratio: labor / (lc.ratioSales / 1.1) * 100, labor, ratioSales: lc.ratioSales, cutIso: lc.cutIso, hasPay: lc.hasPay,
+               ratio: labor / (lc.ratioSales / 1.1) * 100, labor, ratioSales: lc.ratioSales,
+               costTarget, ratioTarget: costTarget / (lc.ratioSales / 1.1) * 100, cutIso: lc.cutIso, hasPay: lc.hasPay,
                days: n, first, last, std: !!OT_STD[code], eff: s0.eff,
                payDays: lc.actDays, estDays: lc.estDays, badPeriods: lc.bad });
   }
@@ -522,7 +538,7 @@ async function renderDashMTD(ym, myReq) {
   if (!rows.length) { $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">이 달에 적재된 실적이 없습니다.</p>'; $('dashKpis').innerHTML = ''; return; }
   const last = rows.reduce((a, r) => r.last > a ? r.last : a, ''), first = rows.reduce((a, r) => !a || r.first < a ? r.first : a, '');
   $('dashSub').textContent = `${ym} 누적 실적 (${first.slice(5)}~${last.slice(5)}) — 예상이 아니라 입력된 매출·근태 실적 기준입니다. ` +
-    '누적 인건비율은 메이트 급여가 등록된 날짜까지만 계산합니다(급여대장이 10일까지면 매출·인건비 모두 10일까지 누적). 인건비 = 메이트 실제 급여(급여대장) + 정직원 급여(맨파워 직급 구성×직급 단가+직책수당)·연차수당(1인 10만원)·퇴직급여(1인 30만원)를 (기준일÷그 달 일수)로 환산한 값이고, 급여대장이 없는 매장은 마지막 근태일까지 메이트 근무시간×실질시급 추정으로 계산합니다. 전사 합계에는 본부 인건비 안분액을 같은 비율로 환산해 더했습니다(매장별 값에는 미포함). 4대보험 회사부담분은 제외. 생산성·목표생산성·초과시간은 급여와 무관하게 마지막 근태일까지 전체 기간입니다. 목표생산성은 브랜드 목표 곡선(labor-calc.js PROD_CURVE: 그 기간 일평균 매출에 해당하는 값, 저매출은 하한선)이고, 생산성 점수 = 누적 생산성 ÷ 목표생산성(100% 이상 초록·90~100% 주황·90% 미만 빨강)입니다. 메이트 초과시간은 표준표 기준 필요 MH 대비(참고). 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
+    '누적 인건비율은 메이트 급여가 등록된 날짜까지만 계산합니다(급여대장이 10일까지면 매출·인건비 모두 10일까지 누적). 인건비 = 메이트 실제 급여(급여대장) + 정직원 급여(맨파워 직급 구성×직급 단가+직책수당)·연차수당(1인 10만원)·퇴직급여(1인 30만원)를 (기준일÷그 달 일수)로 환산한 값이고, 급여대장이 없는 매장은 마지막 근태일까지 메이트 근무시간×실질시급 추정으로 계산합니다. 전사 합계에는 본부 인건비 안분액을 같은 비율로 환산해 더했습니다(매장별 값에는 미포함). 4대보험 회사부담분은 제외. 생산성·목표생산성·초과시간은 급여와 무관하게 마지막 근태일까지 전체 기간입니다. 목표생산성은 브랜드 목표 곡선(labor-calc.js PROD_CURVE: 그 기간 일평균 매출에 해당하는 값, 저매출은 하한선)이고, 생산성 점수 = 누적 생산성 ÷ 목표생산성(100% 이상 초록·90~100% 주황·90% 미만 빨강)입니다. 메이트 초과시간은 표준표 기준 필요 MH 대비(참고). 목표 인건비율 = 그 매장이 목표생산성을 정확히 달성했을 때(메이트 시급단가·정직원 고정비 유지)의 누적 인건비율이고, 맨 위 “로운” 행은 브랜드 합계(본부 인건비 안분 포함)입니다. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
   dashChartData = { rows, label: `${+ym.slice(5)}월 누적 (~${last.slice(5).replace('-', '/')})` };
   const tSales = rows.reduce((t, r) => t + r.sales, 0), tMH = rows.reduce((t, r) => t + r.mh, 0);
   const tNeed = rows.reduce((t, r) => t + r.sales / r.targetProd, 0); // 목표(곡선) 생산성을 달성했다면 쓰는 총 MH
@@ -544,8 +560,17 @@ async function renderDashMTD(ym, myReq) {
     `<div><div class="k">목표 달성 매장</div><div class="v">${nOk} / ${rows.length}</div><div class="s">누적 생산성 ≥ 매장별 목표생산성 · 인건비율 ${Math.round(LABOR_CAP * 100)}% 초과 ${nCap}곳</div></div>` +
     `<div><div class="k">과잉 투입 인건비 (누적)</div><div class="v" style="color:var(--crit)">+${won(overCost / 10000)}만원</div><div class="s">메이트 초과 +${won(overMH)}h · 인건비의 ${overPct.toFixed(1)}%</div></div>`;
   const maxOver = Math.max(...rows.map(r => Math.abs(r.over)), 1);
-  let html = '<table><colgroup><col style="width:150px"><col style="width:85px"><col style="width:90px"><col style="width:95px"><col style="width:150px"><col style="width:95px"><col style="width:170px"></colgroup>' +
-    '<thead><tr><th>매장</th><th>누적매출(억)</th><th title="브랜드 목표 곡선 — 일평균 매출에 따른 목표">목표생산성(곡선)</th><th>누적 생산성</th><th>생산성 점수</th><th>누적 인건비율</th><th>메이트 초과시간</th></tr></thead><tbody>';
+  // 브랜드(로운) 합계 행 — 생산성은 전 매장 합산, 인건비율은 본부 인건비 안분 포함, 목표 인건비율은 전 매장이 목표생산성을 달성했을 때
+  const bTargetProd = tNeed > 0 ? tSales / tNeed : null, bSc = prodScore(tSales / tMH, bTargetProd);
+  const bTargetRatio = (rows.reduce((t, r) => t + r.costTarget, 0) + hqCost) / (tRatioSales / 1.1) * 100, bOver = rows.reduce((t, r) => t + r.over, 0);
+  const rbOf = v => v > LABOR_CAP * 100 ? 'c' : v <= 24 ? 'g' : v <= 28 ? 'w' : 'c', scColOf = sc => !sc ? '' : sc.level === 'g' ? 'var(--good)' : sc.level === 'w' ? 'var(--warn)' : 'var(--crit)';
+  let html = '<table><colgroup><col style="width:150px"><col style="width:85px"><col style="width:90px"><col style="width:95px"><col style="width:150px"><col style="width:95px"><col style="width:170px"><col style="width:150px"></colgroup>' +
+    '<thead><tr><th>매장</th><th>누적매출(억)</th><th title="브랜드 목표 곡선 — 일평균 매출에 따른 목표">목표생산성(곡선)</th><th>누적 생산성</th><th>생산성 점수</th><th>누적 인건비율</th><th>메이트 초과시간</th><th title="그 매장이 목표생산성(100%)을 달성했을 때의 인건비율">목표 인건비율(생산성 100%)</th></tr></thead><tbody>';
+  html += `<tr style="background:var(--surface-1);font-weight:700"><td title="브랜드 합계 — 인건비율에는 본부 인건비 안분액 포함">로운 <span style="font-size:11px;font-weight:400;color:var(--muted2)">브랜드</span></td><td>${(tSales / 1e8).toFixed(2)}</td>` +
+    `<td>${bTargetProd != null ? won(bTargetProd) : '-'}</td><td><b>${won(tSales / tMH)}</b></td><td>${bSc ? `<b style="color:${scColOf(bSc)}">${bSc.shown.toFixed(0)}%</b>` : '-'}</td>` +
+    `<td><span class="band ${rbOf(ratioTot)}">${ratioTot.toFixed(1)}%</span></td>` +
+    `<td style="color:${bOver > 0 ? 'var(--crit)' : 'var(--good)'};font-weight:700">${bOver > 0 ? '+' + won(bOver) : won(bOver)}h</td>` +
+    `<td><span class="band ${rbOf(bTargetRatio)}">${bTargetRatio.toFixed(1)}%</span></td></tr>`;
   for (const r of rows) {
     const w = Math.round(Math.abs(r.over) / maxOver * 90);
     const rb = r.ratio > LABOR_CAP * 100 ? 'c' : r.ratio <= 24 ? 'g' : r.ratio <= 28 ? 'w' : 'c';
@@ -561,7 +586,8 @@ async function renderDashMTD(ym, myReq) {
     html += `<tr class="rowlink" data-code="${r.code}"><td title="${basis}">${r.name}${flag}</td><td>${(r.sales / 1e8).toFixed(2)}</td>` +
       `<td>${r.targetProd != null ? won(r.targetProd) : '-'}</td><td><b>${won(r.prod)}</b></td><td>${scTxt}</td>` +
       `<td><span class="band ${rb}"${capMark}>${r.ratio.toFixed(1)}%</span></td>` +
-      `<td style="color:${overColor};font-weight:700">${r.over > 0 ? '+' + won(r.over) : won(r.over)}h <span class="mini" style="width:${w}px;background:${overColor}"></span></td></tr>`;
+      `<td style="color:${overColor};font-weight:700">${r.over > 0 ? '+' + won(r.over) : won(r.over)}h <span class="mini" style="width:${w}px;background:${overColor}"></span></td>` +
+      `<td><span class="band ${rbOf(r.ratioTarget)}" title="생산성 100% 달성 시 ${r.name} 인건비율">${r.ratioTarget.toFixed(1)}%</span></td></tr>`;
   }
   $('dashTable').innerHTML = html + '</tbody></table>';
 }
