@@ -252,7 +252,8 @@ function ocRefSeries(code, ym, dt, hrs) {
 const OC_BANDS = [['오픈 9~11시', [9, 10]], ['런치 11~14시', [11, 12, 13]], ['브레이크 14~17시', [14, 15, 16]], ['디너 17~20시', [17, 18, 19]], ['마감 20~22시', [20, 21]]];
 function ocMonthStat(code, ym) {
   const days = (OC.byStore[code] || []).filter(d => d.ym === ym); if (days.length < 5) return null;
-  const sales = days.reduce((t, d) => t + d.sales, 0), mh = days.reduce((t, d) => t + d.mh, 0);
+  const sales = days.reduce((t, d) => t + d.sales, 0), adjH = typeof otAdjHours === 'function' ? otAdjHours(code, ym, days[days.length - 1].date) : 0;
+  const mh = days.reduce((t, d) => t + d.mh, 0) + adjH; // 기준정보 특이값(보정시간) 반영
   const band = OC_BANDS.map(([, hs]) => ocMean(days.map(d => ocMean(hs.map(h => hourIdx(d.byHour, h) || 0)))));
   // 저장된 시간대(예전 업로드는 9~21시) 밖의 근무 = 총 근무시간 − 시간대 합. 8시 출근·22시 이후 마감이 여기에 해당 (새 형식 행은 거의 0)
   const legacy = days.filter(d => d.byHour.length === 13), outside = legacy.length ? ocMean(legacy.map(d => d.mh - d.byHour.reduce((t, v) => t + v, 0))) : null;

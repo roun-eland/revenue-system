@@ -158,6 +158,7 @@ async function enterApp(user) {
   }
   await loadRoster();
   await loadStandardPlans();
+  await loadStoreAdjust();
   await loadStdBaselines();
   await loadActualCoverage();
   await loadSfRuns();
@@ -369,6 +370,22 @@ document.querySelectorAll('#otNav button').forEach(b => {
 // ---------- S1 전사 대시보드 (월 선택: 2026-08 실측 / 이후 달은 계획) ----------
 function prodBand(p) { return p >= TARGET ? 'g' : p >= 60000 ? 'w' : 'c'; }
 
+// ---------- 매장별 특이값(보정시간) — 기준정보에서 입력, ot_store_adjust ----------
+// 보정시간(월)은 생산성 계산에서 그 매장의 월 총 근무시간(정직원+메이트)에 더해진다(음수 = 제외). 월 중에는 마지막 기록일 ÷ 그 달 일수로 일할 환산. 인건비액은 보정하지 않는다.
+let OT_ADJ = {}; // { 매장코드: { note, hours } }
+async function loadStoreAdjust() {
+  OT_ADJ = {};
+  try {
+    const { data } = await sb.from('ot_store_adjust').select('store_code,note,adj_hours');
+    (data || []).forEach(r => { OT_ADJ[r.store_code] = { note: r.note || '', hours: +r.adj_hours || 0 }; });
+  } catch (e) { /* 테이블 접근 실패 시 보정 없이 진행 */ }
+}
+function otAdjHours(code, ym, lastIso) {
+  const a = OT_ADJ[code]; if (!a || !a.hours || !lastIso) return 0;
+  const [y, m] = ym.split('-').map(Number), dim = new Date(y, m, 0).getDate();
+  return a.hours * Math.min(1, +lastIso.slice(8) / dim);
+}
+
 // 한 매장의 월 계획치(엔진과 동일 로직): 계획 총 MH·메이트 MH·예상 인건비율
 function computeMonthPlan(code, ym, M, nfull, fullpay) {
   // 폐점 예정 매장: 폐점 후 달은 계획 없음, 폐점이 낀 달은 정직원 급여·인원을 영업 일수 비율로 줄인다(영업일만 계산되므로)
@@ -489,7 +506,7 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
     for (const iso of Object.keys(L)) attByDate[iso] = +L[iso].mate_mh || 0;
     const lc = lcStoreCost({ dim, eff: s0.eff, staff: sf, dayRows, attByDate, periods: pBy[code] });
     const labor = lc.labor;
-    const mh = mate + ft;
+    const adjH = otAdjHours(code, ym, last), mh = mate + ft + adjH; // 보정시간(기준정보 특이값) 반영
     // 목표 인건비율(생산성 100%) = 이 매장이 목표(곡선) 생산성을 정확히 달성했을 때의 누적 인건비율.
     //   메이트 = 필요 총 MH(매출÷목표생산성 − 정직원 MH) × 시급단가(급여대장 ÷ 가산 반영 근무시간, 급여대장 없으면 실질시급), 정직원 고정비는 그대로. 기간은 누적 인건비율과 같음(급여 등록일까지).
     const cutI = lc.cutIso; let Sc = 0, ftc = 0;
@@ -504,7 +521,7 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
       if (wCov > 0) payRate = lc.payActual / wCov;
     }
     const tProd = prodTargetAt(sales / n / 1e6);
-    const costTarget = lc.fixed + payRate * Math.max(0, Sc / tProd - ftc) * (mateC > 0 ? wAllC / mateC : 1);
+    const costTarget = lc.fixed + payRate * Math.max(0, Sc / tProd - ftc - otAdjHours(code, ym, cutI)) * (mateC > 0 ? wAllC / mateC : 1);
     // 목표생산성 = 그 매장 표준표(평일/주말, 없으면 72,000원/MH 엔진)를 9월 실제 매출에 그대로 적용했을 때
     // 나왔을 생산성(=매출÷필요MH) — "메이트 초과시간"도 이 기준(필요MH) 대비로 재정의한다(값은 동일, 관점만 전환:
     // 필요MH=필요총MH-FT 고정이므로 mh-need = mate-(need-ft) = 메이트 몫 초과분과 대수적으로 같다).
@@ -513,7 +530,7 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
     out.push({ code, name: s0.name, sales, mh, mate, ft, prod: sales / mh, need, over: mh - need,
                targetProd: prodTargetAt(sales / n / 1e6), tableProd: need ? sales / need : null, dailyX: sales / n / 1e6,
                ratio: labor / (lc.ratioSales / 1.1) * 100, labor, ratioSales: lc.ratioSales,
-               costTarget, ratioTarget: costTarget / (lc.ratioSales / 1.1) * 100, cutIso: lc.cutIso, hasPay: lc.hasPay,
+               costTarget, ratioTarget: costTarget / (lc.ratioSales / 1.1) * 100, adjH, adjNote: OT_ADJ[code] ? OT_ADJ[code].note : '', cutIso: lc.cutIso, hasPay: lc.hasPay,
                days: n, first, last, std: !!OT_STD[code], eff: s0.eff,
                payDays: lc.actDays, estDays: lc.estDays, badPeriods: lc.bad });
   }
@@ -582,7 +599,8 @@ async function renderDashMTD(ym, myReq) {
     // 기준 열을 없애는 대신 매장명 툴팁으로 이관 — 급여 추정·시간차는 눈에 띄게 표식만 남김
     const basis = `${r.std ? '표준표' : '엔진'} ${r.days}일 · ` + (r.estDays ? `급여 추정 ${r.estDays}일` : `급여 실제 ~${r.cutIso.slice(5).replace('-', '/')}`) +
       (r.badPeriods.length ? ` · 급여대장 시간이 출퇴근 기록과 ±20% 넘게 다른 구간(계산엔 급여대장 그대로 사용): ${r.badPeriods.join(', ')}` : '');
-    const flag = r.estDays ? ' <span style="color:var(--crit);font-size:11px">급여 추정</span>' : r.badPeriods.length ? ' <span style="color:var(--warn);font-size:11px">시간차 확인</span>' : '';
+    const adjFlag = r.adjH ? ` <span style="color:var(--muted2);font-size:11px" title="${adjEsc(r.adjNote || '특이값')} — 보정시간 ${r.adjH > 0 ? '+' : ''}${Math.round(r.adjH)}h(월 환산 누적)">보정 ${r.adjH > 0 ? '+' : ''}${Math.round(r.adjH)}h</span>` : '';
+    const flag = (r.estDays ? ' <span style="color:var(--crit);font-size:11px">급여 추정</span>' : r.badPeriods.length ? ' <span style="color:var(--warn);font-size:11px">시간차 확인</span>' : '') + adjFlag;
     html += `<tr class="rowlink" data-code="${r.code}"><td title="${basis}">${r.name}${flag}</td><td>${(r.sales / 1e8).toFixed(2)}</td>` +
       `<td>${r.targetProd != null ? won(r.targetProd) : '-'}</td><td><b>${won(r.prod)}</b></td><td>${scTxt}</td>` +
       `<td><span class="band ${rb}"${capMark}>${r.ratio.toFixed(1)}%</span></td>` +
@@ -751,7 +769,36 @@ function renderRef() {
     ch += `<tr><td>${s.name}</td><td>${won(s.effBase)}</td><td>×${s.hol.toFixed(2)}</td><td style="text-align:left;white-space:normal">${txt}</td></tr>`;
   }
   $('coeffTable').innerHTML = ch + '</tbody></table>';
+  renderAdjTable();
 }
+// ---------- 기준정보: 매장별 특이값 입력표 ----------
+const adjEsc = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+function renderAdjTable() {
+  const box = $('adjTable'); if (!box) return;
+  let h = '<table><colgroup><col style="width:150px"><col><col style="width:150px"></colgroup><thead><tr><th>매장명</th><th>특이사항</th><th>보정시간(월, h)</th></tr></thead><tbody>';
+  for (const [code, s] of Object.entries(OT_DATA)) {
+    const a = OT_ADJ[code] || { note: '', hours: 0 };
+    h += `<tr><td>${s.name}</td><td><input type="text" data-adjnote="${code}" value="${adjEsc(a.note)}" placeholder="예) 반합 사용으로 조리 인원 증가" style="width:100%;height:32px;font-size:14px;padding:0 8px;text-align:left"></td>` +
+      `<td><input type="number" step="1" data-adjh="${code}" value="${a.hours || ''}" placeholder="0"></td></tr>`;
+  }
+  box.innerHTML = h + '</tbody></table>';
+}
+$('saveAdjBtn').onclick = async () => {
+  const msg = $('adjMsg'); msg.className = 'plan-msg'; msg.textContent = '저장 중…';
+  const rows = [], del = [];
+  for (const code of Object.keys(OT_DATA)) {
+    const note = (document.querySelector(`[data-adjnote="${code}"]`).value || '').trim(), hours = +document.querySelector(`[data-adjh="${code}"]`).value || 0;
+    if (note || hours) rows.push({ store_code: code, note: note || null, adj_hours: hours, updated_at: new Date().toISOString() }); else del.push(code);
+  }
+  const r1 = rows.length ? await sb.from('ot_store_adjust').upsert(rows) : { error: null };
+  const r2 = del.length ? await sb.from('ot_store_adjust').delete().in('store_code', del) : { error: null };
+  const err = r1.error || r2.error;
+  if (err) { msg.className = 'plan-msg err'; msg.textContent = 'DB 저장 실패(' + err.message + ')'; return; }
+  OT_ADJ = {}; rows.forEach(r => { OT_ADJ[r.store_code] = { note: r.note || '', hours: r.adj_hours }; });
+  msg.className = 'plan-msg ok'; msg.textContent = `저장됨 (${rows.length}개 매장) — 전사 대시보드·매장 피드백의 생산성에 반영됩니다`;
+  renderDash();
+};
+
 $('saveGradesBtn').onclick = async () => {
   if (!gradeCost) return;
   const msg = $('gradeMsg'); msg.className = 'plan-msg'; msg.textContent = '저장 중…';

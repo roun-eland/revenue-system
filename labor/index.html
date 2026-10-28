@@ -269,6 +269,15 @@
           <div class="tblwrap" id="coeffTable"></div>
           <p class="dnote">실질시급(기본계수) · 요일지수 · 공휴일지수 · 정직원 구성. 월 마감 보정 파이프라인(M3)에서 자동 갱신 예정.</p>
         </div>
+        <div class="card" style="grid-column:1/-1">
+          <h3 style="margin:0 0 10px">매장별 특이값 (보정시간)</h3>
+          <div class="tblwrap" id="adjTable"></div>
+          <div class="plan-actions" style="margin:12px 0 0">
+            <button id="saveAdjBtn" class="btn btn-sm" type="button">특이값 저장</button>
+            <span class="plan-msg" id="adjMsg"></span>
+          </div>
+          <p class="dnote">보정시간(월) = 생산성 계산에서 그 매장의 월 총 근무시간에 <b>더하는</b> 시간입니다. <b>음수(예: −30)는 근무시간에서 제외</b> — 반합 사용처럼 구조적으로 시간이 더 드는 매장, 선임점장 근무시간 일부 제외 등에 씁니다. 월 중에는 마지막 기록일 ÷ 그 달 일수로 일할 환산해 전사 대시보드·매장 피드백의 생산성·점수·목표 인건비율에 반영됩니다. 인건비액은 보정하지 않습니다.</p>
+        </div>
         <div class="card">
           <h3 style="margin:0 0 10px">표준 사용 계획표</h3>
           <div class="placeholder-box"><b>대기 중</b><br>선임점장 미팅 산출물(매장×일매출 밴드×시간×파트) 수령 후 업로드 기능이 열립니다.<br>등록되면 계획 시뮬레이션의 산출 기준이 임시 엔진에서 표준 계획표로 교체됩니다.</div>
@@ -288,8 +297,8 @@
 <script src="../ot-roster.js?v=202610150900"></script>
 <script src="../labor-calc.js?v=202610281830"></script>
 <script src="../vendor/chart.umd.min.js"></script>
-<script src="../ot.js?v=202610281900"></script>
+<script src="../ot.js?v=202610282000"></script>
 <script src="../ot-actuals.js?v=202610281800"></script>
-<script src="../ot-charts.js?v=202610281800"></script>
+<script src="../ot-charts.js?v=202610282000"></script>
 </body>
 </html>
