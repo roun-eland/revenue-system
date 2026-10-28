@@ -381,7 +381,7 @@ function computeMonthPlan(code, ym, M, nfull, fullpay) {
   if (OT_STD[code]) { // 표준 사용 계획표 적용 매장 — 표 + 인건비율 상한
     const sm = stdMonthMH(code, open);
     const cap = stdApplyCap(sc, M, fullpayEff, sm.mMH, sm.mMHhol);
-    return { totMH: sm.ftMH + cap.mMH + cap.mMHhol + sc.nfull * 8, ratio: cap.ratio, std: true, capped: cap.capped, cutMH: cap.cutMH, structural: cap.structural };
+    return { totMH: sm.ftMH + cap.mMH + cap.mMHhol + sc.nfull * 8, ratio: cap.ratio, std: true, capped: cap.capped, cutMH: cap.cutMH, structural: cap.structural, openDays: open.length };
   }
   const wsum = open.reduce((t, x) => t + (x.hol ? s.hol : s.wd[x.wd]), 0);
   let mMH = 0, mMHhol = 0, totMH = 0;
@@ -399,7 +399,7 @@ function computeMonthPlan(code, ym, M, nfull, fullpay) {
   const leaveMH = sc.nfull * 8;
   const mateCost = (mMH + mMHhol * 1.5 + leaveMH) * s.effBase;
   const cost = mateCost + fullpayEff + sc.nfull * 100000 + M / 1.1 * 0.006;
-  return { totMH: totMH + leaveMH, ratio: cost / (M / 1.1) * 100 };
+  return { totMH: totMH + leaveMH, ratio: cost / (M / 1.1) * 100, openDays: open.length };
 }
 
 function buildDashMonthOptions() {
@@ -578,7 +578,8 @@ async function renderDash() {
       const need = monthNeedMH(code, '2026-08', s.augM); // 운영 제약 포함 필요 (피드백과 동일 산식)
       // 8월 실측 인건비 근사: 메이트(실근무MH×실질시급) + 정직원 급여 + 연차수당 + 퇴직(순매출 0.6%)
       const labor = s.aug.mmh * s.eff + s.fullpay + s.nfull * 100000 + s.augM / 1.1 * 0.006;
-      return { code, name: s.name, sales: s.augM, mh: s.aug.mh,
+      const augOpen = monthDates('2026-08', s).filter(x => !x.closed).length;
+      return { code, name: s.name, sales: s.augM, mh: s.aug.mh, dailyX: augOpen ? s.augM / augOpen / 1e6 : null,
                prod: s.aug.prod, need, over: s.aug.mh - need, needTheory: s.aug.need,
                labor, ratio: labor / (s.augM / 1.1) * 100 };
     }));
@@ -662,7 +663,7 @@ async function renderDash() {
       const prod = M / plan.totMH;
       const stdTag = (plan.std ? (plan.capped ? '<br>표준표·상한 적용' : '<br>표준표') : '') + (!p && sf.srcYm ? '<br>정직원 맨파워' : '');
       const srcBase = p ? '확정 계획' : (live != null ? '매출예측 연동' : '8월 매출(기본값)');
-      return { code, name: s.name, sales: M, mh: plan.totMH, prod,
+      return { code, name: s.name, sales: M, mh: plan.totMH, prod, dailyX: plan.openDays ? M / plan.openDays / 1e6 : null,
                ratio: plan.std ? plan.ratio : (p?.output?.ratio ?? plan.ratio), src: srcBase + stdTag };
     }));
     dashChartData = { rows, label: `${+ym.slice(5)}월 계획` };

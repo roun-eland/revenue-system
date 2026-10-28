@@ -70,7 +70,7 @@
         <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px">
           <h3 style="margin:0" id="ocScatterTitle">매출 대비 근무시간</h3>
           <span id="ocScatterSub" style="font-size:11px;font-weight:400;color:var(--muted2)"></span>
-          <span style="margin-left:auto;display:flex;gap:6px"><button id="ocMetHrs" class="btn btn-sm" type="button" onclick="ocSetMetric('hours')">근무시간</button><button id="ocMetRatio" class="btn btn-sm" type="button" onclick="ocSetMetric('ratio')">인건비율</button></span>
+          <span style="margin-left:auto;display:flex;gap:6px"><button id="ocMetHrs" class="btn btn-sm" type="button" onclick="ocSetMetric('hours')">근무시간</button><button id="ocMetRatio" class="btn btn-sm" type="button" onclick="ocSetMetric('ratio')">인건비율</button><button id="ocMetProd" class="btn btn-sm" type="button" onclick="ocSetMetric('prod')">생산성</button></span>
         </div>
         <div style="position:relative;height:400px;margin-top:6px"><canvas id="ocScatter"></canvas></div>
         <p class="dnote" id="ocScatterNote" style="margin-top:8px"></p>
@@ -288,8 +288,8 @@
 <script src="../ot-roster.js?v=202610150900"></script>
 <script src="../labor-calc.js?v=202610281600"></script>
 <script src="../vendor/chart.umd.min.js"></script>
-<script src="../ot.js?v=202610281600"></script>
+<script src="../ot.js?v=202610281700"></script>
 <script src="../ot-actuals.js?v=202610260100"></script>
-<script src="../ot-charts.js?v=202610281600"></script>
+<script src="../ot-charts.js?v=202610281700"></script>
 </body>
 </html>
