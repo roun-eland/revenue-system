@@ -54,3 +54,33 @@ function lcAddDay(s, n) {
 }
 // 전사 합계에 더하는 본부 인건비 안분액 (기준일의 일 ÷ 그 달 일수)
 const lcHqCost = (dim, cutIso) => LC.HQ_MONTHLY * (+cutIso.slice(8) / dim);
+
+// ---------------------------------------------------------------------------------------------
+// 생산성 목표 곡선 (2026-10-28 사용자 확정, "3번 방식": 브랜드 목표 인건비 달성용 매출대별 목표선) — 설정은 여기 한 곳.
+//   목표 생산성(원/MH) = max( a + b·x + c·x² , floorA + floorB·x ),  x = 그 기간 일평균 매출(총매출·VAT 포함, 백만원)
+//   · 2차식: 매장 17개점의 "목표 인건비율을 맞추는 필요 생산성"을 일평균 매출에 맞춘 곡선(일매출 약 2.6~10백만에서 유효).
+//   · 하한 직선: 저매출 매장(고정비 비중↑)이 인건비율 34%를 넘지 않게 두는 하한 (순천·수원이 결정; 2026-10-28 상한 35→34%).
+//   · xMax: 2차식 꼭짓점(13.6) — 이보다 큰 매출은 xMax로 간주(그 위는 곡선 재산출 필요).
+//   점수 = 실제 생산성 ÷ 목표 생산성 × 100. 표시 상한 scoreCap(100%), 초과분은 '여유'로 따로 표시. 신호등: ≥100 정상 / ≥warn 주의 / 그 미만 위험.
+//   곡선은 분기 1회 재산출하고 기간 중에는 고정한다.
+const PROD_CURVE = { a: 11989, b: 14654, c: -538, floorA: 52200, floorB: 1720, xMax: 13.6, scoreCap: 100, warn: 90 };
+function prodTargetAt(xMillion) {
+  const x = Math.min(Math.max(xMillion, 0), PROD_CURVE.xMax);
+  return Math.max(PROD_CURVE.a + PROD_CURVE.b * x + PROD_CURVE.c * x * x, PROD_CURVE.floorA + PROD_CURVE.floorB * x);
+}
+// 점수·신호등·여유
+function prodScore(prod, target) {
+  if (!(prod > 0) || !(target > 0)) return null;
+  const raw = prod / target * 100, cap = PROD_CURVE.scoreCap;
+  return { raw, shown: Math.min(raw, cap), surplus: Math.max(0, raw - cap), level: raw >= 100 ? 'g' : raw >= PROD_CURVE.warn ? 'w' : 'c' };
+}
+// 곡선이 요구하는 하루 총 근무시간(h)을 일매출의 직선으로 근사 — 매장 피드백의 '기준 매장표'가 요일별(평일/주말) 매출에 곡선을 그대로 쓰면
+// 저매출 평일의 필요 시간이 지나치게 작아지므로(월 평균 기준 곡선) 직선 근사를 쓴다. MH(x) = mhA + mhB·x
+const PROD_MH = (() => {
+  const xs = [], ys = [];
+  for (let x = 2.5; x <= 10.0001; x += 0.25) { xs.push(x); ys.push(x * 1e6 / prodTargetAt(x)); }
+  const mx = xs.reduce((s, v) => s + v, 0) / xs.length, my = ys.reduce((s, v) => s + v, 0) / ys.length;
+  let sxy = 0, sxx = 0; xs.forEach((x, i) => { sxy += (x - mx) * (ys[i] - my); sxx += (x - mx) ** 2; });
+  const b = sxy / sxx; return { a: my - b * mx, b };
+})();
+const prodMHAt = xMillion => PROD_MH.a + PROD_MH.b * Math.min(Math.max(xMillion, 2), 13);

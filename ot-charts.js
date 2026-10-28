@@ -211,7 +211,67 @@ function ocRenderScatter(data) {
 function ocBadge(v) { const m = { orange: ['#fde9d9', '#b35a10'], blue: ['#dfeefc', '#1f5f9e'], green: ['#e6f5d6', '#2d7a0b'], gray: ['#eee', '#555'] }[v[1]]; return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:700;background:${m[0]};color:${m[1]}">${v[0]}</span>`; }
 const ocF1 = v => (v >= 0 ? '+' : '') + v.toFixed(1);
 
-function ocSentences(dg, ym) {
+
+// ---------- 기준 매장표 (2026-10-28): V2.1 표 전 매장 평균 형태 × 매출대별 필요 근무시간(곡선의 직선 근사) ----------
+// 형태 = 각 매장 표의 시간대별 인원 ÷ 하루 총 인원합 을 전 매장 평균. 필요 총 MH = prodMHAt(그 요일유형 일평균 매출) — labor-calc.js
+function ocRefShape() {
+  if (OC.shape) return OC.shape;
+  const out = { weekday: {}, weekend: {} };
+  for (const dt of ['weekday', 'weekend']) {
+    const codes = Object.keys(OT_STD).filter(c => OT_STD[c][dt]); let n = 0;
+    for (const c of codes) {
+      const hrs = OT_STD[c][dt].stats.hours, tot = hrs.reduce((t, r) => t + r.need, 0); if (!(tot > 0)) continue;
+      hrs.forEach(r => { out[dt][r.h] = (out[dt][r.h] || 0) + r.need / tot; }); n++;
+    }
+    Object.keys(out[dt]).forEach(h => { out[dt][h] /= n || 1; });
+  }
+  return (OC.shape = out);
+}
+// 한 매장·월·요일유형의 기준 시간대별 인원(9~21시). 영업일 기록이 없으면 null
+function ocRefSeries(code, ym, dt, hrs) {
+  const days = (OC.byStore[code] || []).filter(d => d.ym === ym && d.dt === dt); if (!days.length) return null;
+  const x = ocMean(days.map(d => d.sales)) / 1e6, mh = prodMHAt(x), sh = ocRefShape()[dt];
+  return { x, mh, data: hrs.map(h => (sh[h] || 0) * mh) };
+}
+
+// ---------- 피어그룹(같은 매출대 3개점) 비교 ----------
+const OC_BANDS = [['오픈 9~11시', [9, 10]], ['런치 11~14시', [11, 12, 13]], ['브레이크 14~17시', [14, 15, 16]], ['디너 17~20시', [17, 18, 19]], ['마감 20~22시', [20, 21]]];
+function ocMonthStat(code, ym) {
+  const days = (OC.byStore[code] || []).filter(d => d.ym === ym); if (days.length < 5) return null;
+  const sales = days.reduce((t, d) => t + d.sales, 0), mh = days.reduce((t, d) => t + d.mh, 0);
+  const band = OC_BANDS.map(([, hs]) => ocMean(days.map(d => ocMean(hs.map(h => d.byHour[h - 9] || 0)))));
+  return { n: days.length, sales, mh, x: sales / days.length / 1e6, prod: sales / mh, band, mhDay: mh / days.length };
+}
+// 반환: { html, top:[{name, diff, eff}], score, target, me } — 효과(%p) = 인원차 × 구간시간 × 영업일 × 실질시급 ÷ 순매출 (+이면 피어보다 많이 쓰는 만큼 줄일 여지)
+function ocPeerCompare(code, ym) {
+  const me = ocMonthStat(code, ym);
+  if (!me) return { html: '<p class="dnote">이 달 실적이 5일 미만이라 피어 비교를 만들 수 없습니다.</p>', top: [] };
+  const others = Object.keys(OT_DATA).filter(c => c !== code).map(c => ({ c, st: ocMonthStat(c, ym) })).filter(o => o.st)
+    .sort((a, b) => Math.abs(a.st.x - me.x) - Math.abs(b.st.x - me.x)).slice(0, 3);
+  if (others.length < 3) return { html: '<p class="dnote">같은 매출대 비교 매장이 부족합니다.</p>', top: [] };
+  const eff = OT_DATA[code].eff, net = me.sales / 1.1, pAvg = i => ocMean(others.map(o => o.st.band[i]));
+  const rows = OC_BANDS.map(([name, hs], i) => {
+    const pr = pAvg(i), diff = me.band[i] - pr;
+    return { name, me: me.band[i], pr, diff, eff: diff * hs.length * me.n * eff / net * 100 };
+  });
+  const prTot = ocMean(others.map(o => o.st.mhDay));
+  const target = prodTargetAt(me.x), sc = prodScore(me.prod, target), peerProd = ocMean(others.map(o => o.st.prod));
+  const tr = r => {
+    const bg = r.eff >= 0.3 ? 'background:#fdecea' : r.eff <= -0.3 ? 'background:#eaf5e0' : '';
+    return `<tr style="${bg}"><td>${r.name}</td><td style="text-align:right">${r.me.toFixed(1)}</td><td style="text-align:right">${r.pr.toFixed(1)}</td><td style="text-align:right">${ocF1(r.diff)}</td><td style="text-align:right;font-weight:700">${(r.eff >= 0 ? '+' : '') + r.eff.toFixed(2)}%p</td></tr>`;
+  };
+  const html = `<div style="font-size:13px;font-weight:700;margin:0 0 4px;color:#4a4f55">피어 비교 — 같은 매출대 3개점(${others.map(o => OT_DATA[o.c].name).join(', ')}) 대비</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px"><colgroup><col style="width:34%"><col style="width:16%"><col style="width:16%"><col style="width:14%"><col style="width:20%"></colgroup>
+    <thead><tr style="color:#6b7078;border-bottom:1px solid #ddd"><th style="text-align:left;font-weight:600">시간대 구간(평균 인원)</th><th style="text-align:right;font-weight:600">우리</th><th style="text-align:right;font-weight:600">피어</th><th style="text-align:right;font-weight:600">차이</th><th style="text-align:right;font-weight:600">인건비율 효과</th></tr></thead><tbody>
+    ${rows.map(tr).join('')}
+    <tr style="border-top:1px solid #ddd"><td>하루 총 근무시간(h)</td><td style="text-align:right">${me.mhDay.toFixed(1)}</td><td style="text-align:right">${prTot.toFixed(1)}</td><td style="text-align:right">${ocF1(me.mhDay - prTot)}</td><td></td></tr>
+    <tr><td>생산성(원/MH)</td><td style="text-align:right">${won(me.prod)}</td><td style="text-align:right">${won(peerProd)}</td><td style="text-align:right">${ocF1((me.prod / peerProd - 1) * 100)}%</td><td></td></tr></tbody></table>
+    <p class="dnote" style="margin:6px 0 0">${ym.slice(5)}월 실적 평균(요일 구분 없이). 빨강 = 피어보다 많이 쓰는 구간(줄일 여지, 효과 큰 순으로 확인), 초록 = 피어보다 적게 쓰는 구간. 포지션별 비교는 매장마다 역할명이 달라 구간 인원으로 대체했습니다. 정직원·고정비 구조 차이는 이 표에 포함되지 않습니다.</p>`;
+  const top = rows.filter(r => r.eff > 0.3).sort((a, b) => b.eff - a.eff).slice(0, 3).map(r => ({ name: r.name, diff: r.diff, eff: r.eff }));
+  return { html, top, score: sc, target, me };
+}
+
+function ocSentences(dg, ym, extra) {
   const out = [];
   for (const dt of ['weekday', 'weekend']) {
     const o = dg.dt[dt];
@@ -220,14 +280,15 @@ function ocSentences(dg, ym) {
   }
   const w = dg.dt.weekday;
   out.push(`평일 상시 인원(영업시간 하위 25% 시간대) ${w.baseN.toFixed(1)}명, 피크 ${w.peakN.toFixed(1)}명(${w.peakH}시)`);
+  if (extra && extra.score) {
+    const sc = extra.score, col = sc.level === 'g' ? '#2d7a0b' : sc.level === 'w' ? '#b35a10' : '#b32d2d';
+    out.unshift(`<b>생산성 점수</b>: ${ym.slice(5)}월 ${won(extra.me.prod)}원/MH ÷ 곡선 목표 ${won(extra.target)}원/MH(일평균 매출 ${extra.me.x.toFixed(1)}백만) = <b style="color:${col}">${sc.shown.toFixed(0)}%</b>${sc.surplus > 0.5 ? ` (+${sc.surplus.toFixed(0)}% 여유)` : ''}`);
+  }
   return out;
 }
-function ocQuestions(dg) {
+function ocQuestions(dg, peer) {
   const qs = [], w = dg.dt.weekday, e = dg.dt.weekend;
-  for (const dt of ['weekday', 'weekend']) {
-    const o = dg.dt[dt], top = o.dev.slice().sort((a, b) => b.dev - a.dev).slice(0, 2).filter(x => x.dev > 1);
-    if (top.length && (dt === 'weekday' || (o.pct != null && o.pct > 10))) qs.push(`${OC_DT[dt]} ${top.map(x => `${x.cat} +${x.dev.toFixed(0)}h`).join(', ')} — 같은 매출의 다른 매장보다 시간이 많은데 이유(구조·동선·장비)가 있나요?`);
-  }
+  if (peer && peer.top && peer.top.length) qs.push(`같은 매출대 매장보다 ${peer.top.map(x => `${x.name} ${ocF1(x.diff)}명(인건비율 +${x.eff.toFixed(1)}%p)`).join(', ')} — 이 시간대에 더 필요한 이유(구조·동선·장비)가 있나요?`);
   if ([w, e].some(x => x.pct != null && x.pct > 10)) qs.push([w, e].some(x => x.aPct != null && x.aPct < 0) ? '실제로는 표대로(또는 더 적게) 운영하셨는데, 표를 달성선 수준으로 줄여도 운영에 문제가 없을까요?' : '표가 달성선보다 큰 부분(시간대·포지션)을 줄일 수 있는지 같이 보면 좋겠습니다.');
   if ([w, e].some(x => x.aPct != null && x.aPct > 10)) qs.push('실제로는 표보다 많이 일하는 시간대가 있는데(결원·교육·행사·연장 등) 표에 반영해야 할 사유가 있나요?');
   if (!qs.length) qs.push('표와 실제가 비슷한 범위입니다. 최소 인원·피크 구간 설계 근거를 한 번 공유해 주세요.');
@@ -243,17 +304,18 @@ async function ocRenderFeedback(code, ym) {
   try { await ocLoad(); } catch (e) { box.innerHTML = `<p class="dnote">그래프 데이터를 불러오지 못했습니다: ${e.message || e}</p>`; return; }
   if (OC.fbKey !== myKey) return; // 그 사이 다른 매장·월로 바뀜
   const dg = ocDiag(code, ym), name = OT_DATA[code] ? OT_DATA[code].name : code;
+  const peer = dg ? ocPeerCompare(code, ym) : null;
   if (!dg) { box.innerHTML = `<div class="card" style="margin-bottom:14px"><h3 style="margin:0 0 6px">${name} — 표 점검 그래프</h3><p class="dnote">이 매장은 표준 사용 계획표가 등록되지 않아 그래프를 그릴 수 없습니다.</p></div>`; return; }
   ocFontInit();
   // 판정 배지와 확인 질문은 기획자 계정에만 — 매장 관리자(공용 계정)에게는 숫자 그래프만 보여준다
   const planner = typeof currentRole === 'undefined' || currentRole === 'planner';
   box.innerHTML = `<div class="card" style="margin-bottom:14px">
-    <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px"><h3 style="margin:0">${name} — 표 점검 그래프</h3><span class="dnote" style="margin:0">표 = 선임점장 표준 사용 계획표 · 실제 = ${ym.slice(0, 4)}년 ${+ym.slice(5)}월 평균 · 달성선 = 8월~ 일별 실적에서 잘 운영한 날 수준</span><span style="margin-left:auto">${planner ? ocBadge(dg.verdict) : ''}</span></div>
+    <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px"><h3 style="margin:0">${name} — 표 점검 그래프</h3><span class="dnote" style="margin:0">표 = 현재 표준 사용 계획표(V2.1) · 실제 = ${ym.slice(0, 4)}년 ${+ym.slice(5)}월 평균 · 기준(곡선) = 이 매출대에서 브랜드 목표 곡선이 요구하는 시간대별 인원 · 달성선 = 8월~ 일별 실적에서 잘 운영한 날 수준</span><span style="margin-left:auto">${planner ? ocBadge(dg.verdict) : ''}</span></div>
     <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px"><div style="position:relative;height:260px"><canvas id="ocHrWd"></canvas></div><div style="position:relative;height:260px"><canvas id="ocHrWe"></canvas></div></div>
-    <div style="display:grid;grid-template-columns:1.15fr 1fr 1fr;gap:12px;margin-top:10px"><div style="position:relative;height:270px"><canvas id="ocBars"></canvas></div><div style="position:relative;height:270px"><canvas id="ocPosWd"></canvas></div><div style="position:relative;height:270px"><canvas id="ocPosWe"></canvas></div></div>
-    <ul style="margin:10px 0 6px;padding-left:20px;font-size:13px;line-height:1.7">${ocSentences(dg, ym).map(s => `<li>${s}</li>`).join('')}</ul>
-    ${planner ? `<div style="background:#f3fbe7;border-left:4px solid #82dc28;padding:8px 14px;font-size:13px"><b>확인 사항</b><ul style="margin:4px 0 0;padding-left:18px">${ocQuestions(dg).map(q => `<li>${q}</li>`).join('')}</ul></div>` : ''}
-    <p class="dnote" style="margin-top:8px">주황 음영 = 표가 실제보다 많이 배치한 시간 · 파랑 음영 = 실제가 표보다 많이 일한 시간. 포지션 막대 = 우리 표 시간 − (17개점 중앙값 비율 × 우리 일매출), 빨강 = 같은 매출 평균 매장보다 시간을 더 씀. 달성선은 정답이 아니라 "실제로 해낸 수준"이며 인원이 부족했던 날도 섞일 수 있습니다 — 확정 판단이 아닌 <b>논의용</b> 자료입니다.</p></div>`;
+    <div style="display:grid;grid-template-columns:1.15fr 1fr 1fr;gap:12px;margin-top:10px"><div style="position:relative;height:270px"><canvas id="ocBars"></canvas></div><div id="ocPeer" style="grid-column:span 2;min-height:270px;padding:2px 4px"></div></div>
+    <ul style="margin:10px 0 6px;padding-left:20px;font-size:13px;line-height:1.7">${ocSentences(dg, ym, peer).map(s => `<li>${s}</li>`).join('')}</ul>
+    ${planner ? `<div style="background:#f3fbe7;border-left:4px solid #82dc28;padding:8px 14px;font-size:13px"><b>확인 사항</b><ul style="margin:4px 0 0;padding-left:18px">${ocQuestions(dg, peer).map(q => `<li>${q}</li>`).join('')}</ul></div>` : ''}
+    <p class="dnote" style="margin-top:8px">주황 음영 = 표가 실제보다 많이 배치한 시간 · 파랑 음영 = 실제가 표보다 많이 일한 시간. 파란 점선(기준) = 전 매장 V2.1 표의 평균 시간대 형태 × 이 매출대에서 곡선이 요구하는 하루 근무시간. 피어 비교 표의 빨강 = 같은 매출대 매장보다 시간을 더 쓰는 구간. 달성선은 정답이 아니라 "실제로 해낸 수준"이며 인원이 부족했던 날도 섞일 수 있습니다 — 확정 판단이 아닌 <b>논의용</b> 자료입니다.</p></div>`;
   const hrs = []; for (let h = 9; h <= 21; h++) hrs.push(h);
   const mk = (id, cfg) => { const c = new Chart($(id), cfg); OC.fbCharts.push(c); return c; };
   const base = { responsive: true, maintainAspectRatio: false };
@@ -263,6 +325,8 @@ async function ocRenderFeedback(code, ym) {
     const act = days.length ? hrs.map((_, i) => ocMean(days.map(d => d.byHour[i] || 0))) : null;
     const ds = [{ label: '표(계획)', data: plan, stepped: 'middle', borderColor: OC_COL.ink, borderWidth: 2, pointRadius: 0, fill: act ? { target: 1, above: 'rgba(217,130,43,.22)', below: 'rgba(55,138,221,.22)' } : false }];
     if (act) ds.push({ label: `${+ym.slice(5)}월 실제 평균`, data: act, borderColor: OC_COL.green, backgroundColor: OC_COL.green, borderWidth: 2, pointRadius: 3, tension: .15, fill: false });
+    const rs = ocRefSeries(code, ym, dt, hrs);
+    if (rs) ds.push({ label: `기준(곡선, 일매출 ${rs.x.toFixed(1)}백만 → ${rs.mh.toFixed(0)}h)`, data: rs.data, borderColor: OC_COL.blue, borderDash: [6, 4], borderWidth: 2.5, pointRadius: 0, tension: .2, fill: false });
     mk(id, { type: 'line', data: { labels: hrs.map(h => h + '시'), datasets: ds }, options: { ...base, plugins: { title: { display: true, text: `${OC_DT[dt]} — 시간대별 근무 인원`, align: 'start' }, legend: { position: 'bottom', labels: { boxWidth: 14 } } }, scales: { y: { beginAtZero: true, title: { display: true, text: '인원(명)' } } } } });
   }
   const g = dt => dg.dt[dt];
@@ -271,10 +335,6 @@ async function ocRenderFeedback(code, ym) {
     { label: '달성선(잘 운영한 날)', data: [g('weekday').front, g('weekend').front], backgroundColor: OC_COL.orange },
     { label: `${+ym.slice(5)}월 실제 평균`, data: [g('weekday').act, g('weekend').act], backgroundColor: OC_COL.green }] },
     options: { ...base, plugins: { title: { display: true, text: '하루 근무시간(h): 표 vs 달성선 vs 실제', align: 'start' }, legend: { position: 'bottom', labels: { boxWidth: 12 } }, ocValueLabels: { on: true } }, scales: { y: { beginAtZero: true, grace: '12%' } } }, plugins: [ocValueLabels] });
-  for (const [id, dt] of [['ocPosWd', 'weekday'], ['ocPosWe', 'weekend']]) {
-    const dev = g(dt).dev;
-    mk(id, { type: 'bar', data: { labels: dev.map(d => d.cat), datasets: [{ data: dev.map(d => d.dev), backgroundColor: dev.map(d => d.dev > 1 ? OC_COL.red : d.dev < -1 ? OC_COL.blue : OC_COL.gray) }] },
-      options: { ...base, indexAxis: 'y', plugins: { title: { display: true, text: `${OC_DT[dt]} 포지션별: 같은 매출 평균 매장 대비(h)`, align: 'start' }, legend: { display: false }, ocValueLabels: { on: true } }, scales: { x: { grace: '25%' } } }, plugins: [ocValueLabels] });
-  }
+  const pp = $('ocPeer'); if (pp && peer) pp.innerHTML = peer.html;
 }
 window.ocRenderFeedback = ocRenderFeedback; window.ocRenderScatter = ocRenderScatter; window.ocSetMetric = ocSetMetric;
