@@ -296,7 +296,10 @@ function buildSelectors() {
       o.value = ym; o.textContent = ymLabel(ym) + (getRun(ym) ? '' : ' (미발행)');
       sel.appendChild(o);
     }
+    // 처음 열 때는 "지금 달"을 보여준다 — 다음 달 예상(11월 등)을 미리 발행해 두면 가장 최근 발행월이 다음 달이 되기 때문
+    const curYm = dStr(new Date()).slice(0, 7);
     if (yms.includes(keep)) sel.value = keep;
+    else if (yms.includes(curYm)) sel.value = curYm;
   }
   const ss = $('dailyStore');
   if (!ss.options.length) {
