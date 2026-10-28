@@ -52,19 +52,23 @@ function rosterFor(code, ym) {
   const k = Object.keys(ROSTER).filter(m => m <= ym && ROSTER[m][code]).sort().pop();
   return k ? { ym: k, counts: ROSTER[k][code] } : null;
 }
-// 직급 구성 → 인원·월 정직원 급여. 직책수당(점장 30만원 등)은 8월 실제 급여합(payOff의 기준)에 이미 들어 있으므로,
-// 8월 시드 구성이 가진 수당만큼을 매장 보정에서 빼서 이중 계산을 막는다 → 시드 구성이면 기존 값 그대로, 점장 수가
-// 시드와 달라질 때만 ±수당이 반영된다.
-function calcStaffPay(code, counts) {
+// 직급 구성 → 인원·월 정직원 급여.
+//  · 월별 맨파워(기본): 그 달에 반영된 직급 구성 × 직급 단가(+직책수당)만으로 계산한다 — 8월 보정액(payOff)은 쓰지 않는다 (2026-10-29 사용자 지시:
+//    각 월은 각 월의 맨파워 기준). 직급 단가는 인사 기준 단가를 받으면 교체(기준정보).
+//  · opts.seed = true (맨파워가 없는 달의 8월 실측 시드 구성): 8월 실제 급여합에 맞추는 보정액(payOff)을 더한다. 직책수당(점장 30만원 등)은 8월 실제
+//    급여합에 이미 들어 있으므로 8월 시드 구성이 가진 수당만큼을 빼서 이중 계산을 막는다.
+function calcStaffPay(code, counts, opts) {
   const s0 = OT_DATA[code];
   const nf = GRADE_ORDER.reduce((t, g) => t + (counts[g] || 0), 0);
   let fullpay;
   if (gradeCost) { // planner: 직급별 단가 정밀 계산
     const allow = g => (gradeAllow && gradeAllow[g]) || 0;
     const base = GRADE_ORDER.reduce((t, g) => t + (counts[g] || 0) * ((gradeCost[g] || 0) + allow(g)), 0);
-    const seed = OT_STAFF0[code] || {};
-    const seedAllow = GRADE_ORDER.reduce((t, g) => t + (seed[g] || 0) * allow(g), 0);
-    fullpay = Math.max(0, base + (s0.payOff || 0) - seedAllow);
+    if (opts && opts.seed) {
+      const seed = OT_STAFF0[code] || {};
+      const seedAllow = GRADE_ORDER.reduce((t, g) => t + (seed[g] || 0) * allow(g), 0);
+      fullpay = Math.max(0, base + (s0.payOff || 0) - seedAllow);
+    } else fullpay = Math.max(0, base);
   } else { // 비-planner: 직급 단가 비공개 — 매장 실적 급여합 + 인원 증감×평균 단가
     const avg = s0.fullpay / s0.nfull;
     fullpay = Math.max(0, s0.fullpay + (Math.max(1, nf) - s0.nfull) * avg);
@@ -850,7 +854,7 @@ function loadStaff(code, ym) {
   updateStaffSum();
 }
 function staffTotals(code) {
-  return calcStaffPay(code, staffCnt);
+  return calcStaffPay(code, staffCnt, { seed: !staffSrcYm }); // 맨파워 구성이면 월별 계산, 8월 실측 기본 구성이면 8월 보정 포함
 }
 function updateStaffSum() {
   // 합계·월급여 문구는 화면이 번잡하다는 피드백으로 제거 (2026-10-02) — staffTotals()는 render()가

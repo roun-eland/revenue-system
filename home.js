@@ -225,9 +225,7 @@ async function laborMonth(ym) {
     if (gradeCost) {
       const allow = g => (gradeAllow && gradeAllow[g]) || 0;
       const base = GRADE_ORDER.reduce((t, g) => t + (counts[g] || 0) * ((gradeCost[g] || 0) + allow(g)), 0);
-      const seed = OT_STAFF0[code] || {};
-      const seedAllow = GRADE_ORDER.reduce((t, g) => t + (seed[g] || 0) * allow(g), 0);
-      fullpay = Math.max(0, base + (s0.payOff || 0) - seedAllow);
+      fullpay = Math.max(0, base);   // 월별 맨파워 기준: 그 달 직급 구성 × 직급 단가(+직책수당) — ot.js calcStaffPay와 같은 규칙 (2026-10-29)
     } else {
       const avg = s0.fullpay / s0.nfull;
       fullpay = Math.max(0, s0.fullpay + (Math.max(1, nf) - s0.nfull) * avg);
