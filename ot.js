@@ -530,7 +530,7 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
     out.push({ code, name: s0.name, sales, mh, mate, ft, prod: sales / mh, need, over: mh - need,
                targetProd: prodTargetAt(sales / n / 1e6), tableProd: need ? sales / need : null, dailyX: sales / n / 1e6,
                ratio: labor / (lc.ratioSales / 1.1) * 100, labor, ratioSales: lc.ratioSales,
-               costTarget, ratioTarget: costTarget / (lc.ratioSales / 1.1) * 100, adjH, adjNote: OT_ADJ[code] ? OT_ADJ[code].note : '', cutIso: lc.cutIso, hasPay: lc.hasPay,
+               costTarget, ratioTarget: costTarget / (lc.ratioSales / 1.1) * 100, seniorShift: lc.shift || 0, adjH, adjNote: OT_ADJ[code] ? OT_ADJ[code].note : '', cutIso: lc.cutIso, hasPay: lc.hasPay,
                days: n, first, last, std: !!OT_STD[code], eff: s0.eff,
                payDays: lc.actDays, estDays: lc.estDays, badPeriods: lc.bad });
   }
@@ -555,12 +555,12 @@ async function renderDashMTD(ym, myReq) {
   if (!rows.length) { $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">이 달에 적재된 실적이 없습니다.</p>'; $('dashKpis').innerHTML = ''; return; }
   const last = rows.reduce((a, r) => r.last > a ? r.last : a, ''), first = rows.reduce((a, r) => !a || r.first < a ? r.first : a, '');
   $('dashSub').textContent = `${ym} 누적 실적 (${first.slice(5)}~${last.slice(5)}) — 예상이 아니라 입력된 매출·근태 실적 기준입니다. ` +
-    '누적 인건비율은 메이트 급여가 등록된 날짜까지만 계산합니다(급여대장이 10일까지면 매출·인건비 모두 10일까지 누적). 인건비 = 메이트 실제 급여(급여대장) + 정직원 급여(맨파워 직급 구성×직급 단가+직책수당)·연차수당(1인 10만원)·퇴직급여(1인 30만원)를 (기준일÷그 달 일수)로 환산한 값이고, 급여대장이 없는 매장은 마지막 근태일까지 메이트 근무시간×실질시급 추정으로 계산합니다. 전사 합계에는 본부 인건비 안분액을 같은 비율로 환산해 더했습니다(매장별 값에는 미포함). 4대보험 회사부담분은 제외. 생산성·목표생산성·초과시간은 급여와 무관하게 마지막 근태일까지 전체 기간입니다. 목표생산성은 브랜드 목표 곡선(labor-calc.js PROD_CURVE: 그 기간 일평균 매출에 해당하는 값, 저매출은 하한선)이고, 생산성 점수 = 누적 생산성 ÷ 목표생산성(100% 이상 초록·90~100% 주황·90% 미만 빨강)입니다. 메이트 초과시간은 표준표 기준 필요 MH 대비(참고). 목표 인건비율 = 그 매장이 목표생산성을 정확히 달성했을 때(메이트 시급단가·정직원 고정비 유지)의 누적 인건비율이고, 맨 위 “로운” 행은 브랜드 합계(본부 인건비 안분 포함)입니다. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
+    '누적 인건비율은 메이트 급여가 등록된 날짜까지만 계산합니다(급여대장이 10일까지면 매출·인건비 모두 10일까지 누적). 인건비 = 메이트 실제 급여(급여대장) + 정직원 급여(맨파워 직급 구성×직급 단가+직책수당)·연차수당(1인 10만원)·퇴직급여(1인 30만원)를 (기준일÷그 달 일수)로 환산한 값이고, 급여대장이 없는 매장은 마지막 근태일까지 메이트 근무시간×실질시급 추정으로 계산합니다. 전사 합계에는 본부 인건비 안분액을 같은 비율로 환산해 더했습니다(매장별 값에는 미포함). 선임점장 직급이 있는 매장은 그 급여의 절반을 매장 인건비에서 빼 본부 인건비에 포함했습니다(직급 단가를 보는 기획자 화면 기준, 브랜드 합계는 동일). 4대보험 회사부담분은 제외. 생산성·목표생산성·초과시간은 급여와 무관하게 마지막 근태일까지 전체 기간입니다. 목표생산성은 브랜드 목표 곡선(labor-calc.js PROD_CURVE: 그 기간 일평균 매출에 해당하는 값, 저매출은 하한선)이고, 생산성 점수 = 누적 생산성 ÷ 목표생산성(100% 이상 초록·90~100% 주황·90% 미만 빨강)입니다. 메이트 초과시간은 표준표 기준 필요 MH 대비(참고). 목표 인건비율 = 그 매장이 목표생산성을 정확히 달성했을 때(메이트 시급단가·정직원 고정비 유지)의 누적 인건비율이고, 맨 위 “로운” 행은 브랜드 합계(본부 인건비 안분 포함)입니다. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
   dashChartData = { rows, label: `${+ym.slice(5)}월 누적 (~${last.slice(5).replace('-', '/')})` };
   const tSales = rows.reduce((t, r) => t + r.sales, 0), tMH = rows.reduce((t, r) => t + r.mh, 0);
   const tNeed = rows.reduce((t, r) => t + r.sales / r.targetProd, 0); // 목표(곡선) 생산성을 달성했다면 쓰는 총 MH
   const rCut = rows.reduce((a, r) => r.cutIso > a ? r.cutIso : a, ''); // 누적 인건비율 기준일 = 매장들의 급여 등록일 중 가장 늦은 날
-  const hqCost = lcHqCost(new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate(), rCut);
+  const hqCost = lcHqCost(new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate(), rCut) + rows.reduce((t, r) => t + (r.seniorShift || 0), 0); // 본부 인건비 안분 + 선임점장 급여 이관분
   const tRatioSales = rows.reduce((t, r) => t + r.ratioSales, 0);
   const tLaborStores = rows.reduce((t, r) => t + r.labor, 0), tLabor = tLaborStores + hqCost, ratioTot = tLabor / (tRatioSales / 1.1) * 100;
   const nEst = rows.filter(r => !r.hasPay || r.estDays > 0).length;

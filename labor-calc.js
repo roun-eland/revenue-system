@@ -16,6 +16,17 @@ const LC = {
   WARN_RATIO_MAX: 1.2
 };
 
+// 선임점장 급여 안분 (2026-10-28 사용자 지시): 맨파워에 '선임점장' 직급이 있는 매장은 그 급여(직급 단가+직책수당)의 toBrand 비율을 매장 인건비에서 빼고
+// 본부(브랜드) 인건비에 더한다. 직급 단가는 기획자만 읽을 수 있어(RLS) 단가가 없는 화면(비기획자·홈)에서는 이관 없이 계산한다 — 그 화면에서도 브랜드 합계는 동일.
+// 시간(생산성)은 자동으로 나누지 않는다 — 출퇴근 기록이 사람 구분 없이 합산돼 있어 기준정보 > 매장별 특이값의 보정시간으로 입력.
+const LC_SENIOR = { grade: '선임점장', toBrand: 0.5 };
+function lcSeniorMonthly(staff) {
+  const n = staff && staff.counts ? (staff.counts[LC_SENIOR.grade] || 0) : 0;
+  if (!n || typeof gradeCost === 'undefined' || !gradeCost) return 0;
+  const allow = (typeof gradeAllow !== 'undefined' && gradeAllow && gradeAllow[LC_SENIOR.grade]) || 0;
+  return n * ((gradeCost[LC_SENIOR.grade] || 0) + allow) * LC_SENIOR.toBrand;
+}
+
 // 한 매장의 월 누적 인건비 (급여 등록일까지).
 //  dayRows : 집계 대상 영업일 [{iso, mate_mh, sales}] — 매출·근태가 모두 있는 날, 날짜 오름차순
 //  attByDate : 근태 일자별 {iso: mate_mh} (급여대장 시간 검증용, 휴점일 포함 전체)
@@ -45,8 +56,9 @@ function lcStoreCost({ dim, eff, staff, dayRows, attByDate, periods }) {
     est += (+x.mate_mh || 0) * eff; estDays++;             // 급여대장 구간 사이의 빈 날짜(또는 급여대장 없음)는 추정
   }
   const frac = +cutIso.slice(8) / dim;
-  const fixed = (staff.fullpay + staff.nfull * LC.LEAVE_PER_FT + staff.nfull * LC.RETIRE_PER_FT) * frac;
-  return { mate: payActual + est, payActual, est, actDays, estDays, bad, fixed, labor: payActual + est + fixed, frac, cutIso, ratioSales, hasPay };
+  const shift = lcSeniorMonthly(staff) * frac;                // 선임점장 급여 중 본부로 이관되는 금액(이 기간)
+  const fixed = (staff.fullpay + staff.nfull * LC.LEAVE_PER_FT + staff.nfull * LC.RETIRE_PER_FT) * frac - shift;
+  return { mate: payActual + est, payActual, est, actDays, estDays, bad, fixed, shift, labor: payActual + est + fixed, frac, cutIso, ratioSales, hasPay };
 }
 function lcAddDay(s, n) {
   const d = new Date(s + 'T00:00:00'); d.setDate(d.getDate() + n);
