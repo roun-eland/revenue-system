@@ -15,10 +15,12 @@ const man = n => won(n / 1e4) + '만';
 // ---------- 모델 상수 ----------
 const MODEL_VERSION = 'sfv1';
 const P199 = new Set(['RU030', 'RU031', 'RU033', 'RU035', 'RU037', 'RU039', 'RU041']);
-const PREMIER = new Set(['RU042', 'RU043', 'RU044', 'RU045', 'RU046']);
+const PREMIER = new Set(['RU042', 'RU043', 'RU044', 'RU045', 'RU046', 'RU047']);
 const PMODEL = code => P199.has(code) ? '199' : PREMIER.has(code) ? '프리미어' : '일반';
 const P199_FROM = '2025-09-01';           // 199 가격모델 전환 — 이전 데이터는 예측에 미사용
-const NEW_OPEN = { RU046: '2026-09-18' }; // 신규점 오픈일 — 실적 쌓일 때까지 가정치 모델
+const NEW_OPEN = { RU046: '2026-09-18', RU047: '2026-11-24' }; // 신규점 오픈일 — 실적 쌓일 때까지 가정치 모델
+// 신규점 예상매출을 다른 매장과 동일하게 두는 설정(오픈일 이후 날짜만) — 수지점(RU047) = 청량리(RU025) 동일 (사용자 지시 2026-10-29, 실적이 쌓이면 이 설정을 지운다)
+const CLONE_FROM = { RU047: 'RU025' };
 const WD = ['월', '화', '수', '목', '금', '토', '일'];
 
 // ---------- 날짜 헬퍼 (문자열 기반, 로컬 자정 고정) ----------
@@ -35,6 +37,7 @@ const nthOfDow = s => Math.ceil(+s.slice(8) / 7); // 그 달의 몇 번째 해�
 const isHol = s => OT_HOLIDAYS.has(s);
 function isClosed(code, s) {
   if (OT_CLOSE_FROM[code] && s >= OT_CLOSE_FROM[code]) return true; // 폐점 이후 (ot-seed.js OT_CLOSE_FROM)
+  if (OT_OPEN_FROM[code] && s < OT_OPEN_FROM[code]) return true;   // 개점 전 (ot-seed.js OT_OPEN_FROM)
   // 유통점 공지 확정치가 있는 달은 그 날짜만 휴점 (규칙·전점휴무 무시 — 예: 해운대 2026-09-25 영업)
   const ov = OT_CLOSED_ACTUAL[s.slice(0, 7)] && OT_CLOSED_ACTUAL[s.slice(0, 7)][code];
   if (ov) return ov.includes(+s.slice(8));
@@ -195,6 +198,7 @@ function computeForecast(ym, cutoffDate, wx) {
   let wxFcSum = 0, wxRawSum = 0, wxBaseW = 0, wxAnomW = 0, wxW = 0;
   const stores = {};
   for (const code of Object.keys(OT_DATA)) {
+    if (CLONE_FROM[code]) continue; // 다른 매장과 동일 설정 — 아래에서 원본 매장 값을 복사
     const s = OT_DATA[code], daily = {};
     let meta;
     if (NEW_OPEN[code]) {
@@ -236,6 +240,12 @@ function computeForecast(ym, cutoffDate, wx) {
     }
     const total = Object.values(daily).reduce((t, v) => t + v, 0);
     stores[code] = { name: s.name, total, ...meta, daily };
+  }
+  for (const [code, srcCode] of Object.entries(CLONE_FROM)) {
+    const src = stores[srcCode]; if (!src) continue;
+    const daily = {};
+    for (const d of monthDates(ym)) daily[d] = d < NEW_OPEN[code] ? 0 : (src.daily[d] || 0);
+    stores[code] = { name: OT_DATA[code].name, total: Object.values(daily).reduce((t, v) => t + v, 0), sr: null, trend: null, src: `${OT_DATA[srcCode].name} 동일(신규 가정치)`, open_from: NEW_OPEN[code], clone_of: srcCode, daily };
   }
   const out = { model_version: MODEL_VERSION, ym, cutoff_date: cutoffDate, data_through: cutoff, stores };
   if (wxW) out.weather = { model: 'temp_v1', coef: wx.coef, bias: wx.inputs.bias, shrink: wx.inputs.shrink, fcst_last: wx.fcstLast,

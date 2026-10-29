@@ -985,6 +985,7 @@ function monthDates(ym, s) {
       closed = s.closed.nth.includes(nth) || (s.closed.nth.includes(9) && isLast);
     }
     if (s && s.code && OT_CLOSE_FROM[s.code] && iso >= OT_CLOSE_FROM[s.code]) closed = true; // 폐점 이후 (ot-seed.js)
+    if (s && s.code && OT_OPEN_FROM[s.code] && iso < OT_OPEN_FROM[s.code]) closed = true;   // 개점 전 (ot-seed.js OT_OPEN_FROM)
     out.push({ d, wd, hol: OT_HOLIDAYS.has(iso) && wd < 5 && !closed, closed, iso });
   }
   return out;
@@ -998,10 +999,10 @@ function render() {
   // 폐점 예정 매장 — 폐점 후 달은 계획 없음, 폐점이 낀 달은 정직원 급여·연차를 영업 일수 비율로 줄인다(ot-seed.js OT_CLOSE_FROM)
   const closeFrac = otCloseFrac(sel.value, ym);
   if (closeFrac === 0) {
-    $('ratio').textContent = '—'; $('ratioNote').textContent = `폐점 후 달 — ${OT_CLOSE_FROM[sel.value].slice(5).replace('-', '/')}부터 폐점이라 계획이 없습니다`;
+    $('ratio').textContent = '—'; $('ratioNote').textContent = OT_CLOSE_FROM[sel.value] ? `폐점 후 달 — ${OT_CLOSE_FROM[sel.value].slice(5).replace('-', '/')}부터 폐점이라 계획이 없습니다` : `개점 전 달 — ${(OT_OPEN_FROM[sel.value] || '').slice(5).replace('-', '/')} 오픈 예정이라 계획이 없습니다`;
     ['mateMH', 'mateWon', 'totCost'].forEach(id => { if ($(id)) $(id).textContent = '—'; });
     lastResult = null; $('planMsg').textContent = '';
-    const hl0 = $('holLine'); hl0.hidden = false; hl0.innerHTML = `<div class="holline">이 매장은 ${OT_CLOSE_FROM[sel.value]}부터 폐점 — 이 달은 영업일이 없습니다.</div>`;
+    const hl0 = $('holLine'); hl0.hidden = false; hl0.innerHTML = `<div class="holline">${OT_CLOSE_FROM[sel.value] ? `이 매장은 ${OT_CLOSE_FROM[sel.value]}부터 폐점` : `이 매장은 ${OT_OPEN_FROM[sel.value]} 오픈 예정`} — 이 달은 영업일이 없습니다.</div>`;
     return;
   }
   const st0 = staffTotals(sel.value), nf = st0.nf, fullpay = st0.fullpay * closeFrac;
