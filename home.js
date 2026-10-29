@@ -203,19 +203,21 @@ async function fillLabor() {
 
 // 한 달의 누적 인건비율·생산성 (카드와 월별 추이 그래프가 같이 쓴다) — ot.js otMtdRows와 같은 계산, 없으면 null
 async function laborMonth(ym) {
-  const [sr, lr, perRows, rosterRows, gradeRes] = await Promise.all([
+  const [sr, lr, perRows, rosterRows, gradeRes, ftRows] = await Promise.all([
     fetchRows(() => sb.from('ot_sales_daily').select('store_code,sales_date,total,is_closed').gte('sales_date', ym + '-01').lt('sales_date', endExclusive(ym)).order('sales_date').order('store_code')),
     fetchRows(() => sb.from('ot_labor_daily').select('store_code,work_date,mate_mh,ft_mh').gte('work_date', ym + '-01').lt('work_date', endExclusive(ym)).order('work_date').order('store_code')),
     fetchRows(() => sb.from('ot_labor_periods').select('store_code,period_start,period_end,mate_pay,mate_mh').gte('period_start', ym + '-01').lt('period_start', endExclusive(ym)).order('period_start').order('store_code')),
     fetchRows(() => sb.from('ot_staff_roster').select('ym,store_code,grade,headcount').order('ym').order('store_code').order('grade')).catch(() => []),
-    isPlanner ? sb.from('ot_grades').select('grade,std_monthly_cost,allowance') : Promise.resolve({ data: null })
+    isPlanner ? sb.from('ot_grades').select('grade,std_monthly_cost,allowance') : Promise.resolve({ data: null }),
+    fetchRows(() => sb.from('ot_labor_monthly').select('store_code,ft_pay').eq('ym', ym)).catch(() => [])
   ]);
   // 정직원 구성·급여 — ot.js staffFor/calcStaffPay와 같은 규칙 (맨파워가 있으면 그것, 없으면 8월 실측 시드)
   const ROSTER = {};
   for (const r of rosterRows) { const byStore = (ROSTER[r.ym] = ROSTER[r.ym] || {}); (byStore[r.store_code] = byStore[r.store_code] || {})[r.grade] = r.headcount; }
   let gradeCost = null, gradeAllow = null;
   if (gradeRes.data && gradeRes.data.length) { gradeCost = {}; gradeAllow = {}; for (const g of gradeRes.data) { gradeCost[g.grade] = g.std_monthly_cost; gradeAllow[g.grade] = g.allowance || 0; } }
-  const staffFor = code => {
+  const confPay = {}; ftRows.forEach(r => { if (r.ft_pay != null) confPay[r.store_code] = +r.ft_pay; }); // 확정 정직원 급여(SAP) — ot.js staffFor와 같은 규칙
+  const staffBase = code => {
     const s0 = OT_DATA[code];
     const k = Object.keys(ROSTER).filter(m => m <= ym && ROSTER[m][code]).sort().pop();
     if (!k) return { nfull: s0.nfull, fullpay: s0.fullpay };
@@ -232,6 +234,7 @@ async function laborMonth(ym) {
     }
     return { nfull: Math.max(1, nf), fullpay };
   };
+  const staffFor = code => { const b = staffBase(code); return confPay[code] != null ? { ...b, fullpay: confPay[code] } : b; };
   const sBy = {}, lBy = {};
   sr.forEach(r => { (sBy[r.store_code] = sBy[r.store_code] || {})[r.sales_date] = r; });
   lr.forEach(r => { (lBy[r.store_code] = lBy[r.store_code] || {})[r.work_date] = r; });

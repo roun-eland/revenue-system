@@ -75,12 +75,25 @@ function calcStaffPay(code, counts, opts) {
   }
   return { nf: Math.max(1, nf), fullpay };
 }
-// 매장×월의 정직원 인원·급여 — 맨파워가 있으면 그것으로, 없으면 기존(8월 실측) 값 그대로
+// 확정 정직원 급여(SAP) — ot_labor_monthly.ft_pay, 2026-09부터. 확정 급여가 있는 달은 맨파워 직급 단가 추정 대신 이 값을 정직원 급여로 쓴다 (2026-10-29).
+// 인원(연차·퇴직 계산용)·구성은 맨파워가 있으면 그것, 없으면 8월 실측 구성.
+let OT_FTPAY = {}; // { ym: { 매장코드: 월 정직원 급여(원) } }
+async function loadFtPay() {
+  OT_FTPAY = {};
+  try {
+    const { data } = await sb.from('ot_labor_monthly').select('store_code,ym,ft_pay').gte('ym', '2026-09').not('ft_pay', 'is', null).limit(2000);
+    (data || []).forEach(r => { (OT_FTPAY[r.ym] = OT_FTPAY[r.ym] || {})[r.store_code] = +r.ft_pay; });
+  } catch (e) { /* 실패 시 맨파워·8월 구성으로 계산 */ }
+}
+// 매장×월의 정직원 인원·급여 — 확정 급여(SAP)가 있으면 그 값, 맨파워가 있으면 맨파워 구성×직급 단가, 둘 다 없으면 기존(8월 실측) 값 그대로
 function staffFor(code, ym) {
   const r = rosterFor(code, ym);
-  if (!r) { const s0 = OT_DATA[code]; return { nfull: s0.nfull, fullpay: s0.fullpay, counts: { ...(OT_STAFF0[code] || {}) }, srcYm: null }; }
-  const t = calcStaffPay(code, r.counts);
-  return { nfull: t.nf, fullpay: t.fullpay, counts: { ...r.counts }, srcYm: r.ym };
+  let out;
+  if (!r) { const s0 = OT_DATA[code]; out = { nfull: s0.nfull, fullpay: s0.fullpay, counts: { ...(OT_STAFF0[code] || {}) }, srcYm: null }; }
+  else { const t = calcStaffPay(code, r.counts); out = { nfull: t.nf, fullpay: t.fullpay, counts: { ...r.counts }, srcYm: r.ym }; }
+  const conf = ym && OT_FTPAY[ym] ? OT_FTPAY[ym][code] : null;
+  if (conf != null) { out.fullpay = conf; out.paySrc = 'sap'; }
+  return out;
 }
 
 // 계획 시뮬레이션의 "예상 월매출"을 매출 앱의 확정 예측(sf_forecast_runs)과 연동하기 위한 캐시 —
@@ -163,6 +176,7 @@ async function enterApp(user) {
   await loadRoster();
   await loadStandardPlans();
   await loadStoreAdjust();
+  await loadFtPay();
   await loadStdBaselines();
   await loadActualCoverage();
   await loadSfRuns();
@@ -559,7 +573,7 @@ async function renderDashMTD(ym, myReq) {
   if (!rows.length) { $('dashTable').innerHTML = '<p class="dnote" style="padding:8px 0">이 달에 적재된 실적이 없습니다.</p>'; $('dashKpis').innerHTML = ''; return; }
   const last = rows.reduce((a, r) => r.last > a ? r.last : a, ''), first = rows.reduce((a, r) => !a || r.first < a ? r.first : a, '');
   $('dashSub').textContent = `${ym} 누적 실적 (${first.slice(5)}~${last.slice(5)}) — 예상이 아니라 입력된 매출·근태 실적 기준입니다. ` +
-    '누적 인건비율은 메이트 급여가 등록된 날짜까지만 계산합니다(급여대장이 10일까지면 매출·인건비 모두 10일까지 누적). 인건비 = 메이트 실제 급여(급여대장) + 정직원 급여(맨파워 직급 구성×직급 단가+직책수당)·연차수당(1인 10만원)·퇴직급여(1인 30만원)를 (기준일÷그 달 일수)로 환산한 값이고, 급여대장이 없는 매장은 마지막 근태일까지 메이트 근무시간×실질시급 추정으로 계산합니다. 전사 합계에는 본부 인건비 안분액을 같은 비율로 환산해 더했습니다(매장별 값에는 미포함). 선임점장 직급이 있는 매장은 그 급여의 절반을 매장 인건비에서 빼 본부 인건비에 포함했습니다(직급 단가를 보는 기획자 화면 기준, 브랜드 합계는 동일). 4대보험 회사부담분은 제외. 생산성·목표생산성·초과시간은 급여와 무관하게 마지막 근태일까지 전체 기간입니다. 목표생산성은 브랜드 목표 곡선(labor-calc.js PROD_CURVE: 그 기간 일평균 매출에 해당하는 값, 저매출은 하한선)이고, 생산성 점수 = 누적 생산성 ÷ 목표생산성(100% 이상 초록·90~100% 주황·90% 미만 빨강)입니다. 메이트 초과시간은 표준표 기준 필요 MH 대비(참고). 목표 인건비율 = 그 매장이 목표생산성을 정확히 달성했을 때(메이트 시급단가·정직원 고정비 유지)의 누적 인건비율이고, 맨 위 “로운” 행은 브랜드 합계(본부 인건비 안분 포함)입니다. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
+    '누적 인건비율은 메이트 급여가 등록된 날짜까지만 계산합니다(급여대장이 10일까지면 매출·인건비 모두 10일까지 누적). 인건비 = 메이트 실제 급여(급여대장) + 정직원 급여(맨파워 직급 구성×직급 단가+직책수당)·연차수당(1인 10만원)·퇴직급여(1인 30만원)를 (기준일÷그 달 일수)로 환산한 값이고, 급여대장이 없는 매장은 마지막 근태일까지 메이트 근무시간×실질시급 추정으로 계산합니다. 정직원 급여는 확정 급여(SAP)가 입력된 달은 그 값, 없는 달은 그 달 맨파워 직급 구성×단가입니다. 전사 합계에는 본부 인건비 안분액을 같은 비율로 환산해 더했습니다(매장별 값에는 미포함). 선임점장 직급이 있는 매장은 그 급여의 절반을 매장 인건비에서 빼 본부 인건비에 포함했습니다(직급 단가를 보는 기획자 화면 기준, 브랜드 합계는 동일). 4대보험 회사부담분은 제외. 생산성·목표생산성·초과시간은 급여와 무관하게 마지막 근태일까지 전체 기간입니다. 목표생산성은 브랜드 목표 곡선(labor-calc.js PROD_CURVE: 그 기간 일평균 매출에 해당하는 값, 저매출은 하한선)이고, 생산성 점수 = 누적 생산성 ÷ 목표생산성(100% 이상 초록·90~100% 주황·90% 미만 빨강)입니다. 메이트 초과시간은 표준표 기준 필요 MH 대비(참고). 목표 인건비율 = 그 매장이 목표생산성을 정확히 달성했을 때(메이트 시급단가·정직원 고정비 유지)의 누적 인건비율이고, 맨 위 “로운” 행은 브랜드 합계(본부 인건비 안분 포함)입니다. 행을 누르면 그 매장의 계획 시뮬레이션으로 이동합니다.';
   dashChartData = { rows, label: `${+ym.slice(5)}월 누적 (~${last.slice(5).replace('-', '/')})` };
   const tSales = rows.reduce((t, r) => t + r.sales, 0), tMH = rows.reduce((t, r) => t + r.mh, 0);
   const tNeed = rows.reduce((t, r) => t + r.sales / r.targetProd, 0); // 목표(곡선) 생산성을 달성했다면 쓰는 총 MH
