@@ -197,7 +197,7 @@ function computeForecast(ym, cutoffDate, wx) {
   let wxFcSum = 0, wxRawSum = 0, wxBaseW = 0, wxAnomW = 0, wxW = 0;
   const stores = {};
   for (const code of Object.keys(OT_DATA)) {
-    if (CLONE_FROM[code]) continue; // 다른 매장과 동일 설정 — 아래에서 원본 매장 값을 복사
+    if (otCloneOn(code, ym)) continue; // 오픈 달은 다른 매장과 동일 설정 — 아래에서 원본 매장 값을 복사
     const s = OT_DATA[code], daily = {};
     let meta;
     if (NEW_OPEN[code]) {
@@ -240,9 +240,9 @@ function computeForecast(ym, cutoffDate, wx) {
     const total = Object.values(daily).reduce((t, v) => t + v, 0);
     stores[code] = { name: s.name, total, ...meta, daily };
   }
-  for (const [code, srcCode] of Object.entries(CLONE_FROM)) {
-    const src = stores[srcCode]; if (!src) continue;
-    const daily = otCloneDaily(src.daily, NEW_OPEN[code]); // 원본 휴무일은 같은 요일 평균으로 채움
+  for (const [code, [srcCode]] of Object.entries(CLONE_FROM)) {
+    const src = stores[srcCode]; if (!otCloneOn(code, ym) || !src) continue;
+    const daily = otCloneDaily(src.daily, NEW_OPEN[code]);
     stores[code] = { name: OT_DATA[code].name, total: Object.values(daily).reduce((t, v) => t + v, 0), sr: null, trend: null, src: `${OT_DATA[srcCode].name} 동일(신규 가정치)`, open_from: NEW_OPEN[code], clone_of: srcCode, daily };
   }
   const out = { model_version: MODEL_VERSION, ym, cutoff_date: cutoffDate, data_through: cutoff, stores };

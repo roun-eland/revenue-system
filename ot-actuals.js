@@ -534,6 +534,14 @@ function renderRosterPreview(res) {
       (gradeCost ? `<td style="color:${d > 0 ? 'var(--crit)' : d < 0 ? 'var(--good)' : 'inherit'}">${d > 0 ? '+' : ''}${won(d / 10000)}만</td>` : '') +
       `<td style="text-align:left;white-space:normal;font-size:11px;color:var(--warn)">${s.warnings.join('<br>')}</td></tr>`;
   }
+  // 이번 파일에 없는 영업 매장(예: 오픈 전 신규점)도 행으로 보여 어떤 인원으로 계산되는지 알 수 있게 한다
+  const inFile = new Set(res.stores.map(s => s.code)), nCols = cols.length + 3 + (gradeCost ? 1 : 0);
+  for (const code of Object.keys(OT_DATA)) {
+    if (inFile.has(code) || otCloseFrac(code, ym) === 0) continue;
+    const old = staffFor(code, ym);
+    h += `<tr><td>${OT_DATA[code].name}</td><td colspan="${nCols}" style="text-align:left;white-space:normal;font-size:11px;color:var(--warn)">` +
+      `이번 파일에 없음 — ${old.srcYm ? `${old.srcYm.replace('-', '년 ')}월 맨파워 ${old.nfull}명 유지` : `기본 구성 ${old.nfull}명(8월 실측·신규점은 시드) 적용 중`}. 인원이 정해지면 파일에 이 매장 행을 넣어 다시 올려주세요.</td></tr>`;
+  }
   h += '</tbody></table></div>';
   h += `<p class="dnote">* 기존 = 8월 근태 실측 기본 구성. ${gradeCost ? `전사 정직원 월 급여 합계 변화 <b>${dPay > 0 ? '+' : ''}${won(dPay / 10000)}만원</b> (직급 표준 인건비+직책수당 기준). ` : ''}` +
     `선택한 <b>${ym.replace('-', '년 ')}월</b>부터 다음 업로드 전까지 이어서 적용됩니다.</p>`;
