@@ -185,5 +185,77 @@
     else new MutationObserver((_, ob) => { if (!app.hidden) { ob.disconnect(); go(); } }).observe(app, { attributes: true, attributeFilter: ['hidden'] });
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+  // ---- 새로고침해도 보던 화면 유지 (2026-10-30) ----
+  // ① 위쪽 탭(전사 대시보드·매장 피드백 등)이 바뀔 때마다 주소의 ?v=를 그 탭으로 갱신 → 새로고침하면 navStart가 그 탭을 다시 연다.
+  // ② 탭 안의 하위 탭(원가 대시보드의 '① 목표', 시즌설계의 '메뉴별 소비액' 등)은 "형제 버튼이 있고 눌린 뒤 활성 클래스가 붙는 버튼"을
+  //    눌렀을 때 탭 모음의 위치(경로)와 버튼 식별값을 sessionStorage에 기록하고, 새로고침 뒤 그 탭 모음이 화면에 보이면 같은 버튼을 눌러 복원한다.
+  function keepState() {
+    if (!cur || !cur.nav) return;
+    const SKEY = 'roun_ui:' + curId;
+    const store = {
+      get() { try { return JSON.parse(sessionStorage.getItem(SKEY) || '{}'); } catch (e) { return {}; } },
+      set(o) { try { sessionStorage.setItem(SKEY, JSON.stringify(o)); } catch (e) { /* 저장 불가여도 화면은 동작 */ } }
+    };
+    const ACTIVE = ['on', 'is-on', 'is-active', 'active', 'selected', 'current'];
+    const isActive = b => ACTIVE.some(c => b.classList.contains(c)) || b.getAttribute('aria-selected') === 'true';
+    const topBtns = () => btnsOf(cur);
+
+    // ① 위쪽 탭 → 주소
+    const syncUrl = () => {
+      const k = activeKey(cur); if (!k) return;
+      const u = new URL(location.href);
+      if (u.searchParams.get('v') === k) return;
+      u.searchParams.set('v', k);
+      try { history.replaceState(null, '', u); } catch (e) { /* 무시 */ }
+    };
+    const mo = new MutationObserver(syncUrl);
+    topBtns().forEach(b => mo.observe(b, { attributes: true, attributeFilter: ['class'] }));
+
+    // ② 하위 탭 기록·복원
+    const pathOf = el => {
+      const parts = [];
+      let e = el;
+      for (; e && e !== document.body; e = e.parentElement) {
+        if (e.id) { parts.unshift('#' + CSS.escape(e.id)); break; }
+        const sibs = [...e.parentElement.children].filter(x => x.tagName === e.tagName);
+        parts.unshift(e.tagName.toLowerCase() + (sibs.length > 1 ? `:nth-of-type(${sibs.indexOf(e) + 1})` : ''));
+      }
+      return (e === document.body ? 'body>' : '') + parts.join('>');
+    };
+    const btnKey = b => {
+      if (b.id) return '#' + b.id;
+      const d = [...b.attributes].find(a => a.name.startsWith('data-'));
+      return d ? `${d.name}=${d.value}` : 'T:' + b.textContent.replace(/\s+/g, ' ').trim();
+    };
+    document.addEventListener('click', ev => {
+      const b = ev.target.closest && ev.target.closest('button');
+      if (!b || (sidebar && sidebar.contains(b)) || topBtns().includes(b)) return;
+      const p = b.parentElement;
+      if (!p || [...p.children].filter(x => x.tagName === 'BUTTON').length < 2) return;
+      setTimeout(() => {                                    // 클릭 처리(비동기 포함) 뒤 활성 표시가 붙었는지 본다
+        if (!isActive(b)) return;
+        const st = store.get(); st[pathOf(p)] = btnKey(b); store.set(st);
+      }, 80);
+    }, true);
+    const done = new Set();
+    const restore = () => {
+      const st = store.get();
+      for (const [g, k] of Object.entries(st)) {
+        if (done.has(g)) continue;
+        let p; try { p = document.querySelector(g); } catch (e) { continue; }
+        if (!p || !p.offsetParent) continue;                // 아직 없거나 안 보이는 탭 안 — 그 탭이 열릴 때 다시 시도
+        const b = [...p.children].find(x => x.tagName === 'BUTTON' && btnKey(x) === k);
+        done.add(g);
+        if (b && !isActive(b) && !b.hidden && !b.disabled) b.click();
+      }
+    };
+    // 로그인·데이터 로딩이 끝나 탭 모음이 나타날 때까지 잠시 반복 + 위쪽 탭이 바뀔 때마다
+    let n = 0; setTimeout(() => { const iv = setInterval(() => { restore(); if (++n > 50) clearInterval(iv); }, 400); }, 1200); // 화면 초기화가 끝날 시간을 먼저 준다
+    const mo2 = new MutationObserver(() => setTimeout(restore, 50));
+    topBtns().forEach(b => mo2.observe(b, { attributes: true, attributeFilter: ['class'] }));
+    // 예전 상단 메뉴 모드의 원가 화면은 사이드바가 없어 시작 탭을 여기서 열어 준다
+    if (OLD && curId === 'cost' && q.get('v')) { const t = topBtns().find(x => keyOf(x, cur) === q.get('v')); if (t) setTimeout(() => t.click(), 0); }
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { start(); keepState(); }); else { start(); keepState(); }
 })();
