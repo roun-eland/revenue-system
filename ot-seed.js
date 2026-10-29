@@ -30,14 +30,28 @@ function otCloseFrac(code, ym) {
 // 확정 예측 스냅샷(sf_forecast_runs.daily)을 읽을 때 폐점 이후 날짜를 0으로 덮어쓴다 — 화면 메모리에서만, DB의 불변 스냅샷은 그대로.
 // 신규점 예상매출을 다른 매장과 동일하게 두는 설정(오픈일 이후 날짜만) — 수지점(RU047) = 청량리(RU025) 동일 (사용자 지시 2026-10-29, 실적이 쌓이면 지운다)
 const CLONE_FROM = { RU047: 'RU025' };
+// 원본 매장의 일별 예측을 오픈일 이후만 복사하되, 원본이 쉬는 날(0원)은 휴무 없이 같은 달 같은 요일 영업일 평균으로 채운다 (공휴일·명절 당일은 평균 그대로).
+function otCloneDaily(srcDaily, openFrom) {
+  const dow = d => new Date(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8)).getDay();
+  const open = Object.keys(srcDaily).filter(d => d >= openFrom);
+  const all = Object.keys(srcDaily).filter(d => srcDaily[d] > 0);
+  const mean = ds => ds.reduce((t, d) => t + srcDaily[d], 0) / (ds.length || 1);
+  const out = {};
+  for (const d of Object.keys(srcDaily)) {
+    if (d < openFrom) { out[d] = 0; continue; }
+    if (srcDaily[d] > 0) { out[d] = srcDaily[d]; continue; }
+    const same = all.filter(x => dow(x) === dow(d));
+    out[d] = Math.round((same.length ? mean(same) : mean(all)) / 1000) * 1000;
+  }
+  return out;
+}
 function otApplyClosures(runs) {
   for (const r of runs || []) {
     const stores = r && r.daily && r.daily.stores; if (!stores) continue;
     // 발행 당시 없던 신규점은 원본 매장의 예측을 오픈일 이후만 복사해 채운다 (화면 메모리에서만)
     for (const [code, srcCode] of Object.entries(CLONE_FROM)) {
       const src = stores[srcCode], od = OT_OPEN_FROM[code]; if (stores[code] || !src || !src.daily || !od) continue;
-      const daily = {};
-      for (const d of Object.keys(src.daily)) daily[d] = d < od ? 0 : (src.daily[d] || 0);
+      const daily = otCloneDaily(src.daily, od);
       stores[code] = { name: OT_DATA[code].name, total: Object.values(daily).reduce((t, v) => t + v, 0), sr: null, trend: null, src: `${OT_DATA[srcCode].name} 동일(신규 가정치)`, open_from: od, clone_of: srcCode, daily };
     }
     for (const [code, cf] of Object.entries(OT_CLOSE_FROM)) {

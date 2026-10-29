@@ -242,8 +242,7 @@ function computeForecast(ym, cutoffDate, wx) {
   }
   for (const [code, srcCode] of Object.entries(CLONE_FROM)) {
     const src = stores[srcCode]; if (!src) continue;
-    const daily = {};
-    for (const d of monthDates(ym)) daily[d] = d < NEW_OPEN[code] ? 0 : (src.daily[d] || 0);
+    const daily = otCloneDaily(src.daily, NEW_OPEN[code]); // 원본 휴무일은 같은 요일 평균으로 채움
     stores[code] = { name: OT_DATA[code].name, total: Object.values(daily).reduce((t, v) => t + v, 0), sr: null, trend: null, src: `${OT_DATA[srcCode].name} 동일(신규 가정치)`, open_from: NEW_OPEN[code], clone_of: srcCode, daily };
   }
   const out = { model_version: MODEL_VERSION, ym, cutoff_date: cutoffDate, data_through: cutoff, stores };
