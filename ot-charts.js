@@ -288,6 +288,87 @@ function ocPeerCompare(code, ym) {
   return { html, top, score: sc, target, me, outside: me.outside, nLegacy: me.nLegacy };
 }
 
+// ---------- 제안 (전사 대시보드 표 마지막 열, 2026-10-30) ----------
+// 어느 요일유형(평일/주말) × 시간대 구간(오픈·런치·브레이크·디너·마감)이 문제인지를 월 시간으로 보여준다.
+//   월 시간 = (우리 구간 평균 인원 − 비교 기준 평균 인원) × 구간 길이(h) × 그 달 영업일수(그 요일유형)
+//   비교 기준 둘: 피어(같은 매출대 3개점, 피어 비교 표와 같은 매장) / 목표(기준 곡선이 요구하는 시간대별 인원). 표시는 피어 대비를 먼저, 부족하면 목표 대비로 채운다.
+const OC_SUG_MIN = 10, OC_SUG_BRAND_MIN = 50;          // 월 10h(매장)·50h(브랜드 합) 미만은 제안하지 않음
+const OC_BAND_SHORT = ['오픈', '런치', '브레이크', '디너', '마감'];
+function ocBandsByDt(days) {
+  const out = {};
+  for (const dt of ['weekday', 'weekend']) {
+    const ds = days.filter(d => d.dt === dt && d.byHour.length);
+    out[dt] = ds.length >= 2 ? OC_BANDS.map(([, hs]) => ocMean(ds.map(d => ocMean(hs.map(h => hourIdx(d.byHour, h) || 0))))) : null;
+  }
+  return out;
+}
+function ocOpenDayCount(code, ym) {
+  const n = { weekday: 0, weekend: 0 };
+  for (const x of monthDates(ym, OT_DATA[code])) if (!x.closed) n[(x.hol || x.wd >= 5) ? 'weekend' : 'weekday']++;
+  return n;
+}
+// 한 매장의 (요일유형 × 구간) 셀: { dt, i, peer, tgt, nd } — 피어·목표 대비 월 시간(+이면 우리가 더 씀). 계산 불가면 null
+function ocSuggestCells(code, ym, ctx) {
+  const days = (OC.byStore[code] || []).filter(d => d.ym === ym); if (days.length < 5) return null;
+  const mine = ocBandsByDt(days), nd = ocOpenDayCount(code, ym), me = ctx.stat[code]; if (!me) return null;
+  const peers = Object.keys(ctx.stat).filter(c => c !== code && ctx.stat[c]).sort((a, b) => Math.abs(ctx.stat[a].x - me.x) - Math.abs(ctx.stat[b].x - me.x)).slice(0, 3).map(c => ctx.bands[c]);
+  const hrs = []; for (let h = 9; h <= 21; h++) hrs.push(h);
+  const cells = [];
+  for (const dt of ['weekday', 'weekend']) {
+    if (!mine[dt]) continue;
+    const ref = ocRefSeries(code, ym, dt, hrs), pb = peers.map(p => p[dt]).filter(Boolean);
+    OC_BANDS.forEach(([, hs], i) => {
+      const len = hs.length * nd[dt];
+      cells.push({ dt, i, nd: nd[dt], len,
+        tgt: ref ? (mine[dt][i] - ocMean(hs.map(h => ref.data[h - 9]))) * len : null,
+        peer: pb.length >= 2 ? (mine[dt][i] - ocMean(pb.map(b => b[i]))) * len : null });
+    });
+  }
+  return cells;
+}
+const ocSugName = c => `${OC_DT[c.dt]} ${OC_BAND_SHORT[c.i]}`;
+function ocSuggestHtml(cells) {
+  // 피어 대비(같은 매출대 매장보다 더 쓰는 구간)를 먼저, 2개가 안 되면 목표(곡선) 대비로 채운다 — 목표는 피어보다 엄격해 거의 모든 구간이 걸리기 때문
+  const pick = (key, basis, skip) => (cells || []).filter(c => c[key] != null && c[key] >= OC_SUG_MIN && !skip.has(c.dt + c.i))
+    .sort((a, b) => b[key] - a[key]).map(c => ({ c, h: c[key], basis }));
+  const first = pick('peer', '피어 대비', new Set()).slice(0, 2);
+  const items = first.concat(pick('tgt', '목표 대비', new Set(first.map(x => x.c.dt + x.c.i)))).slice(0, 2);
+  if (!items.length) return '<span style="color:var(--muted2)">특이 구간 없음</span>';
+  return items.map(({ c, h, basis }) => {
+    const tip = `${ocSugName(c)} — 월 기준(영업일 ${c.nd}일 × ${c.len / c.nd}시간 구간): 피어 ${c.peer != null ? ocF1(c.peer) + 'h' : '-'} · 목표(곡선) ${c.tgt != null ? ocF1(c.tgt) + 'h' : '-'}`;
+    return `<div title="${tip}">${ocSugName(c)} <b style="color:var(--crit)">+${Math.round(h)}h</b> <span style="font-size:11px;color:var(--muted2)">${basis}</span></div>`;
+  }).join('');
+}
+// 브랜드 행: 전 매장 목표(곡선) 대비 월 시간을 셀별로 합산해 큰 순 2개
+function ocSuggestBrandHtml(all) {
+  const sum = {};
+  for (const cells of all) for (const c of cells || []) if (c.tgt != null) { const k = c.dt + c.i; (sum[k] = sum[k] || { c, h: 0 }).h += c.tgt; }
+  const items = Object.values(sum).filter(x => x.h >= OC_SUG_BRAND_MIN).sort((a, b) => b.h - a.h).slice(0, 2);
+  if (!items.length) return '<span style="color:var(--muted2)">특이 구간 없음</span>';
+  return items.map(({ c, h }) => `<div title="${ocSugName(c)} — 전 매장 합계, 목표(곡선) 대비 월 시간">${ocSugName(c)} <b style="color:var(--crit)">+${Math.round(h)}h</b> <span style="font-size:11px;color:var(--muted2)">전 매장 합·목표 대비</span></div>`).join('');
+}
+async function ocFillSuggest(ym, myReq) {
+  const box = $('dashTable'); if (!box || !box.querySelector('td.sg')) return;
+  const fail = () => box.querySelectorAll('td.sg').forEach(td => { td.textContent = '-'; });
+  try { await ocLoad(); } catch (e) { fail(); return; }
+  if (typeof dashReqId !== 'undefined' && myReq !== dashReqId) return; // 그 사이 다른 조회로 바뀜
+  try {
+    const ctx = { stat: {}, bands: {} };
+    for (const code of Object.keys(OT_DATA)) {
+      const st = ocMonthStat(code, ym); if (!st) continue;
+      ctx.stat[code] = st; ctx.bands[code] = ocBandsByDt((OC.byStore[code] || []).filter(d => d.ym === ym));
+    }
+    const all = [];
+    box.querySelectorAll('td.sg').forEach(td => {
+      const code = td.dataset.code; if (code === '*') return;
+      const cells = ocSuggestCells(code, ym, ctx); all.push(cells);
+      td.innerHTML = cells ? ocSuggestHtml(cells) : '<span style="color:var(--muted2)">-</span>';
+    });
+    const b = box.querySelector('td.sg[data-code="*"]'); if (b) b.innerHTML = ocSuggestBrandHtml(all);
+  } catch (e) { fail(); }
+}
+window.ocFillSuggest = ocFillSuggest;
+
 function ocSentences(dg, ym, extra) {
   const out = [];
   for (const dt of ['weekday', 'weekend']) {
