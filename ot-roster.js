@@ -56,11 +56,17 @@ function parseRoster(rows, validCodes) {
     if (!rawName) continue;
     let code = rosterNormCode(row[cCode]), fix = null;
     if (code && !validCodes.has(code)) code = null;
+    // 코드 칸과 매장명이 서로 다른 매장을 가리키면 매장명을 믿는다 (실제 원본에서 코드가 한 칸씩 밀려 적힌 사례: 평촌=RU019, 광명=RU029, 수지=RU045)
+    const nameHit = ROSTER_NAME_KEYS.find(([k]) => rawName.includes(k));
+    if (nameHit && validCodes.has(nameHit[1]) && code && code !== nameHit[1]) {
+      fix = `매장코드 '${String(row[cCode]).trim()}'와 매장명이 달라 매장명 기준 ${nameHit[1]}에 매칭`;
+      code = nameHit[1];
+    }
     if (!code) {
       const hit = ROSTER_NAME_KEYS.find(([k]) => rawName.includes(k));
       code = hit ? hit[1] : null;
       if (code) fix = String(row[cCode] || '').trim() ? `매장코드 '${String(row[cCode]).trim()}'가 올바르지 않아 매장명으로 ${code}에 매칭` : `매장코드가 비어 있어 매장명으로 ${code}에 매칭`;
-    } else if (String(row[cCode]).trim().toUpperCase() !== code) {
+    } else if (!fix && String(row[cCode]).trim().toUpperCase() !== code) {
       fix = `매장코드 '${String(row[cCode]).trim()}' → ${code} 자동 보정`;
     }
     if (!code || !validCodes.has(code)) { out.notes.push(`'${rawName}' 행은 매장을 식별하지 못해 건너뜁니다.`); continue; }
