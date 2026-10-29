@@ -84,7 +84,7 @@ function prodTargetAt(xMillion) {
 function prodScore(prod, target) {
   if (!(prod > 0) || !(target > 0)) return null;
   const raw = prod / target * 100, cap = PROD_CURVE.scoreCap;
-  return { raw, shown: Math.min(raw, cap), surplus: Math.max(0, raw - cap), level: raw <= PROD_CURVE.lampRed ? 'c' : raw >= PROD_CURVE.lampGreen ? 'g' : 'w' };
+  return { raw, shown: Math.min(raw, cap), surplus: Math.max(0, raw - cap), level: Math.round(raw) <= PROD_CURVE.lampRed ? 'c' : Math.round(raw) >= PROD_CURVE.lampGreen ? 'g' : 'w' }; // 화면에 보이는(반올림) 점수로 판정 — 85.03%가 '85%'로 보이면 빨강
 }
 // 곡선이 요구하는 하루 총 근무시간(h)을 일매출의 직선으로 근사 — 매장 피드백의 '기준 매장표'가 요일별(평일/주말) 매출에 곡선을 그대로 쓰면
 // 저매출 평일의 필요 시간이 지나치게 작아지므로(월 평균 기준 곡선) 직선 근사를 쓴다. MH(x) = mhA + mhB·x
