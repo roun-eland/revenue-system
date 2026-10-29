@@ -73,9 +73,9 @@ const lcHqCost = (dim, cutIso) => LC.HQ_MONTHLY * (+cutIso.slice(8) / dim);
 //   · 2차식: 매장 17개점의 "목표 인건비율을 맞추는 필요 생산성"을 일평균 매출에 맞춘 곡선(일매출 약 2.6~10백만에서 유효).
 //   · 하한 직선: 저매출 매장(고정비 비중↑)이 인건비율 34%를 넘지 않게 두는 하한 (순천·수원이 결정; 2026-10-28 상한 35→34%).
 //   · xMax: 2차식 꼭짓점(13.6) — 이보다 큰 매출은 xMax로 간주(그 위는 곡선 재산출 필요).
-//   점수 = 실제 생산성 ÷ 목표 생산성 × 100. 100%를 넘어도 그대로 표시(2026-10-28 사용자: 수원 102%). 표시 상한이 필요하면 scoreCap을 숫자로(초과분은 surplus). 신호등: ≥100 정상 / ≥warn 주의 / 그 미만 위험.
+//   점수 = 실제 생산성 ÷ 목표 생산성 × 100. 100%를 넘어도 그대로 표시(2026-10-28 사용자: 수원 102%). 표시 상한이 필요하면 scoreCap을 숫자로(초과분은 surplus). 신호등(2026-10-29 사용자 기준): 점수 ≤lampRed 빨강 / ≥lampGreen 초록 / 그 사이 주황.
 //   곡선은 분기 1회 재산출하고 기간 중에는 고정한다.
-const PROD_CURVE = { a: 11989, b: 14654, c: -538, floorA: 52200, floorB: 1720, xMax: 13.6, scoreCap: Infinity, warn: 90 };
+const PROD_CURVE = { a: 11989, b: 14654, c: -538, floorA: 52200, floorB: 1720, xMax: 13.6, scoreCap: Infinity, lampRed: 85, lampGreen: 95 };
 function prodTargetAt(xMillion) {
   const x = Math.min(Math.max(xMillion, 0), PROD_CURVE.xMax);
   return Math.max(PROD_CURVE.a + PROD_CURVE.b * x + PROD_CURVE.c * x * x, PROD_CURVE.floorA + PROD_CURVE.floorB * x);
@@ -84,7 +84,7 @@ function prodTargetAt(xMillion) {
 function prodScore(prod, target) {
   if (!(prod > 0) || !(target > 0)) return null;
   const raw = prod / target * 100, cap = PROD_CURVE.scoreCap;
-  return { raw, shown: Math.min(raw, cap), surplus: Math.max(0, raw - cap), level: raw >= 100 ? 'g' : raw >= PROD_CURVE.warn ? 'w' : 'c' };
+  return { raw, shown: Math.min(raw, cap), surplus: Math.max(0, raw - cap), level: raw <= PROD_CURVE.lampRed ? 'c' : raw >= PROD_CURVE.lampGreen ? 'g' : 'w' };
 }
 // 곡선이 요구하는 하루 총 근무시간(h)을 일매출의 직선으로 근사 — 매장 피드백의 '기준 매장표'가 요일별(평일/주말) 매출에 곡선을 그대로 쓰면
 // 저매출 평일의 필요 시간이 지나치게 작아지므로(월 평균 기준 곡선) 직선 근사를 쓴다. MH(x) = mhA + mhB·x

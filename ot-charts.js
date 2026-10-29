@@ -196,7 +196,7 @@ function ocRenderScatter(data) {
       { type: 'line', label: '목표 생산성 곡선 (2차 곡선 + 저매출 하한선)', data: curve, borderColor: OC_COL.blue, borderWidth: 2.4, pointRadius: 0, tension: 0.15 }];
     yTitle = '생산성 (원/MH, 총매출÷총 근무시간)'; xTitleText = `${data.label} 일평균 매출 (백만원)`;
     tip = c => { const p = pts[c.dataIndex]; return `${p.name}: 생산성 ${won(p.y)}원/MH · 목표 ${won(p.target)} · 점수 ${p.sc ? p.sc.shown.toFixed(0) + '%' + (p.sc.surplus > 0.5 ? ` (+${p.sc.surplus.toFixed(0)}% 여유)` : '') : '-'} (클릭 → 매장 피드백)`; };
-    noteHtml = '<b>파란 곡선 = 그 매출대에서 달성해야 할 목표 생산성</b>(브랜드 목표 인건비 기준). 점이 곡선 위(초록)이면 목표 달성, 곡선 아래로 멀수록 점수가 낮습니다(90% 이상 주황 · 90% 미만 빨강). 곡선은 매출이 클수록 완만하게 오르고, 저매출 구간은 인건비율 34%를 넘지 않도록 하한선이 적용됩니다.';
+    noteHtml = '<b>파란 곡선 = 그 매출대에서 달성해야 할 목표 생산성</b>(브랜드 목표 인건비 기준). 점수(= 생산성 ÷ 목표)가 95% 이상이면 초록, 85% 이하면 빨강, 그 사이는 주황입니다. 곡선 아래로 멀수록 점수가 낮습니다. 곡선은 매출이 클수록 완만하게 오르고, 저매출 구간은 인건비율 34%를 넘지 않도록 하한선이 적용됩니다.';
   } else {
     pts = rows.map(r => ({ x: r.sales / 1e8, y: r.ratio, code: r.code, name: shortOf(r.name) }));
     colorOf = p => p.y > LABOR_CAP * 100 ? '#8b1a1a' : p.y > 28 ? OC_COL.red : p.y > 24 ? OC_COL.orange : OC_COL.green;
