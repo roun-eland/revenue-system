@@ -331,21 +331,21 @@ function ocSuggestHtml(cells) {
   // 피어 대비(같은 매출대 매장보다 더 쓰는 구간)를 먼저, 2개가 안 되면 목표(곡선) 대비로 채운다 — 목표는 피어보다 엄격해 거의 모든 구간이 걸리기 때문
   const pick = (key, basis, skip) => (cells || []).filter(c => c[key] != null && c[key] >= OC_SUG_MIN && !skip.has(c.dt + c.i))
     .sort((a, b) => b[key] - a[key]).map(c => ({ c, h: c[key], basis }));
-  const first = pick('peer', '피어 대비', new Set()).slice(0, 2);
-  const items = first.concat(pick('tgt', '목표 대비', new Set(first.map(x => x.c.dt + x.c.i)))).slice(0, 2);
+  const first = pick('peer', '피어 대비', new Set()).slice(0, 1);
+  const items = first.concat(pick('tgt', '목표 대비', new Set(first.map(x => x.c.dt + x.c.i)))).slice(0, 1); // 가장 큰 1가지만
   if (!items.length) return '<span style="color:var(--muted2)">특이 구간 없음</span>';
   return items.map(({ c, h, basis }) => {
     const tip = `${ocSugName(c)} — 월 기준(영업일 ${c.nd}일 × ${c.len / c.nd}시간 구간): 피어 ${c.peer != null ? ocF1(c.peer) + 'h' : '-'} · 목표(곡선) ${c.tgt != null ? ocF1(c.tgt) + 'h' : '-'}`;
-    return `<div title="${tip}">${ocSugName(c)} <b style="color:var(--crit)">+${Math.round(h)}h</b> <span style="font-size:11px;color:var(--muted2)">${basis}</span></div>`;
+    return `<div title="${tip}" style="white-space:nowrap">${ocSugName(c)} <b style="color:var(--crit)">+${Math.round(h).toLocaleString()}h</b> <span style="font-size:11px;color:var(--muted2)">${basis}</span></div>`;
   }).join('');
 }
 // 브랜드 행: 전 매장 목표(곡선) 대비 월 시간을 셀별로 합산해 큰 순 2개
 function ocSuggestBrandHtml(all) {
   const sum = {};
   for (const cells of all) for (const c of cells || []) if (c.tgt != null) { const k = c.dt + c.i; (sum[k] = sum[k] || { c, h: 0 }).h += c.tgt; }
-  const items = Object.values(sum).filter(x => x.h >= OC_SUG_BRAND_MIN).sort((a, b) => b.h - a.h).slice(0, 2);
+  const items = Object.values(sum).filter(x => x.h >= OC_SUG_BRAND_MIN).sort((a, b) => b.h - a.h).slice(0, 1);
   if (!items.length) return '<span style="color:var(--muted2)">특이 구간 없음</span>';
-  return items.map(({ c, h }) => `<div title="${ocSugName(c)} — 전 매장 합계, 목표(곡선) 대비 월 시간">${ocSugName(c)} <b style="color:var(--crit)">+${Math.round(h)}h</b> <span style="font-size:11px;color:var(--muted2)">전 매장 합·목표 대비</span></div>`).join('');
+  return items.map(({ c, h }) => `<div title="${ocSugName(c)} — 전 매장 합계, 목표(곡선) 대비 월 시간" style="white-space:nowrap">${ocSugName(c)} <b style="color:var(--crit)">+${Math.round(h).toLocaleString()}h</b> <span style="font-size:11px;color:var(--muted2)">전사 목표 대비</span></div>`).join('');
 }
 async function ocFillSuggest(ym, myReq) {
   const box = $('dashTable'); if (!box || !box.querySelector('td.sg')) return;
