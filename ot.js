@@ -601,11 +601,11 @@ async function renderDashMTD(ym, myReq) {
   const rbOf = v => v > LABOR_CAP * 100 ? 'c' : v <= 24 ? 'g' : v <= 28 ? 'w' : 'c', scColOf = sc => !sc ? '' : sc.level === 'g' ? 'var(--good)' : sc.level === 'w' ? 'var(--warn)' : 'var(--crit)';
   // 생산성 점수 신호등 — 빨강 ≤85% / 초록 ≥95% / 사이 주황 (PROD_CURVE.lampRed·lampGreen)
   const lampTip = `생산성 점수 ${PROD_CURVE.lampRed}% 이하 빨강 · ${PROD_CURVE.lampGreen}% 이상 초록 · 사이 주황`;
-  const lampOf = sc => `<td style="text-align:center">${sc ? `<span title="${lampTip} (점수 ${sc.raw.toFixed(1)}%)" style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${scColOf(sc)};vertical-align:middle"></span>` : '-'}</td>`;
-  let html = '<table class="mtd"><colgroup><col style="width:17%"><col style="width:6.5%"><col style="width:7%"><col style="width:6.5%"><col style="width:6%"><col style="width:4%"><col style="width:7%"><col style="width:14.5%"><col style="width:7.5%"><col style="width:24%"></colgroup>' +
-    '<thead><tr><th>매장</th><th>누적매출(억)</th><th title="브랜드 목표 곡선 — 일평균 매출에 따른 목표">목표생산성</th><th>누적 생산성</th><th>생산성 점수</th><th title="생산성 점수 85% 이하 빨강 · 95% 이상 초록 · 사이 주황">신호</th><th>누적 인건비율</th><th>메이트 초과시간</th><th title="그 매장이 목표생산성(100%)을 달성했을 때의 인건비율">목표 인건비율</th><th style="text-align:left" title="어느 요일유형·시간대 구간에서 시간을 더 쓰는지(월 기준 시간). 피어(같은 매출대 3개점) 대비를 먼저, 2개가 안 되면 목표(곡선) 대비로 채움, 가장 큰 1가지. 월 10시간 미만은 표시하지 않음">제안</th></tr></thead><tbody>';
+  const lampDot = sc => sc ? `<span title="${lampTip} (점수 ${sc.raw.toFixed(1)}%)" style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${scColOf(sc)};vertical-align:middle;margin-right:7px"></span>` : '';
+  let html = '<table class="mtd"><colgroup><col style="width:16%"><col style="width:7%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:10%"><col style="width:7.5%"><col style="width:14%"><col style="width:7.5%"><col style="width:23%"></colgroup>' +
+    '<thead><tr><th>매장</th><th>누적<br>매출(억)</th><th title="브랜드 목표 곡선 — 일평균 매출에 따른 목표">목표<br>생산성</th><th>누적<br>생산성</th><th title="점 색 = 신호등: 생산성 점수 85% 이하 빨강 · 95% 이상 초록 · 사이 주황">생산성<br>점수</th><th>누적<br>인건비율</th><th>메이트<br>초과시간</th><th title="그 매장이 목표생산성(100%)을 달성했을 때의 인건비율">목표<br>인건비율</th><th style="text-align:left" title="어느 요일유형·시간대 구간에서 시간을 더 쓰는지(월 기준 시간). 피어(같은 매출대 3개점) 대비를 먼저, 2개가 안 되면 목표(곡선) 대비로 채움, 가장 큰 1가지. 월 10시간 미만은 표시하지 않음">조치할 것</th></tr></thead><tbody>';
   html += `<tr style="background:var(--surface-1);font-weight:700"><td title="브랜드 합계 — 인건비율에는 본부 인건비 안분액 포함">로운 <span style="font-size:11px;font-weight:400;color:var(--muted2)">브랜드</span></td><td>${(tSales / 1e8).toFixed(2)}</td>` +
-    `<td>${bTargetProd != null ? won(bTargetProd) : '-'}</td><td><b>${won(tSales / tMH)}</b></td><td>${bSc ? `<b style="color:${scColOf(bSc)}">${bSc.shown.toFixed(0)}%</b>` : '-'}</td>` + lampOf(bSc) +
+    `<td>${bTargetProd != null ? won(bTargetProd) : '-'}</td><td><b>${won(tSales / tMH)}</b></td><td>${lampDot(bSc)}${bSc ? `<b style="color:${scColOf(bSc)}">${bSc.shown.toFixed(0)}%</b>` : '-'}</td>` +
     `<td><span class="band ${rbOf(ratioTot)}">${ratioTot.toFixed(1)}%</span></td>` +
     `<td style="color:${bOver > 0 ? 'var(--crit)' : 'var(--good)'};font-weight:700">${bOver > 0 ? '+' + won(bOver) : won(bOver)}h</td>` +
     `<td><span class="band ${rbOf(bTargetRatio)}">${bTargetRatio.toFixed(1)}%</span></td><td class="sg" data-code="*" style="text-align:left;font-size:12px;font-weight:400;white-space:nowrap">…</td></tr>`;
@@ -623,7 +623,7 @@ async function renderDashMTD(ym, myReq) {
     const adjFlag = r.adjH ? ` <span style="color:var(--muted2);font-size:11px" title="${adjEsc(r.adjNote || '특이값')} — 보정시간 ${r.adjH > 0 ? '+' : ''}${Math.round(r.adjH)}h(월 환산 누적)">보정 ${r.adjH > 0 ? '+' : ''}${Math.round(r.adjH)}h</span>` : '';
     const flag = (r.estDays ? ' <span style="color:var(--crit);font-size:11px">급여 추정</span>' : r.badPeriods.length ? ' <span style="color:var(--warn);font-size:11px">시간차 확인</span>' : '') + adjFlag;
     html += `<tr class="rowlink" data-code="${r.code}"><td title="${basis}">${r.name}${flag}</td><td>${(r.sales / 1e8).toFixed(2)}</td>` +
-      `<td>${r.targetProd != null ? won(r.targetProd) : '-'}</td><td><b>${won(r.prod)}</b></td><td>${scTxt}</td>` + lampOf(sc) +
+      `<td>${r.targetProd != null ? won(r.targetProd) : '-'}</td><td><b>${won(r.prod)}</b></td><td>${lampDot(sc)}${scTxt}</td>` +
       `<td><span class="band ${rb}"${capMark}>${r.ratio.toFixed(1)}%</span></td>` +
       `<td style="color:${overColor};font-weight:700">${r.over > 0 ? '+' + won(r.over) : won(r.over)}h <span class="mini" style="width:${w}px;background:${overColor}"></span></td>` +
       `<td><span class="band ${rbOf(r.ratioTarget)}" title="생산성 100% 달성 시 ${r.name} 인건비율">${r.ratioTarget.toFixed(1)}%</span></td><td class="sg" data-code="${r.code}" style="text-align:left;font-size:12px;white-space:nowrap">…</td></tr>`;
