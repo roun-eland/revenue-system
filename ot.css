@@ -219,3 +219,8 @@ select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent-sof
 /* 정직원/홀/주방 묶음 구분선 */
 .dtable-emp th.gs,.dtable-emp td.gs{border-left:2px solid var(--dark)}
 .dtable-emp th.grp{text-align:center;font-weight:700;letter-spacing:.05em}
+
+/* 전사 대시보드 누적 표 — 고정 레이아웃(칸 너비 합 1213px, 그보다 넓은 화면은 비율대로 늘어남) */
+.tblwrap table.mtd{table-layout:fixed;min-width:1213px}
+.tblwrap table.mtd th{white-space:normal;vertical-align:bottom}
+.tblwrap table.mtd td:first-child{white-space:normal}
