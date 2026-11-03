@@ -11,6 +11,8 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const GRADE_ORDER = ['선임점장', '점장', '부점장', 'GM', '매니저', '캡틴', '헤드', 'ST', 'TM', 'HIT'];
 const TRUE_NET_DED = 72000000;   // 진이익 = 당기순이익 − 72백만원 (사용자 지정 추정, 11월 기준) — 값이 바뀌면 여기만 고친다
+// 금융손익 = 이자수익 1.25 − 금융비용 20.25 = −19백만원/월 (26년6~9월 4개월 평균, 월 −18~−20로 거의 고정). 영업외손익(6번)은 12개월 중앙값 0 → 0
+const INT_INC_EST = 1250000, FIN_COST_EST = 20250000;
 const MANUAL_NOTE = '표에서 직접 입력';   // 표 칸에서 직접 고친 특이비용은 이 메모의 한 줄로 모은다
 const FOOD_TAX_PCT = 0.008;   // 의제매입세액 공제액 — 순매출의 0.8% (원본 손익표가 전 매장 -0.8%) — 가정, 값이 바뀌면 여기만 고친다
 const STORES = Object.keys(OT_DATA);
@@ -19,7 +21,7 @@ const sname = c => ((OT_DATA[c] && OT_DATA[c].name) || c).replace(/\s*\(신규\)
 const shiftYm = (ym, n) => { const [y, m] = ym.split('-').map(Number); const t = y * 12 + (m - 1) + n; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, '0')}`; };
 const lastDay = ym => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
 
-const S = { ym: null, tab: 'brand', mode: 'l1', scope: 'all', pick: null, folded: new Set(), months: [], D: null, adj: [] };
+const S = { ym: null, tab: 'brand', mode: 'l1', scope: 'all', unit: 'mm', act: {}, pick: null, folded: new Set(), months: [], D: null, adj: [] };
 
 // ---------- 시작 ----------
 async function init() {
@@ -40,6 +42,7 @@ async function init() {
   }
   document.querySelectorAll('#plNav button').forEach(b => { b.onclick = () => showTab(b.dataset.view); });
   document.querySelectorAll('#plMode button').forEach(b => { b.onclick = () => { S.mode = b.dataset.mode; renderAll(); }; });
+  document.querySelectorAll('#plUnit button').forEach(b => { b.onclick = () => { S.unit = b.dataset.unit; renderAll(); }; });
   document.querySelectorAll('#plScope button').forEach(b => { b.onclick = () => { S.scope = b.dataset.scope; renderAll(); }; });
   $('plPick').onchange = () => { S.pick = $('plPick').value; renderAll(); };
   $('plMonth').onchange = () => loadMonth($('plMonth').value);
@@ -47,18 +50,22 @@ async function init() {
   $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace('../'); };
   fillAdjustAccounts();
   await loadMonths();
+  loadActual().then(a => { S.act = a; renderAll(); }).catch(e => setMsg('월별 실적을 불러오지 못했습니다: ' + (e.message || e), true));
   showTab(typeof navStart === 'function' ? navStart('brand') : 'brand');
 }
 $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace('../'); };
 
 function showTab(t) {
-  S.tab = t === 'store' ? 'store' : 'brand';
+  S.tab = t === 'store' || t === 'actual' ? t : 'brand';
   document.querySelectorAll('#plNav button').forEach(b => b.classList.toggle('on', b.dataset.view === S.tab));
   $('view-brand').hidden = S.tab !== 'brand';
   $('view-store').hidden = S.tab !== 'store';
+  $('view-actual').hidden = S.tab !== 'actual';
+  $('plUnit').hidden = S.tab !== 'actual';
   $('plMode').hidden = S.tab === 'store';   // 매장 탭은 주요 계정 고정, 대신 전체 매장/매장 선택
   $('plScope').hidden = S.tab !== 'store';
   renderAll();
+  if (S.tab === 'actual' && !S.actScrolled && S.act && Object.keys(S.act).length) { const w = $('actualTable'); w.scrollLeft = w.scrollWidth; S.actScrolled = true; }   // 처음 열면 최근 월이 보이도록 오른쪽 끝으로
 }
 
 // ---------- 데이터 ----------
@@ -84,6 +91,15 @@ async function loadMonth(ym) {
     setMsg('');
     renderAll();
   } catch (e) { setMsg('불러오기 실패: ' + (e.message || e), true); }
+}
+
+// 브랜드 월별 실적 (pnl_actual, 원 단위) → { 'YYYY-MM': { 계정코드: 금액 } }
+async function loadActual() {
+  const { data, error } = await sb.from('pnl_actual').select('ym,account_code,amount').limit(10000);
+  if (error) throw error;
+  const out = {};
+  for (const r of data || []) (out[r.ym] = out[r.ym] || {})[r.account_code] = +r.amount;
+  return out;
 }
 
 async function loadAdjust(ym) {
@@ -209,10 +225,12 @@ function computeAll() {
     sum = addLeaf(sum, leaf);
   }
   const total = evalTree(sum);
-  const alloc = evalTree({ [PNL_ID.true_ded]: TRUE_NET_DED });   // 안분비 — 데이터를 받으면 채움 (지금은 진이익의 브랜드 차감만)
+  const alloc = evalTree({ [PNL_ID.true_ded]: TRUE_NET_DED, [PNL_ID.int_inc]: INT_INC_EST, [PNL_ID.fin_cost]: FIN_COST_EST });   // 안분비 — 브랜드 단위 값(금융손익·진이익 차감). 나머지는 데이터를 받으면 채움
   const special = evalTree(adjLeaf('brand'));
   const brand = {};
   for (const a of PNL_ACC) brand[a.code] = total[a.code] + alloc[a.code] + special[a.code];
+  // 세전이익이 음수면 법인세비용 0 — 열을 더한 값이 아니라 예상실적 열 자체의 세전이익으로 다시 계산 (양수일 때는 열 합과 같다)
+  if (brand.pretax <= 0) { brand.tax = 0; brand.net = brand.pretax; brand.true_net = brand.net - brand.true_ded; }
   return { store, total, alloc, special, brand, metas };
 }
 
@@ -260,7 +278,7 @@ function renderAll() {
   if (!S.D) return;
   const C = computeAll();
   S.C = C;
-  renderBrand(C); renderStore(C); renderNotes(C); renderAdjust();
+  renderBrand(C); renderStore(C); renderActual(C); renderNotes(C); renderAdjust();
   document.querySelectorAll('td.nm[data-fold]').forEach(td => {
     td.onclick = () => { const k = td.dataset.fold; if (S.folded.has(k)) S.folded.delete(k); else S.folded.add(k); renderAll(); };
   });
@@ -323,6 +341,27 @@ function renderBrand(C) {
   $('brandTable').innerHTML = h + '</tbody></table>';
 }
 
+// 월별 실적 추이 — 받은 실적(백만원) + 선택한 월의 예상실적 열. 금액 / 매출 대비 % 전환
+const ymLabel = ym => `${ym.slice(2, 4)}년${+ym.slice(5)}월`;
+function renderActual(C) {
+  const yms = Object.keys(S.act).sort();
+  if (!yms.length) { $('actualTable').innerHTML = '<p class="dnote" style="padding:12px">월별 실적이 아직 없습니다.</p>'; return; }
+  const pct = S.unit === 'pct';
+  const cols = yms.map(y => ({ head: ymLabel(y), M: S.act[y], est: false })).concat([{ head: `${+S.ym.slice(5)}월 예상`, M: C.brand, est: true }]);
+  const cw = pct ? 58 : 62, W = 250 + cols.length * cw + 20;
+  let h = `<table class="pnl act" style="width:${W}px"><colgroup><col style="width:250px">${cols.map(() => `<col style="width:${cw}px">`).join('')}</colgroup><thead><tr><th>로운 · ${pct ? '매출액 대비 %' : '백만원'}</th>` +
+    cols.map(c => `<th class="num${c.est ? ' est' : ''}">${c.head}</th>`).join('') + '</tr></thead><tbody>';
+  const sv = (M, code) => M[code] == null ? null : M[code];
+  for (const a of visibleRows(S.mode)) {
+    h += `<tr class="${rowCls(a)}">${labelCell(a, S.mode)}` + cols.map(c => {
+      const v = sv(c.M, a.code), base = c.M.sales;
+      const txt = v == null ? '<span class="z">-</span>' : pct ? (base && Math.round(v / 1e6) ? (v / base * 100).toFixed(1) + '%' : '<span class="z">-</span>') : nf(v / 1e6);
+      return `<td class="num${c.est ? ' est' : ''}">${txt}</td>`;
+    }).join('') + '</tr>';
+  }
+  $('actualTable').innerHTML = h + '</tbody></table>';
+}
+
 function renderStore(C) {
   const one = S.scope === 'one';
   if (!S.pick || !C.store[S.pick]) S.pick = STORES[0];
@@ -363,7 +402,7 @@ function renderNotes(C) {
   li.push(`<b>급여_직원</b> = ${D.rYm ? `${+D.rYm.slice(5)}월 맨파워` : '8월 실측 구성'} × 직급 단가(+직책수당) + 연차수당(1인 ${(LC.LEAVE_PER_FT / 10000).toFixed(0)}만원)${noStaff.length ? ` · 맨파워 현황에 없는 매장은 정직원 0명: ${noStaff.join(', ')}` : ''}. <b>퇴직급여</b> = 정직원 1인 ${(LC.RETIRE_PER_FT / 10000).toFixed(0)}만원. 폐점·오픈 월은 영업 일수 비율로 줄입니다.`);
   li.push(`<b>급여_아르바이트</b> = ${+D.base.slice(5)}월 메이트 급여(급여대장) ÷ 순매출 비율 × 예상 매출액.`);
   if (est.length) li.push(`이력이 없어 대체한 값: ${est.join(' · ')}`);
-  li.push(`<b>당기순이익</b> = 영업이익의 ${(NET_OF_OP * 100).toFixed(0)}% (법인세비용을 영업이익의 ${((1 - NET_OF_OP) * 100).toFixed(0)}%로 둔 추정). <b>진이익</b> = 당기순이익 − ${(TRUE_NET_DED / 1e6).toFixed(0)}백만원 (브랜드 차감, 추정 — 브랜드 탭의 안분비 열에 들어감).`);
+  li.push(`<b>당기순이익</b> = (영업이익 + 영업외손익 0 + 금융손익 −${((FIN_COST_EST - INT_INC_EST) / 1e6).toFixed(0)}백만원) × (1 − 법인세율 ${(TAX_RATE * 100).toFixed(0)}%), 세전이익이 음수면 세금 0. 26년6~9월 실적 영업이익에 적용하면 실제 순이익과 평균 오차 0.8백만원 (영업이익 65% 방식은 28백만원). <b>진이익</b> = 당기순이익 − ${(TRUE_NET_DED / 1e6).toFixed(0)}백만원 (브랜드 차감, 추정 — 브랜드 탭의 안분비 열에 들어감).`);
   li.push('<b>비어 있는 계정</b>(제조경비·판관비·안분비 등)은 데이터를 받는 대로 채웁니다. 선임점장 급여의 본부 안분(50%)은 아직 반영하지 않았습니다.');
   $('plNotes').innerHTML = '<ul>' + li.map(x => `<li>${x}</li>`).join('') + '</ul>';
 }

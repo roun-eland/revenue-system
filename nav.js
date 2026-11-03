@@ -21,7 +21,7 @@
   const SECTIONS = [
     { id: 'home', label: '홈', mark: '홈', href: 'home/' },
     { id: 'pnl', label: '예상실적', mark: '예', href: 'pnl/', nav: '#plNav button', attr: 'view',
-      items: [['brand', '브랜드', 1], ['store', '매장', 1]] },
+      items: [['brand', '브랜드', 1], ['store', '매장', 1], ['actual', '실적 추이', 1]] },
     { id: 'sales', label: '매출', mark: '매', href: 'sales/', nav: '#sfNav button', attr: 'view',
       items: [['brand', '브랜드 대시보드'], ['daily', '매장 일별'], ['weekly', '주차별 매출'], ['acc', '정확도 피드백'], ['admin', '발행 관리', 1]] },
     { id: 'labor', label: '생산성', mark: '생', href: 'labor/', nav: '#otNav button', attr: 'view',
