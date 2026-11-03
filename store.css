@@ -1,0 +1,27 @@
+/* 매장정보 — 매장 목록 표. 매장코드·매장명 두 칸은 가로 스크롤해도 고정, 핵심 3열(임차료율·매장크기·좌석수)은 강조 */
+.st-main{max-width:none}
+.st-kpis{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 14px}
+.st-kpi{min-width:150px;border:1px solid var(--line);border-radius:4px;padding:10px 14px;background:var(--surface)}
+.st-kpi .k{font-size:11px;color:var(--muted)}
+.st-kpi .v{font-size:20px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+.st-kpi .s{font-size:11px;color:var(--muted2);margin-top:2px}
+.st-actions{display:flex;gap:10px;align-items:center;margin:0 0 10px}
+.stwrap{overflow:auto;max-height:calc(100vh - 330px);border:1px solid #cfcfcf;border-radius:4px;background:#fff}
+table.st{border-collapse:separate;border-spacing:0;font-size:12px;font-variant-numeric:tabular-nums}
+table.st th,table.st td{padding:6px 10px;border-bottom:1px solid #e6e6e6;white-space:nowrap;text-align:left;background:#fff}
+table.st thead th{position:sticky;top:0;z-index:3;background:#1f2937;color:#fff;font-weight:600;cursor:pointer;user-select:none}
+table.st thead th.key{background:#0f4c3a}
+table.st td.num,table.st th.num{text-align:right}
+table.st td.key{background:#f3f9ee;font-weight:700;font-size:13px}
+table.st td.z{color:#999;font-weight:500}
+table.st th:nth-child(1),table.st td:nth-child(1){position:sticky;left:0;z-index:2;min-width:70px}
+table.st th:nth-child(2),table.st td:nth-child(2){position:sticky;left:70px;z-index:2;min-width:230px;border-right:1px solid #cfcfcf}
+table.st thead th:nth-child(1),table.st thead th:nth-child(2){z-index:4}
+table.st tr:hover td{background:#fffbe6}
+table.st td.act{text-align:center}
+table.st td.act button{border:1px solid #cfcfcf;background:#fff;border-radius:3px;padding:2px 10px;font:inherit;font-size:11px;cursor:pointer}
+.stform{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 14px}
+.stform .fld.wide{grid-column:span 2}
+.stform input,.stform select{min-width:0;width:100%}
+.st-extra{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+.st-extra h4{margin:0 0 8px;font-size:13px}

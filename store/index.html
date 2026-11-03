@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로운 매장정보</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="../ot.css?v=202610021614">
+<link rel="stylesheet" href="../nav.css?v=202610211230">
+<link rel="stylesheet" href="../store.css?v=202611031500">
+</head>
+<body>
+
+<div id="loginView" class="ot-login" hidden></div>
+
+<div id="appView" hidden>
+  <div class="gnav">
+    <span class="gnav-brand">로운</span>
+    <a class="gnav-item" href="../sales/">매출</a>
+    <a class="gnav-item" href="../labor/">생산성</a>
+    <a class="gnav-item" href="../cost/">원가</a>
+    <a class="gnav-item" href="../supply/">공급</a>
+    <a class="gnav-item" href="../voc/">고객</a>
+  </div>
+  <header class="ot-header">
+    <div class="ot-brand"><span class="mark">매장</span><span class="name">매장정보</span></div>
+    <div class="spacer"></div>
+    <span class="who"><span id="whoEmail"></span> <span class="role-chip" id="roleChip">기획자</span></span>
+    <button id="logoutBtn" class="btn btn-sm" type="button">로그아웃</button>
+  </header>
+
+  <nav class="ot-nav" id="stNav">
+    <button data-view="list" class="on">매장 목록</button>
+  </nav>
+
+  <main class="ot-main st-main" id="stMain">
+    <section id="view-list" class="view">
+      <h2>매장 목록</h2>
+      <p class="view-sub">임차료율은 매출 대비 %입니다. 행의 "수정"을 누르면 아래에서 고칠 수 있고, "추가 항목"에 이름과 값을 넣으면 매장마다 항목을 더 저장할 수 있습니다. 머리글을 누르면 정렬됩니다.</p>
+      <div class="st-kpis" id="stKpis"></div>
+      <div class="st-actions">
+        <button id="stNew" class="btn btn-sm" type="button">매장 추가</button>
+        <span id="stMsg" class="plan-msg"></span>
+      </div>
+      <div class="stwrap" id="stTable"></div>
+    </section>
+
+    <div class="card" id="stFormCard" style="margin-top:14px" hidden>
+      <h3 style="margin:0 0 10px" id="stFormTitle">매장 수정</h3>
+      <div class="stform" id="stForm"></div>
+      <div class="st-extra">
+        <h4>추가 항목</h4>
+        <div class="stform" id="stExtra"></div>
+        <div class="adjform" style="margin-top:8px">
+          <label class="fld" style="min-width:160px">새 항목 이름<input id="stNewKey" type="text" placeholder="예: 임대차 만기일"></label>
+          <label class="fld" style="min-width:220px;flex:1">값<input id="stNewVal" type="text"></label>
+        </div>
+        <p class="dnote" style="margin:0">값을 비우고 저장하면 그 항목은 이 매장에서 지워집니다.</p>
+      </div>
+      <div class="st-actions" style="margin-top:12px">
+        <button id="stSave" class="btn btn-sm" type="button">저장</button>
+        <button id="stCancel" class="btn btn-sm" type="button">닫기</button>
+        <span id="stFormMsg" class="plan-msg"></span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="../vendor/supabase.min.js"></script>
+<script src="../nav.js?v=202611031500"></script>
+<script src="../store.js?v=202611031500"></script>
+</body>
+</html>

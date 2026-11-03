@@ -13,7 +13,8 @@
     cost: '<circle cx="12" cy="12" r="8.5"/><path d="m8.5 8.5 3.5 4.5 3.5-4.5M8.5 12.5h7M8.5 15.5h7"/>',
     supply: '<path d="m3.5 7.5 8.5-4 8.5 4v9l-8.5 4-8.5-4z"/><path d="m3.5 7.5 8.5 4 8.5-4M12 11.5v9"/>',
     demand: '<circle cx="10.5" cy="10.5" r="6"/><path d="m20 20-5.2-5.2"/>',
-    voc: '<path d="M4 5.5h16V16H10l-4.5 3.5V16H4z"/>'
+    voc: '<path d="M4 5.5h16V16H10l-4.5 3.5V16H4z"/>',
+    store: '<path d="M4 9.5 5.5 4h13L20 9.5"/><path d="M4 9.5c0 1.4 1.1 2.5 2.5 2.5S9 10.9 9 9.5c0 1.4 1.1 2.5 3 2.5s3-1.1 3-2.5c0 1.4 1.1 2.5 2.5 2.5S20 10.9 20 9.5"/><path d="M5.5 12v8h13v-8M10 20v-4.5h4V20"/>'
   };
   const ico = id => `<svg class="sb-ico" viewBox="0 0 24 24" aria-hidden="true">${ICONS[id] || ''}</svg>`;
 
@@ -32,7 +33,9 @@
     { id: 'demand', label: '수요', mark: '수', href: 'demand/', nav: '#dmNav button', attr: 'view',
       items: [['summary', '요약', 1], ['search', '검색', 1], ['voice', '고객 반응', 1], ['competitor', '경쟁사', 1], ['source', '출처·한계', 1], ['settings', '설정', 1]] },
     { id: 'voc', label: '고객', mark: '고', href: 'voc/', nav: '#cxNav button', attr: 'view',
-      items: [['brand', '브랜드 대시보드'], ['wreview', '주차별 리뷰'], ['store', '매장 요인 분석'], ['praise', '칭찬 사원'], ['red', '레드플래그'], ['reviews', '리뷰·조치'], ['upload', '데이터 업로드', 1]] }
+      items: [['brand', '브랜드 대시보드'], ['wreview', '주차별 리뷰'], ['store', '매장 요인 분석'], ['praise', '칭찬 사원'], ['red', '레드플래그'], ['reviews', '리뷰·조치'], ['upload', '데이터 업로드', 1]] },
+    { id: 'store', label: '매장정보', mark: '점', href: 'store/', nav: '#stNav button', attr: 'view',
+      items: [['list', '매장 목록', 1]] }
   ];
 
   const SUPABASE_URL = 'https://mnqgqgwdoztdbdyhjqyo.supabase.co';
@@ -48,7 +51,7 @@
   if (q.get('nav') === 'old' || q.get('nav') === 'new') ls.set('roun_nav', q.get('nav'));
   const OLD = q.get('nav') === 'old' || (q.get('nav') !== 'new' && ls.get('roun_nav') === 'old');
 
-  const curId = (location.pathname.match(/\/(home|pnl|sales|labor|cost|supply|demand|voc)(\/|$)/) || [])[1] || '';
+  const curId = (location.pathname.match(/\/(home|pnl|sales|labor|cost|supply|demand|voc|store)(\/|$)/) || [])[1] || '';
   const cur = SECTIONS.find(s => s.id === curId);
 
   // 화면 시작 탭: ?v=키 로 들어오면 그 탭을 먼저 연다 (각 화면의 init 끝에서 navStart('기본탭') 호출)
