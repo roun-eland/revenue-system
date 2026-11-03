@@ -42,7 +42,6 @@ async function init() {
   }
   document.querySelectorAll('#plNav button').forEach(b => { b.onclick = () => showTab(b.dataset.view); });
   document.querySelectorAll('#plMode button').forEach(b => { b.onclick = () => { S.mode = b.dataset.mode; renderAll(); }; });
-  document.querySelectorAll('#plUnit button').forEach(b => { b.onclick = () => { S.unit = b.dataset.unit; renderAll(); }; });
   document.querySelectorAll('#plScope button').forEach(b => { b.onclick = () => { S.scope = b.dataset.scope; renderAll(); }; });
   $('plPick').onchange = () => { S.pick = $('plPick').value; renderAll(); };
   $('plMonth').onchange = () => loadMonth($('plMonth').value);
@@ -68,7 +67,6 @@ function showTab(t) {
   $('view-store').hidden = S.tab !== 'store';
   $('view-actual').hidden = S.tab !== 'actual';
   $('view-upload').hidden = S.tab !== 'upload';
-  $('plUnit').hidden = S.tab !== 'actual';
   $('acScopeWrap').hidden = S.tab !== 'actual';
   $('plMode').hidden = S.tab === 'store' || S.tab === 'upload';   // 매장 탭은 주요 계정 고정, 대신 전체 매장/매장 선택
   $('plScope').hidden = S.tab !== 'store';

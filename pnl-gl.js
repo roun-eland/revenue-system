@@ -78,7 +78,7 @@ const glDrillable = a => S.glLeaves.size > 0 && glLeavesOf(a).some(c => S.glLeav
 
 // ---------- 실적 추이 표 ----------
 function renderActual(C) {
-  const kind = acKind(), pct = S.unit === 'pct';
+  const kind = acKind();
   const wrap = $('actualTable'), note = $('actualNote');
   if (!wrap) return;
   let cols = [], yms = [];
@@ -99,19 +99,21 @@ function renderActual(C) {
   if (!cols.length) { wrap.innerHTML = '<p class="dnote" style="padding:12px">월별 실적이 아직 없습니다.</p>'; note.innerHTML = ''; return; }
   const estM = kind === 'sheet' || kind === 'all' ? C.brand : kind === 'stores' ? C.total : kind === 'store' ? C.store[S.acScope] : null;
   if (estM) cols.push({ head: `${+S.ym.slice(5)}월 예상`, ym: null, M: estM, est: true });
-  const cw = pct ? 58 : 66, W = 250 + cols.length * cw + 20;
+  const AW = 60, PW = 46, W = 250 + cols.length * (AW + PW) + 20;   // 월마다 액(백만원) / 율(매출액 대비 %) 두 칸
   const hid = glHiddenRows(kind);
   const baseOf = c => (c.M.sales && Math.round(c.M.sales / 1e6)) ? c.M.sales : (S.act[c.ym] && S.act[c.ym].sales) || 0;
-  let h = `<table class="pnl act" style="width:${W}px"><colgroup><col style="width:250px">${cols.map(() => `<col style="width:${cw}px">`).join('')}</colgroup><thead><tr><th>${esc(acLabel())} · ${pct ? '매출액 대비 %' : '백만원'}</th>` +
-    cols.map(c => `<th class="num${c.est ? ' est' : ''}">${c.head}</th>`).join('') + '</tr></thead><tbody>';
+  let h = `<table class="pnl act" style="width:${W}px"><colgroup><col style="width:250px">${cols.map(() => `<col style="width:${AW}px"><col style="width:${PW}px">`).join('')}</colgroup><thead>` +
+    `<tr><th rowspan="2">${esc(acLabel())} · 백만원</th>${cols.map(c => `<th colspan="2" class="ctr${c.est ? ' est' : ''}">${c.head}</th>`).join('')}</tr>` +
+    `<tr>${cols.map(c => `<th class="num sub2${c.est ? ' est' : ''}">액</th><th class="num sub2${c.est ? ' est' : ''}">율</th>`).join('')}</tr></thead><tbody>`;
   for (const a of visibleRows(S.mode).filter(x => !hid.has(x.code))) {
     const dr = glDrillable(a);
     h += `<tr class="${rowCls(a)}">${labelCell(a, S.mode)}` + cols.map(c => {
       const v = c.M[a.code], base = baseOf(c);
       const has = v != null && Math.round(v / 1e6) !== 0;
-      const txt = v == null ? '<span class="z">-</span>' : pct ? (base && has ? (v / base * 100).toFixed(1) + '%' : '<span class="z">-</span>') : nf(v / 1e6);
+      const amt = v == null ? '<span class="z">-</span>' : nf(v / 1e6);
+      const rt = has && base ? (v / base * 100).toFixed(1) + '%' : '';
       const click = dr && !c.est && c.ym && v != null && v !== 0;
-      return `<td class="num${c.est ? ' est' : ''}${click ? ' drl' : ''}"${click ? ` data-code="${a.code}" data-ym="${c.ym}" title="눌러서 전표 내역 보기"` : ''}>${txt}</td>`;
+      return `<td class="num${c.est ? ' est' : ''}${click ? ' drl' : ''}"${click ? ` data-code="${a.code}" data-ym="${c.ym}" title="눌러서 전표 내역 보기"` : ''}>${amt}</td><td class="num r${c.est ? ' est' : ''}">${rt}</td>`;
     }).join('') + '</tr>';
   }
   wrap.innerHTML = h + '</tbody></table>';

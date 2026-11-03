@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="../ot.css?v=202610021614">
 <link rel="stylesheet" href="../nav.css?v=202610211230">
-<link rel="stylesheet" href="../pnl.css?v=202611032100">
+<link rel="stylesheet" href="../pnl.css?v=202611032200">
 </head>
 <body>
 
@@ -45,10 +45,6 @@
         <button type="button" data-mode="all">전체 계정</button>
       </div>
       <label class="fld" id="acScopeWrap" style="min-width:260px" hidden>보기 대상<select id="acScope"><option value="sheet">브랜드 실적표 (받은 실적)</option></select></label>
-      <div id="plUnit" role="group" aria-label="단위" hidden>
-        <button type="button" data-unit="mm" class="on">금액(백만원)</button>
-        <button type="button" data-unit="pct">매출 대비 %</button>
-      </div>
       <div id="plScope" role="group" aria-label="매장 보기" hidden>
         <button type="button" data-scope="all" class="on">전체 매장</button>
         <button type="button" data-scope="one">매장 선택</button>
@@ -72,7 +68,7 @@
 
     <section id="view-actual" class="view" hidden>
       <h2>브랜드 월별 실적 추이</h2>
-      <p class="view-sub">받은 브랜드 실적(25년1월~)과 선택한 월의 예상실적을 한 표에 나란히 둡니다. 보기(대분류·주요·전체)와 계정 접기는 브랜드 탭과 같습니다. 실적은 백만원 단위로 받은 값이라 합계에 ±1~2 오차가 있을 수 있습니다.</p>
+      <p class="view-sub">받은 브랜드 실적(25년1월~)과 선택한 월의 예상실적을 한 표에 나란히 둡니다. 월마다 액(백만원)과 율(매출액 대비 %)을 같이 보여줍니다. 보기(대분류·주요·전체)와 계정 접기는 브랜드 탭과 같습니다. 브랜드 실적표는 백만원 단위로 받은 값이라 합계에 ±1~2 오차가 있을 수 있습니다.</p>
       <div class="pnlwrap" id="actualTable"></div>
       <div id="actualNote" class="dnote-list"></div>
     </section>
@@ -125,7 +121,7 @@
 <script src="../ot-seed.js?v=202610291500"></script>
 <script src="../labor-calc.js?v=202611031003"></script>
 <script src="../pnl-accounts.js?v=202611032100"></script>
-<script src="../pnl-gl.js?v=202611032100"></script>
-<script src="../pnl.js?v=202611032100"></script>
+<script src="../pnl-gl.js?v=202611032200"></script>
+<script src="../pnl.js?v=202611032200"></script>
 </body>
 </html>

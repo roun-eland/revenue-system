@@ -53,3 +53,6 @@ table.pnl td.drl:hover{background:#fffbe6;text-decoration:underline}
 .upbar{height:6px;background:#eee;border-radius:3px;overflow:hidden;margin:6px 0 12px}
 .upbar #upBar{height:100%;width:0;background:#0f4c3a;transition:width .2s}
 .upnote{margin:10px 0 0;padding-left:18px;font-size:12px;line-height:1.7}
+table.pnl.act thead tr:nth-child(2) th{font-weight:500;font-size:11px;background:#2f3b4b}
+table.pnl.act thead tr:nth-child(2) th.est{background:#1b6b52}
+table.pnl.act thead th[rowspan]{vertical-align:middle}
