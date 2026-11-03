@@ -345,7 +345,7 @@ async function saveSpecial(a, text) {
 function renderBrand(C) {
   const cols = [['예상실적', C.brand], ['매장', C.total], ['안분비', C.alloc], ['특이비용', C.special]];
   const W = 260 + cols.length * (124 + 64);
-  let h = `<table class="pnl" style="width:${W}px"><colgroup><col style="width:260px">${cols.map(() => '<col style="width:124px"><col style="width:64px">').join('')}</colgroup><thead><tr><th>로운 · ${S.ym.slice(0, 4)}년 ${+S.ym.slice(5)}월 예상</th>` +
+  let h = `<table class="pnl" style="width:100%;min-width:${W}px"><colgroup><col style="width:260px">${cols.map(() => '<col style="width:124px"><col style="width:64px">').join('')}</colgroup><thead><tr><th>로운 · ${S.ym.slice(0, 4)}년 ${+S.ym.slice(5)}월 예상</th>` +
     cols.map(([n]) => `<th class="num">${n}</th><th class="num">비율</th>`).join('') + '</tr></thead><tbody>';
   for (const a of visibleRows(S.mode)) {
     const ed = editable(a, S.mode);
@@ -368,7 +368,7 @@ function renderStore(C) {
   const colsDef = one ? [[S.pick, sname(S.pick), S.pick, C.store[S.pick]]] : [['sum', '로운', '', C.total], ...STORES.map(c => [c, sname(c), c, C.store[c]])];
   const cw = one ? 160 : 112, pw = one ? 80 : 60;
   const W = 250 + colsDef.length * (cw + pw);
-  let h = `<table class="pnl" style="width:${W}px"><colgroup><col style="width:250px">${colsDef.map(() => `<col style="width:${cw}px"><col style="width:${pw}px">`).join('')}</colgroup><thead>` +
+  let h = `<table class="pnl" style="width:100%;min-width:${W}px"><colgroup><col style="width:250px">${colsDef.map(() => `<col style="width:${cw}px"><col style="width:${pw}px">`).join('')}</colgroup><thead>` +
     `<tr><th>매장코드</th>${colsDef.map(([, , code]) => `<th colspan="2" class="ctr">${code || '합계'}</th>`).join('')}</tr>` +
     `<tr><th>매장명</th>${colsDef.map(([, n]) => `<th colspan="2" class="ctr">${esc(n)}</th>`).join('')}</tr>` +
     `<tr><th>비고</th>${colsDef.map(() => '<th class="num">금액(원)</th><th class="num">비율</th>').join('')}</tr></thead><tbody>`;

@@ -38,7 +38,7 @@ a{color:inherit}
 .gnav-soon{font-size:10px;font-weight:500;margin-left:4px;opacity:.8}
 
 /* ---- 앱 크롬 ---- */
-.ot-header{display:flex;align-items:center;gap:14px;max-width:1080px;margin:0 auto;
+.ot-header{display:flex;align-items:center;gap:14px;max-width:none;margin:0;
   padding:16px 20px 0;flex-wrap:wrap}
 .ot-brand{display:flex;align-items:baseline;gap:8px}
 .ot-brand .mark{background:var(--dark);color:#fff;font-weight:700;font-size:12px;border-radius:12px;padding:3px 12px}
@@ -55,15 +55,15 @@ a{color:inherit}
 .btn-primary:hover{background:#131518}
 .btn-green{background:var(--accent-soft);border-color:var(--accent-soft);color:#1c3305;font-weight:700}
 .btn:disabled{opacity:.45;cursor:not-allowed}
-.ot-nav{display:flex;gap:8px;max-width:1080px;margin:14px auto 0;padding:0 20px;flex-wrap:wrap;
+.ot-nav{display:flex;gap:8px;max-width:none;margin:14px 0 0;padding:0 20px;flex-wrap:wrap;
   border-bottom:1px solid var(--line)}
 .ot-nav button{font-weight:700;font-size:13px;height:38px;padding:0 16px;border:0;background:transparent;
   color:var(--muted2);border-radius:12px 12px 0 0}
 .ot-nav button:hover{color:var(--ink)}
 .ot-nav button.on{background:var(--dark);color:#fff}
 .ot-nav button .soon{font-weight:500;font-size:10px;opacity:.7;margin-left:4px}
-.ot-main{max-width:1080px;margin:0 auto;padding:22px 20px 64px}
-.view{max-width:1040px}
+.ot-main{max-width:none;margin:0;padding:22px 20px 64px}   /* 원가 화면처럼 가로를 끝까지 채운다 (2026-11-03) */
+.view{max-width:none}
 .view.narrow{max-width:800px}
 h2{font-weight:700;font-size:18px;letter-spacing:-.01em;margin:0 0 4px}
 .view-sub{font-size:12px;color:var(--muted);margin:0 0 18px}

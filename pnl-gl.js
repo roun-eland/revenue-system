@@ -102,7 +102,7 @@ function renderActual(C) {
   const AW = 60, PW = 46, W = 250 + cols.length * (AW + PW) + 20;   // 월마다 액(백만원) / 율(매출액 대비 %) 두 칸
   const hid = glHiddenRows(kind);
   const baseOf = c => (c.M.sales && Math.round(c.M.sales / 1e6)) ? c.M.sales : (S.act[c.ym] && S.act[c.ym].sales) || 0;
-  let h = `<table class="pnl act" style="width:${W}px"><colgroup><col style="width:250px">${cols.map(() => `<col style="width:${AW}px"><col style="width:${PW}px">`).join('')}</colgroup><thead>` +
+  let h = `<table class="pnl act" style="width:100%;min-width:${W}px"><colgroup><col style="width:250px">${cols.map(() => `<col style="width:${AW}px"><col style="width:${PW}px">`).join('')}</colgroup><thead>` +
     `<tr><th rowspan="2">${esc(acLabel())} · 백만원</th>${cols.map(c => `<th colspan="2" class="ctr${c.est ? ' est' : ''}">${c.head}</th>`).join('')}</tr>` +
     `<tr>${cols.map(c => `<th class="num sub2${c.est ? ' est' : ''}">액</th><th class="num sub2${c.est ? ' est' : ''}">율</th>`).join('')}</tr></thead><tbody>`;
   for (const a of visibleRows(S.mode).filter(x => !hid.has(x.code))) {
