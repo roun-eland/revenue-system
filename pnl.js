@@ -118,16 +118,19 @@ async function loadAdjust(ym) {
 
 async function loadData(ym) {
   const base = shiftYm(ym, -1);   // 직전 월 = 메이트 급여율 기준
-  const [runR, usageTot, grades, roster, ftpay, per, sales] = await Promise.all([
+  const [runR, usageTot, grades, roster, ftpay, per, sales, perCur, salesCur, est] = await Promise.all([
     sb.from('sf_forecast_runs').select('ym,version,kind,daily,published_at').eq('ym', ym).eq('kind', '확정').order('version', { ascending: false }).limit(1),
     sb.rpc('material_usage_monthly_totals'),
     sb.from('ot_grades').select('grade,std_monthly_cost,allowance'),
     sb.from('ot_staff_roster').select('ym,store_code,grade,headcount').limit(5000),
     sb.from('ot_labor_monthly').select('store_code,ft_pay').eq('ym', ym).not('ft_pay', 'is', null),
     sb.from('ot_labor_periods').select('store_code,period_start,period_end,mate_pay').gte('period_start', base + '-01').lte('period_end', lastDay(base)).limit(2000),
-    sb.from('ot_sales_daily').select('store_code,sales_date,total').gte('sales_date', base + '-01').lte('sales_date', lastDay(base)).limit(1000)
+    sb.from('ot_sales_daily').select('store_code,sales_date,total').gte('sales_date', base + '-01').lte('sales_date', lastDay(base)).limit(1000),
+    sb.from('ot_labor_periods').select('store_code,period_start,period_end,mate_pay').gte('period_start', ym + '-01').lte('period_end', lastDay(ym)).limit(2000),   // 이번 달 급여대장(누적 메이트 급여)
+    sb.from('ot_sales_daily').select('store_code,sales_date,total').gte('sales_date', ym + '-01').lte('sales_date', lastDay(ym)).limit(5000),
+    loadEst(ym).catch(e => { console.warn('추정 규칙 데이터를 불러오지 못했습니다', e); return null; })   // 전표가 없으면 null → 규칙 미적용
   ]);
-  for (const r of [runR, usageTot, grades, roster, per, sales]) if (r.error) throw r.error;
+  for (const r of [runR, usageTot, grades, roster, per, sales, perCur, salesCur]) if (r.error) throw r.error;
   if (!runR.data || !runR.data.length) throw new Error(`${ym} 확정 매출예측이 없습니다`);
   const run = otApplyClosures(runR.data)[0];   // 폐점·신규 오픈 보정 (화면 메모리에서만)
 
@@ -170,7 +173,12 @@ async function loadData(ym) {
   for (const c of Object.keys(payBy)) { const net = (salesBy[c] || 0) / 1.1; if (net > 0) { mateRate[c] = payBy[c] / net; pa += payBy[c]; ps += net; } }
   const brandMateRate = ps ? pa / ps : null;
 
-  return { run, ym, costYm, costRate, costSpan, brandCostRate, rYm, staff, base, mateRate, brandMateRate };
+  // 이번 달 누적: 급여대장으로 확정된 구간의 메이트 급여·같은 기간 순매출 → 남은 기간 추정에 쓴다
+  const mateNow = {};
+  for (const r of perCur.data || []) { const m = mateNow[r.store_code] = mateNow[r.store_code] || { mtd: 0, cover: '', salesNet: 0, days: 0 }; m.mtd += +r.mate_pay || 0; if (r.period_end > m.cover) m.cover = r.period_end; }
+  for (const m of Object.values(mateNow)) m.days = +m.cover.slice(8);
+  for (const r of salesCur.data || []) { const m = mateNow[r.store_code]; if (m && r.sales_date <= m.cover) m.salesNet += (+r.total || 0) / 1.1; }
+  return { run, ym, costYm, costRate, costSpan, brandCostRate, rYm, staff, base, mateRate, brandMateRate, mateNow, est };
 }
 
 // 이력이 없는 매장(신규점)의 비율: 복제 원본 매장 → 없으면 브랜드 평균
@@ -189,6 +197,18 @@ function ftFrac(code, ym) {
   return cf <= first ? 0 : cf > last ? 1 : (+cf.slice(8) - 1) / dim;
 }
 
+// 급여_아르바이트 = 급여대장 누적 메이트 급여 + 남은 기간 예상 순매출 × 반영 비율
+//   반영 비율 = 누적 비율(누적 메이트 급여 ÷ 누적 순매출)과 직전 달 비율을 경과 일수/14 로 섞는다 (월 초 몇 일치만 있을 때 직전 달 비율에 가깝다)
+//   이번 달 급여대장이 없는 매장은 직전 달 비율 × 예상 순매출
+function matePay(code, net, mr, D) {
+  const m = D.mateNow[code]; if (!m || !m.mtd) return { v: net * mr.v, how: 'prior' };
+  const st = D.run.daily.stores[code]; let rem = 0;
+  if (st && st.daily) for (const d of Object.keys(st.daily)) if (d > m.cover) rem += st.daily[d];
+  rem /= 1.1;
+  const ytd = m.salesNet > 0 ? m.mtd / m.salesNet : mr.v, w = Math.min(1, m.days / 14), rate = w * ytd + (1 - w) * mr.v;
+  return { v: m.mtd + rem * rate, how: 'mtd', mtd: m.mtd, rem, rate, w };
+}
+
 // 매장별 말단 계정 값 (특이비용 제외)
 function baseLeaf(code) {
   const D = S.D, st = D.run.daily.stores[code];
@@ -196,6 +216,7 @@ function baseLeaf(code) {
   const cf = otCloseFrac(code, D.ym);          // 영업 일수 비율 — 아르바이트·매출 쪽(오픈 전 휴점일 제외)
   const ff = ftFrac(code, D.ym);                // 정직원 급여·퇴직급여 — 오픈 달은 한 달치(오픈 전부터 근무), 폐점 달만 일할
   const cr = rateOf(D.costRate, code, D.brandCostRate), mr = rateOf(D.mateRate, code, D.brandMateRate), sf = D.staff[code];
+  const mp = matePay(code, net, mr, D);
   const leaf = {
     gross_direct: gross,
     vat: gross - net,
@@ -203,9 +224,11 @@ function baseLeaf(code) {
     food_tax: -net * FOOD_TAX_PCT,
     pay_ft: (sf.fullpay + sf.nfull * LC.LEAVE_PER_FT) * ff,
     retire: sf.nfull * LC.RETIRE_PER_FT * ff,
-    pay_pt: net * mr.v
+    pay_pt: mp.v
   };
-  return { leaf, meta: { inRun: !!st, costSrc: cr, mateSrc: mr, noStaff: sf.none, closeFrac: cf } };
+  const e = estStore(code, { net, cf, pay: leaf.pay_ft + leaf.pay_pt });   // 제조경비·판관비 (pnl-est.js)
+  Object.assign(leaf, e.leaf);
+  return { leaf, meta: { inRun: !!st, costSrc: cr, mateSrc: mr, mate: mp, noStaff: sf.none, closeFrac: cf, estPool: e.pool } };
 }
 
 function evalTree(leaf) {
@@ -241,7 +264,7 @@ function computeAll() {
     sum = addLeaf(sum, leaf);
   }
   const total = evalTree(sum);
-  const alloc = evalTree({ [PNL_ID.true_ded]: TRUE_NET_DED, [PNL_ID.int_inc]: INT_INC_EST, [PNL_ID.fin_cost]: FIN_COST_EST });   // 안분비 — 브랜드 단위 값(금융손익·진이익 차감). 나머지는 데이터를 받으면 채움
+  const alloc = evalTree({ ...estAllocLeaves(), [PNL_ID.true_ded]: TRUE_NET_DED, [PNL_ID.int_inc]: INT_INC_EST, [PNL_ID.fin_cost]: FIN_COST_EST });   // 안분비 = 법인 안분(직전 3개월 평균) + 브랜드 안분(최근 달) + 금융손익·진이익 차감
   const special = evalTree(adjLeaf('brand'));
   const brand = {};
   for (const a of PNL_ACC) brand[a.code] = total[a.code] + alloc[a.code] + special[a.code];
@@ -397,10 +420,17 @@ function renderNotes(C) {
   li.push(`<b>외형매출·부가세</b> = 매출 앱 확정 예측 v${r.version}${pub ? ` (${pub} 발행)` : ''} — 폐점·신규 오픈 보정 반영. 매출액 = 외형매출 ÷ 1.1, 비율은 모두 매출액 대비.`);
   li.push(`<b>식재료원가</b> = ${D.costYm ? `${+D.costYm.slice(5)}월 누적 원가율(${D.costSpan ? D.costSpan.from.slice(5).replace('-', '/') + '~' + D.costSpan.to.slice(5).replace('-', '/') : ''}, 매장별 실적)` : '원가율 없음'} × 예상 매출액. <b>의제매입세액 공제</b> = 매출액의 −${(FOOD_TAX_PCT * 100).toFixed(1)}% (원본 손익표 기준 가정).`);
   li.push(`<b>급여_직원</b> = ${D.rYm ? `${+D.rYm.slice(5)}월 맨파워` : '8월 실측 구성'} × 직급 단가(+직책수당) + 연차수당(1인 ${(LC.LEAVE_PER_FT / 10000).toFixed(0)}만원)${noStaff.length ? ` · 맨파워 현황에 없는 매장은 정직원 0명: ${noStaff.join(', ')}` : ''}. <b>퇴직급여</b> = 정직원 1인 ${(LC.RETIRE_PER_FT / 10000).toFixed(0)}만원. 폐점 달은 영업 일수 비율로 줄이고, 신규 오픈 달은 정직원 한 달치를 잡습니다(오픈 전부터 근무).`);
-  li.push(`<b>급여_아르바이트</b> = ${+D.base.slice(5)}월 메이트 급여(급여대장) ÷ 순매출 비율 × 예상 매출액.`);
+  const mt = STORES.filter(c => C.metas[c].mate && C.metas[c].mate.how === 'mtd').length;
+  li.push(`<b>급여_아르바이트</b> = 급여대장으로 확정된 누적 메이트 급여 + 남은 기간 예상 순매출 × 반영 비율(누적 비율과 ${+D.base.slice(5)}월 비율을 경과 일수/14로 섞음). 이번 달 급여대장이 있는 매장 ${mt}곳은 이 방식, 없는 매장은 ${+D.base.slice(5)}월 메이트 급여율 × 예상 순매출.`);
+  if (D.est) {
+    const E = D.est, mm = ym => `${ym.slice(2, 4)}년${+ym.slice(5)}월`;
+    li.push(`<b>제조경비·판관비</b>는 전표 기준 직전 3개월(${E.base.map(mm).join('·')})로 추정합니다 — 복리후생·세금과공과: 급여 연동(직전 3개월 계정합 ÷ 급여합 × 예상 급여) · 소모품비·감가상각·그 밖의 고정 계정: 직전 3개월 평균 × 영업일 비율 · 수도광열비: 직전 3개월 합계 평균(이력 없는 매장은 면적 × 단위면적당 평균) · 운반비: 직전 3개월 비율 × 예상 순매출 · 지급수수료(제조): 기타제조경비 기준표 합계 · 지급임차료: 임대을은 임차료율 × 순매출, 임대갑은 고정 · 견본비·광고선전비·성과상여는 0(특이비용으로 입력).`);
+    li.push(`<b>안분비</b> = 법인 안분(EP 배부) ${mm(E.base[0])}~${mm(E.base[E.base.length - 1])} 평균 고정 금액 + 브랜드 안분 ${mm(E.brandYm)} 고정 금액 (+ 금융손익·진이익 차감). 안분 열의 금액은 각 계정 줄에서 볼 수 있습니다.`);
+    const fbs = [...E.fb].map(sname); if (fbs.length) li.push(`전표 이력이 없거나 짧아 전체 매장 평균으로 대체한 매장: ${fbs.join(', ')}. 기타제조경비 기준표에 없는 매장(${STORES.filter(c => !E.fixed[c]).map(sname).join(', ') || '없음'})은 항목별 중앙값을 썼습니다.`);
+  } else li.push('<b>제조경비·판관비·안분비</b>: 전표가 아직 없어 비어 있습니다 (전표 업로드 후 채워집니다).');
   if (est.length) li.push(`이력이 없어 대체한 값: ${est.join(' · ')}`);
   li.push(`<b>당기순이익</b> = (영업이익 + 영업외손익 0 + 금융손익 −${((FIN_COST_EST - INT_INC_EST) / 1e6).toFixed(0)}백만원) × (1 − 법인세율 ${(TAX_RATE * 100).toFixed(0)}%), 세전이익이 음수면 세금 0. 26년6~9월 실적 영업이익에 적용하면 실제 순이익과 평균 오차 0.8백만원 (영업이익 65% 방식은 28백만원). <b>진이익</b> = 당기순이익 − ${(TRUE_NET_DED / 1e6).toFixed(0)}백만원 (브랜드 차감, 추정 — 브랜드 탭의 안분비 열에 들어감).`);
-  li.push('<b>비어 있는 계정</b>(제조경비·판관비·안분비 등)은 데이터를 받는 대로 채웁니다. 선임점장 급여의 본부 안분(50%)은 아직 반영하지 않았습니다.');
+  li.push('선임점장 급여의 본부 안분(50%)은 아직 반영하지 않았습니다. 견본비는 데이터를 받은 뒤 별도로 채웁니다.');
   $('plNotes').innerHTML = '<ul>' + li.map(x => `<li>${x}</li>`).join('') + '</ul>';
 }
 
