@@ -39,6 +39,19 @@ function fillAcScope() {
 }
 const acKind = () => S.acScope === 'sheet' ? 'sheet' : /^RU\d/.test(S.acScope) ? 'store' : S.acScope;
 
+// ---------- 안분(법인·브랜드) 월 합계 + 전체 매장 월 순매출 — 매장·매장합계 보기의 안분비 줄에 쓴다 ----------
+// 안분비 = 그 달 안분 전표 합계(손익 계정만) × (매장 순매출 ÷ 전체 매장 순매출) — 예상(매장 탭)과 같은 매출 비례 방식
+async function loadGlAlloc() {
+  if (S.glAlloc) return S.glAlloc;
+  const [co, br, sl] = await Promise.all([
+    sb.rpc('gl_monthly', { p_scope: 'corp', p_store: null }), sb.rpc('gl_monthly', { p_scope: 'brand', p_store: null }), sb.rpc('store_sales_monthly', { p_store: null })
+  ]);
+  for (const r of [co, br, sl]) if (r.error) throw r.error;
+  const tot = rows => { const o = {}; for (const r of rows || []) if (PNL_BY[r.leaf] && !EST_ALLOC_SKIP.has(r.leaf)) o[r.ym] = (o[r.ym] || 0) + (+r.amount || 0); return o; };
+  const net = {}; for (const r of sl.data || []) net[r.ym] = (+r.gross || 0) / 1.1;
+  return (S.glAlloc = { corp: tot(co.data), brand: tot(br.data), net });
+}
+
 // ---------- 전표 합계 불러오기 ----------
 async function loadGlScope(key) {
   if (S.gl[key]) return S.gl[key];
@@ -47,7 +60,8 @@ async function loadGlScope(key) {
   const store = kind === 'store' ? key : null;
   const [g, sl] = await Promise.all([
     sb.rpc('gl_monthly', { p_scope: kind, p_store: store }),
-    needSales ? sb.rpc('store_sales_monthly', { p_store: kind === 'store' ? key : null }) : Promise.resolve({ data: [] })
+    needSales ? sb.rpc('store_sales_monthly', { p_store: kind === 'store' ? key : null }) : Promise.resolve({ data: [] }),
+    kind === 'store' || kind === 'stores' ? loadGlAlloc() : Promise.resolve(null)
   ]);
   if (g.error) throw g.error;
   if (sl.error) throw sl.error;
@@ -100,6 +114,16 @@ function renderActual(C) {
   const estM = kind === 'sheet' || kind === 'all' ? C.brand : kind === 'stores' ? C.total : kind === 'store' ? C.store[S.acScope] : null;
   if (estM) cols.push({ head: `${+S.ym.slice(5)}월 예상`, ym: null, M: estM, est: true });
   const AW = 60, PW = 46, W = 250 + cols.length * (AW + PW) + 20;   // 월마다 액(백만원) / 율(매출액 대비 %) 두 칸
+  const withAlloc = kind === 'store' || kind === 'stores';
+  if (withAlloc) {   // 열마다 안분비(음수) = −(안분 합계 × 매장 순매출 비율)
+    const AL = S.glAlloc, ALE = estAllocTotals(), totE = C.total.sales || 0;
+    for (const c of cols) {
+      let sh = null, B = 0, Cp = 0;
+      if (c.est) { if (ALE && totE) { sh = (c.M.sales || 0) / totE; B = ALE.brand; Cp = ALE.corp; } }
+      else if (AL) { const tn = AL.net[c.ym] || 0; if (kind === 'stores') sh = 1; else if (tn) sh = (c.M.sales || 0) / tn; B = AL.brand[c.ym] || 0; Cp = AL.corp[c.ym] || 0; }
+      c.al = sh == null ? null : { brand: -B * sh, corp: -Cp * sh };
+    }
+  }
   const hid = glHiddenRows(kind);
   const baseOf = c => (c.M.sales && Math.round(c.M.sales / 1e6)) ? c.M.sales : (S.act[c.ym] && S.act[c.ym].sales) || 0;
   let h = `<table class="pnl act" style="width:100%;min-width:${W}px"><colgroup><col style="width:250px">${cols.map(() => `<col style="width:${AW}px"><col style="width:${PW}px">`).join('')}</colgroup><thead>` +
@@ -107,7 +131,7 @@ function renderActual(C) {
     `<tr>${cols.map(c => `<th class="num sub2${c.est ? ' est' : ''}">액</th><th class="num sub2${c.est ? ' est' : ''}">율</th>`).join('')}</tr></thead><tbody>`;
   for (const a of visibleRows(S.mode).filter(x => !hid.has(x.code))) {
     const dr = glDrillable(a);
-    h += `<tr class="${rowCls(a)}">${labelCell(a, S.mode)}` + cols.map(c => {
+    h += `<tr class="${rowCls(a)}">${labelCell(a, S.mode, withAlloc && a.code === 'op' ? 'op_ex' : null)}` + cols.map(c => {
       const v = c.M[a.code], base = baseOf(c);
       const has = v != null && Math.round(v / 1e6) !== 0;
       const amt = v == null ? '<span class="z">-</span>' : nf(v / 1e6);
@@ -116,13 +140,21 @@ function renderActual(C) {
       return `<td class="num${c.est ? ' est' : ''}${click ? ' drl' : ''}"${click ? ` data-code="${a.code}" data-ym="${c.ym}" title="눌러서 전표 내역 보기"` : ''}>${amt}</td><td class="num r${c.est ? ' est' : ''}">${rt}</td>`;
     }).join('') + '</tr>';
   }
+  if (withAlloc) {
+    // 마지막(영업이익) 줄 바로 뒤에 붙인다 — 영업이익이 마지막 보이는 줄이다(영업외 이하는 숨김)
+    const cell = (c, v, key) => { const base = baseOf(c), has = v != null && Math.round(v / 1e6) !== 0; return `<td class="num${c.est ? ' est' : ''}">${v == null ? '<span class="z">-</span>' : nf(v / 1e6)}</td><td class="num r${c.est ? ' est' : ''}">${has && base ? (v / base * 100).toFixed(1) + '%' : ''}</td>`; };
+    let ex = '';
+    if (!S.folded.has('op_ex')) for (const [n, key] of [['브랜드 안분비', 'brand'], ['법인 안분비', 'corp']]) ex += `<tr class="l1 lf ex"><td class="nm" style="padding-left:20px"><span class="car"></span>${n}</td>` + cols.map(c => cell(c, c.al ? c.al[key] : null)).join('') + '</tr>';
+    ex += `<tr class="l1 sub key"><td class="nm" style="padding-left:6px"><span class="car"></span>안분 후 영업이익</td>` + cols.map(c => cell(c, c.al ? (c.M.op || 0) + c.al.brand + c.al.corp : null)).join('') + '</tr>';
+    h += ex;
+  }
   wrap.innerHTML = h + '</tbody></table>';
   wrap.querySelectorAll('td.drl').forEach(td => { td.onclick = () => openDrill(td.dataset.code, td.dataset.ym); });
   const li = [];
   if (kind === 'sheet') li.push('받은 브랜드 실적표(백만원)입니다. 칸을 누르면 같은 월의 전표 합계 내역을 볼 수 있습니다 (실적표와 반올림·분류 차이가 있을 수 있음).');
   else {
     li.push('전표 합계 기준입니다 — 인건비·제조경비·판관비는 브랜드 실적표와 월 ±1~2백만원 안에서 맞습니다. <b>식재료원가</b>는 식품매출원가에서 제조 비용을 뺀 파생 값이라 원가 시스템 값과 다를 수 있습니다.');
-    if (kind === 'store' || kind === 'stores') li.push('매출은 매출 앱(store_sales) 기준 순매출(÷1.1)입니다. 매장 단위에는 영업외·법인세를 넣지 않았습니다.');
+    if (kind === 'store' || kind === 'stores') li.push('매출은 매출 앱(store_sales) 기준 순매출(÷1.1)입니다. 매장 단위에는 영업외·법인세를 넣지 않았습니다. <b>브랜드·법인 안분비</b>는 그 달 안분 전표 합계(법인 = 텍스트에 EP, 브랜드 = 그 밖의 비매장)를 매장 순매출 비율로 나눈 값이고, <b>안분 후 영업이익</b> = 영업이익 − 두 안분비입니다 (영업이익 줄을 누르면 안분비 줄이 접힙니다).');
     const un = Object.keys((S.gl[S.acScope] || {}).unmapped || {});
     if (un.length) li.push(`<span style="color:var(--crit)">계정 매핑이 없는 전표가 있습니다 (${un.join(', ')}) — gl_acct_map 에 추가해야 반영됩니다.</span>`);
   }
@@ -266,7 +298,7 @@ async function glSave() {
     const names = {}; for (const r of U.rows) if (r.ccName) names[r.cc] = r.ccName;
     const { error: e2 } = await sb.from('gl_cc_names').upsert(Object.entries(names).map(([cost_center, name]) => ({ cost_center, name })), { onConflict: 'cost_center' });
     if (e2) return fail('코스트센터 이름 저장 실패: ' + e2.message);
-    S.gl = {};                                   // 캐시 비우기 → 실적 추이가 새 전표로 다시 계산된다
+    S.gl = {}; S.glAlloc = null;                 // 캐시 비우기 → 실적 추이가 새 전표로 다시 계산된다
     msg.textContent = `저장했습니다 — 전표 ${N.toLocaleString('ko-KR')}행 (${yms[0]} ~ ${yms[yms.length - 1]}). "실적 추이"에서 확인하세요.`; msg.className = 'plan-msg ok';
     U.rows = []; U.busy = false; $('upFile').value = '';
   } catch (e) { fail('저장 실패: ' + (e.message || e)); }
