@@ -466,7 +466,7 @@ function renderNotes(C) {
   const setSt = [...new Set(S.adj.filter(r => r.mode === 'set').map(r => r.scope))];
   if (setSt.length) li.push(`<b>고정값 매장</b>: ${setSt.map(sname).join(', ')} — 사용자가 직접 추정한 폐점·오픈 비용(손익 전체)을 그대로 씁니다. 매출만 예측이고 비용 계정은 아래 "특이비용" 목록의 고정값 줄입니다(삭제하면 규칙 계산으로 돌아갑니다).`);
   li.push('매장 탭의 브랜드 안분비·법인 안분비 줄은 안분 합계를 매장 순매출 비율로 나눈 값입니다 (모든 매장이 매출 대비 같은 비율을 부담).');
-  li.push(D.subYm ? `<b>견본비</b> = ${+D.subYm.slice(5)}월 부자재 사용액 ÷ 해당 기간 실매출${D.subSpan ? `(${D.subSpan.from.slice(5).replace('-', '/')}~${D.subSpan.to.slice(5).replace('-', '/')})` : ''} 비율(매장별, 이력 없는 프리미엄 매장은 프리미엄 평균) × 예상 순매출. 안분비의 견본비는 0입니다.` : '<b>견본비</b>: 부자재 사용량(원가 > 데이터 > 업로드 "자재 사용량(부자재)")이 아직 없어 0입니다 — 올리면 (부자재 사용액 ÷ 해당 기간 실매출) 비율 × 예상 순매출로 채워집니다.');
+  li.push(D.subYm ? `<b>견본비</b> = ${+D.subYm.slice(5)}월 부자재 사용액 ÷ 해당 기간 실매출${D.subSpan ? `(${D.subSpan.from.slice(5).replace('-', '/')}~${D.subSpan.to.slice(5).replace('-', '/')})` : ''} 비율(매장별, 업로드에 없는 매장은 프리미엄 매장은 프리미엄 평균·그 밖은 전 매장 합산 ${D.brandSubRate != null ? (D.brandSubRate * 100).toFixed(2) + '%' : '-'}) × 예상 순매출. 안분비의 견본비는 0입니다.${Object.keys(D.subRate).length ? '' : ' <span style="color:var(--crit)">부자재 사용량은 있지만 같은 기간 매출을 찾지 못해 비율을 계산하지 못했습니다 — 견본비가 0으로 들어갑니다.</span>'}${D.subSpan && D.subSpan.to < D.ym + '-15' && D.subYm === D.ym ? ' 월 초 며칠치 비율이라 변동이 큽니다(주차가 쌓일수록 안정).' : ''}` : '<b>견본비</b>: 부자재 사용량(원가 > 데이터 > 업로드 "자재 사용량(부자재)")이 아직 없어 0입니다 — 올리면 (부자재 사용액 ÷ 해당 기간 실매출) 비율 × 예상 순매출로 채워집니다.');
   li.push('선임점장 급여의 본부 안분(50%)은 아직 반영하지 않았습니다.');
   $('plNotes').innerHTML = '<ul>' + li.map(x => `<li>${x}</li>`).join('') + '</ul>';
 }
