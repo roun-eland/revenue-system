@@ -276,9 +276,16 @@ function applySets(code, leaf) {
   for (const r of sets) out[r.account_code] = (out[r.account_code] || 0) + (+r.amount || 0);
   return out;
 }
+// 계정 고정값(mode='fix') — 그 매장의 해당 계정만 입력값으로 바꾼다 (나머지 계정은 규칙 계산 그대로). 예: 동부산 소모품비(오픈 특이비용이 섞인 이력 대신 350만원)
+function applyFix(code, leaf) {
+  const fx = S.adj.filter(r => r.scope === code && r.mode === 'fix' && PNL_BY[r.account_code]);
+  if (!fx.length) return leaf;
+  const out = { ...leaf }; for (const r of fx) out[r.account_code] = +r.amount || 0;
+  return out;
+}
 function adjLeaf(scope) {
   const out = {};
-  for (const r of S.adj) if (r.scope === scope && r.mode !== 'set' && PNL_BY[r.account_code]) out[r.account_code] = (out[r.account_code] || 0) + (+r.amount || 0);
+  for (const r of S.adj) if (r.scope === scope && (!r.mode || r.mode === 'add') && PNL_BY[r.account_code]) out[r.account_code] = (out[r.account_code] || 0) + (+r.amount || 0);
   return out;
 }
 const addLeaf = (a, b) => { const o = { ...a }; for (const k of Object.keys(b)) o[k] = (o[k] || 0) + b[k]; return o; };
@@ -289,7 +296,7 @@ function computeAll() {
   let sum = {};
   for (const c of STORES) {
     const b = baseLeaf(c); metas[c] = b.meta;
-    const leaf = addLeaf(applySets(c, b.leaf), adjLeaf(c));
+    const leaf = addLeaf(applyFix(c, applySets(c, b.leaf)), adjLeaf(c));
     store[c] = evalTree(leaf);
     sum = addLeaf(sum, leaf);
   }
@@ -457,7 +464,7 @@ function renderNotes(C) {
   li.push(`<b>급여_아르바이트</b> = 급여대장으로 확정된 누적 메이트 급여 + 남은 기간 예상 순매출 × 반영 비율(누적 비율과 ${+D.base.slice(5)}월 비율을 경과 일수/14로 섞음). 이번 달 급여대장이 있는 매장 ${mt}곳은 이 방식, 없는 매장은 ${+D.base.slice(5)}월 메이트 급여율 × 예상 순매출.`);
   if (D.est) {
     const E = D.est, mm = ym => `${ym.slice(2, 4)}년${+ym.slice(5)}월`;
-    li.push(`<b>제조경비·판관비</b>는 전표 기준 직전 3개월(${E.base.map(mm).join('·')})로 추정합니다 — 복리후생·세금과공과: 급여 연동(직전 3개월 계정합 ÷ 급여합 × 예상 급여) · 소모품비·감가상각·그 밖의 고정 계정: 직전 3개월 평균 × 영업일 비율 · 수도광열비: 직전 3개월 합계 평균(이력 없는 매장은 면적 × 단위면적당 평균) · 운반비: 직전 3개월 비율 × 예상 순매출 · 지급수수료(제조): 기타제조경비 기준표 합계 · 지급임차료: 임대을은 임차료율 × 순매출, 임대갑은 고정 · 광고선전비·성과상여는 0(특이비용으로 입력) · 견본비는 부자재 사용량 비율(아래).`);
+    li.push(`<b>제조경비·판관비</b>는 전표 기준 직전 3개월(${E.base.map(mm).join('·')})로 추정합니다 — 복리후생·세금과공과: 급여 연동(직전 3개월 계정합 ÷ 급여합 × 예상 급여) · 소모품비·감가상각·그 밖의 고정 계정: 직전 3개월 평균 × 영업일 비율 · 수도광열비: 직전 3개월 합계 평균(이력 없는 매장은 면적 × 단위면적당 평균) · 운반비: 직전 3개월 비율 × 예상 순매출 · 기타제조경비(⑩): 기준표 합계(통신비·소각·청소·방역·리스·대행·유지보수) · 지급임차료: 임대을은 임차료율 × 순매출, 임대갑은 고정 · 광고선전비: 매장마다 5만원(추가분은 특이비용으로 입력) · 성과상여는 0 · 견본비는 부자재 사용량 비율(아래).`);
     li.push(`<b>안분비</b> = 법인 안분(EP 배부) ${mm(E.base[0])}~${mm(E.base[E.base.length - 1])} 평균 고정 금액 + 브랜드 안분 ${mm(E.brandYm)} 고정 금액 (+ 금융손익·진이익 차감). 안분 열의 금액은 각 계정 줄에서 볼 수 있습니다.`);
     const fbs = [...E.fb].map(([c, k]) => `${sname(c)}(${k} 평균)`); if (fbs.length) li.push(`전표 이력이 없거나 짧아 평균으로 대체한 매장: ${fbs.join(', ')} — 프리미엄 매장(동탄·의정부·해운대·광명·동부산·수지)은 프리미엄 매장 평균을 씁니다. 기타제조경비 기준표에 없는 매장(${STORES.filter(c => !E.fixed[c]).map(sname).join(', ') || '없음'})은 항목별 중앙값(프리미엄 매장은 프리미엄 매장 중앙값)을 썼습니다.`);
   } else li.push('<b>제조경비·판관비·안분비</b>: 전표가 아직 없어 비어 있습니다 (전표 업로드 후 채워집니다).');
@@ -465,6 +472,8 @@ function renderNotes(C) {
   li.push(`<b>당기순이익</b> = (영업이익 + 영업외손익 0 + 금융손익 −${((FIN_COST_EST - INT_INC_EST) / 1e6).toFixed(0)}백만원) × (1 − 법인세율 ${(TAX_RATE * 100).toFixed(0)}%), 세전이익이 음수면 세금 0. 26년6~9월 실적 영업이익에 적용하면 실제 순이익과 평균 오차 0.8백만원 (영업이익 65% 방식은 28백만원). <b>진이익</b> = 당기순이익 − ${(TRUE_NET_DED / 1e6).toFixed(0)}백만원 (브랜드 차감, 추정 — 브랜드 탭의 안분비 열에 들어감).`);
   const setSt = [...new Set(S.adj.filter(r => r.mode === 'set').map(r => r.scope))];
   if (setSt.length) li.push(`<b>고정값 매장</b>: ${setSt.map(sname).join(', ')} — 사용자가 직접 추정한 폐점·오픈 비용(손익 전체)을 그대로 씁니다. 매출만 예측이고 비용 계정은 아래 "특이비용" 목록의 고정값 줄입니다(삭제하면 규칙 계산으로 돌아갑니다).`);
+  const fixAcc = S.adj.filter(r => r.mode === 'fix');
+  if (fixAcc.length) li.push(`<b>계정 고정값</b>: ${fixAcc.map(r => `${sname(r.scope)} ${PNL_BY[r.account_code] ? PNL_BY[r.account_code].label.replace(/^[①-⑮]\s*/, '') : r.account_code} ${Math.round(+r.amount / 10000).toLocaleString('ko-KR')}만원`).join(' · ')} — 규칙 계산 대신 입력값을 씁니다(특이비용 목록의 고정값 줄, 삭제하면 규칙으로 복귀).`);
   li.push('매장 탭의 브랜드 안분비·법인 안분비 줄은 안분 합계를 매장 순매출 비율로 나눈 값입니다 (모든 매장이 매출 대비 같은 비율을 부담).');
   li.push(D.subYm ? `<b>견본비</b> = ${+D.subYm.slice(5)}월 부자재 사용액 ÷ 해당 기간 실매출${D.subSpan ? `(${D.subSpan.from.slice(5).replace('-', '/')}~${D.subSpan.to.slice(5).replace('-', '/')})` : ''} 비율(매장별, 업로드에 없는 매장은 프리미엄 매장은 프리미엄 평균·그 밖은 전 매장 합산 ${D.brandSubRate != null ? (D.brandSubRate * 100).toFixed(2) + '%' : '-'}) × 예상 순매출. 안분비의 견본비는 0입니다.${Object.keys(D.subRate).length ? '' : ' <span style="color:var(--crit)">부자재 사용량은 있지만 같은 기간 매출을 찾지 못해 비율을 계산하지 못했습니다 — 견본비가 0으로 들어갑니다.</span>'}${D.subSpan && D.subSpan.to < D.ym + '-15' && D.subYm === D.ym ? ' 월 초 며칠치 비율이라 변동이 큽니다(주차가 쌓일수록 안정).' : ''}` : '<b>견본비</b>: 부자재 사용량(원가 > 데이터 > 업로드 "자재 사용량(부자재)")이 아직 없어 0입니다 — 올리면 (부자재 사용액 ÷ 해당 기간 실매출) 비율 × 예상 순매출로 채워집니다.');
   li.push('선임점장 급여의 본부 안분(50%)은 아직 반영하지 않았습니다.');
@@ -483,7 +492,7 @@ function renderAdjust() {
   const tot = rows.reduce((t, r) => t + (+r.amount || 0), 0);
   $('adjList').innerHTML = rows.length
     ? '<table class="pnl small"><thead><tr><th>범위</th><th>계정</th><th class="num">금액(원)</th><th>메모</th><th></th></tr></thead><tbody>' +
-      rows.map(r => `<tr><td>${r.scope === 'brand' ? '브랜드(본부)' : esc(sname(r.scope))}</td><td>${esc(PNL_BY[r.account_code] ? pathLabel(PNL_BY[r.account_code]) : r.account_code)}</td><td class="num">${nf(r.amount)}</td><td>${esc(r.note || '')}${r.mode === 'set' ? ' <span class="pend">고정값</span>' : ''}</td><td><button class="btn btn-sm" data-del="${r.id}" type="button">삭제</button></td></tr>`).join('') +
+      rows.map(r => `<tr><td>${r.scope === 'brand' ? '브랜드(본부)' : esc(sname(r.scope))}</td><td>${esc(PNL_BY[r.account_code] ? pathLabel(PNL_BY[r.account_code]) : r.account_code)}</td><td class="num">${nf(r.amount)}</td><td>${esc(r.note || '')}${r.mode === 'set' ? ' <span class="pend">고정값(매장 전체)</span>' : r.mode === 'fix' ? ' <span class="pend">고정값(이 계정)</span>' : ''}</td><td><button class="btn btn-sm" data-del="${r.id}" type="button">삭제</button></td></tr>`).join('') +
       `<tr class="key"><td colspan="2">합계</td><td class="num">${nf(tot)}</td><td colspan="2"></td></tr></tbody></table>`
     : '<p class="dnote">이 달에 입력한 특이비용이 없습니다.</p>';
   document.querySelectorAll('#adjList [data-del]').forEach(b => { b.onclick = () => delAdjust(+b.dataset.del); });

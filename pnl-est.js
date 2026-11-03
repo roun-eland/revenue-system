@@ -3,18 +3,20 @@
 // 규칙 (직전 3개월 = 전표가 있는 가장 최근 3개월):
 //   복리후생(제조)·세금과공과(제조)   매장별 (직전 3개월 계정합 ÷ 직전 3개월 급여합) × 예상 급여(직원+아르바이트)
 //   소모품비                           직전 3개월 평균 금액 (+ 월별 특이비용은 화면에서 입력)
-//   견본비·광고선전비·성과상여 등       0 (견본비는 데이터를 받은 뒤 별도 설계, 광고는 특이비용으로)
+//   광고선전비                         매장마다 5만원 고정 (사용자 지정 2026-11-04, 추가 광고는 특이비용으로 입력)
+//   견본비                             pnl.js 에서 부자재 사용액 ÷ 실매출 비율로 계산 / 성과상여 등 0
 //   수도광열비                         직전 3개월 합계 평균 (분해·기온 보정은 백테스트에서 개선이 없어 쓰지 않음 · 이력 없는 신규점은 면적 × 단위면적당 평균)
 //   운반비                             직전 3개월 평균 (운반비 ÷ 순매출) × 예상 순매출
 //   감가상각비·기타 고정 계정          직전 3개월 평균 금액 × 영업일 비율
-//   지급수수료(제조, ⑨)                사용자 기준표(통신비·소각·청소·방역·리스·대행·유지보수) 합계 — 표에 없는 매장은 항목별 중앙값
+//   기타제조경비(⑩)                   사용자 기준표(통신비·소각·청소·방역·리스·대행·유지보수) 합계 — 표에 없는 매장은 항목별 중앙값 (사용자가 관리하던 구분이 ⑩ — 브랜드 실적표·전표 이력은 이 항목들이 ⑨ 지급수수료)
 //   지급임차료(판관, ⑫)                임대을: 임차료율 × 순매출 / 임대갑: 직전 3개월 평균 고정액 (IFRS16 조정과 상쇄)
 //   안분비                             법인 안분(EP 배부) = 직전 3개월 평균 고정 금액 / 브랜드 안분 = 가장 최근 달 고정 금액
 // 급여_직원·퇴직급여·식재료원가·의제매입·급여_아르바이트는 pnl.js 의 기존 방식(맨파워·원가율·누적+잔여)을 그대로 쓴다.
 
 const EST_SKIP = new Set(['food_gross', 'food_tax', 'skip72', 'UNMAPPED', 'int_inc', 'fin_cost', 'oth_gain', 'oth_loss', 'food', 'pay_ft', 'pay_pt', 'retire']);
 const EST_ALLOC_SKIP = new Set(['food_gross', 'food_tax', 'skip72', 'UNMAPPED', 'int_inc', 'fin_cost', 'oth_gain', 'oth_loss', 'food']);
-const EST_ZERO = new Set(['cogs.4.4', 'cogs.4.10', 'cogs.3.3', 'sga.2', 'sga.8', 'cogs.5', 'cogs.6']);
+const EST_ZERO = new Set(['cogs.4.4', 'cogs.4.10', 'cogs.3.3', 'sga.2', 'sga.8', 'cogs.5', 'cogs.6']);   // 매장 추정에서 규칙 계산을 하지 않는 계정 (안분 계산에서도 제외) — 광고(sga.8)·기타제조경비(⑩)는 아래에서 따로 넣는다
+const EST_AD = 50000;   // 광고선전비 — 매장마다 월 5만원
 const EST_PAYLINK = new Set(['cogs.4.1', 'cogs.4.8']);
 const EST_FIX_ITEMS = ['통신비', '소각', '청소', '방역', '리스', '대행', '유지보수'];
 // 로운샤브 프리미엄 매장 — 이력이 없는 신규점(동부산·수지)의 대체값은 전체 평균이 아니라 이 매장들의 평균을 쓴다 (사용자 지시 2026-11-03)
@@ -105,15 +107,15 @@ function estStore(code, c) {
     let v;
     if (EST_ZERO.has(lf)) v = 0;
     else if (lf === 'cogs.4.5') v = own ? avg(lf) * c.cf : (inf.area ? inf.area * P(lf).perM2 * c.cf : avg(lf) * c.cf);   // 수도광열비 — 이력 없는 신규점은 면적 × 단위면적당 평균
-    else if (lf === 'cogs.4.9') {                                                                                          // 지급수수료(제조) = 기준표 합계
-      const f = E.fixed[code], med = prem ? E.fixedMedP : E.fixedMed; v = EST_FIX_ITEMS.reduce((t, it) => t + (f ? (f[it] || 0) : med[it]), 0) * c.cf;
-    }
+    else if (lf === 'cogs.4.9') v = 0;                                                                                     // ⑨ 지급수수료(제조) — 기준표 항목은 ⑩ 기타제조경비로 넣는다
     else if (lf === 'sga.12.1') v = inf.contract === '임대을' && inf.rate != null ? inf.rate / 100 * c.net : inf.contract === '임대갑' ? avg(lf) * c.cf : ratio(lf) * c.net;
     else if (lf === 'cogs.4.6') v = ratio(lf) * c.net;
     else if (EST_PAYLINK.has(lf)) v = payRatio(lf) * c.pay;
     else v = avg(lf) * c.cf;
     if (v) out[lf] = v;
   }
+  { const f = E.fixed[code], med = prem ? E.fixedMedP : E.fixedMed; out['cogs.4.10'] = EST_FIX_ITEMS.reduce((t, it) => t + (f ? (f[it] || 0) : med[it]), 0) * c.cf; }   // 기타제조경비 = 기준표 합계
+  if (c.cf > 0) out['sga.8'] = EST_AD;                                                                                                              // 광고선전비 5만원
   if (!E.amt[code] || !own) E.fb.set(code, prem ? '프리미엄' : '전체');
   return { leaf: out, pool: !own };
 }
