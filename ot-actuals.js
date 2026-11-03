@@ -540,7 +540,7 @@ function renderRosterPreview(res) {
     if (inFile.has(code) || otCloseFrac(code, ym) === 0) continue;
     const old = staffFor(code, ym);
     h += `<tr><td>${OT_DATA[code].name}</td><td colspan="${nCols}" style="text-align:left;white-space:normal;font-size:11px;color:var(--warn)">` +
-      `이번 파일에 없음 — ${old.srcYm ? `${old.srcYm.replace('-', '년 ')}월 맨파워 ${old.nfull}명 유지` : `기본 구성 ${old.nfull}명(8월 실측·신규점은 시드) 적용 중`}. 인원이 정해지면 파일에 이 매장 행을 넣어 다시 올려주세요.</td></tr>`;
+      `이번 파일에 없음 — 저장하면 ${ym.replace('-', '년 ')}월부터 정직원 없음(0명)으로 계산됩니다 (현재: ${old.srcYm ? (old.nfull ? `${old.srcYm.replace('-', '년 ')}월 맨파워 ${old.nfull}명` : `${old.srcYm.replace('-', '년 ')}월 맨파워에 없음`) : `기본 구성 ${old.nfull}명(8월 실측)`}). 인원이 정해지면 파일에 이 매장 행을 넣어 다시 올려주세요.</td></tr>`;
   }
   h += '</tbody></table></div>';
   h += `<p class="dnote">* 기존 = 8월 근태 실측 기본 구성. ${gradeCost ? `전사 정직원 월 급여 합계 변화 <b>${dPay > 0 ? '+' : ''}${won(dPay / 10000)}만원</b> (직급 표준 인건비+직책수당 기준). ` : ''}` +

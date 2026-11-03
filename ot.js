@@ -48,9 +48,12 @@ function sideFor(code, ym) {
   const k = Object.keys(ROSTER_SIDE).filter(m => m <= ym && ROSTER_SIDE[m][code]).sort().pop();
   return k ? ROSTER_SIDE[k][code] : null;
 }
+// 조회월 이하의 가장 최근 맨파워 "파일"을 기준으로 한다. 그 파일에 이 매장이 없으면 이전 달을 이어받지 않고 정직원 없음(빈 구성)으로 본다 —
+// 맨파워 현황에서 뺀 매장(폐점 등)이 지난달 인원으로 계속 잡히던 문제 (2026-11-03 사용자 지시: 맨파워 계획에 없으면 없는 것). 맨파워 파일이 아직 없는 달만 null(8월 실측 시드).
 function rosterFor(code, ym) {
-  const k = Object.keys(ROSTER).filter(m => m <= ym && ROSTER[m][code]).sort().pop();
-  return k ? { ym: k, counts: ROSTER[k][code] } : null;
+  const k = Object.keys(ROSTER).filter(m => m <= ym).sort().pop();
+  if (!k) return null;
+  return ROSTER[k][code] ? { ym: k, counts: ROSTER[k][code] } : { ym: k, counts: {}, none: true };
 }
 // 직급 구성 → 인원·월 정직원 급여.
 //  · 월별 맨파워(기본): 그 달에 반영된 직급 구성 × 직급 단가(+직책수당)만으로 계산한다 — 8월 보정액(payOff)은 쓰지 않는다 (2026-10-29 사용자 지시:
@@ -60,6 +63,7 @@ function rosterFor(code, ym) {
 function calcStaffPay(code, counts, opts) {
   const s0 = OT_DATA[code];
   const nf = GRADE_ORDER.reduce((t, g) => t + (counts[g] || 0), 0);
+  if (!nf) return { nf: 0, fullpay: 0 }; // 정직원 없음 — 인원·급여·연차·퇴직 모두 0
   let fullpay;
   if (gradeCost) { // planner: 직급별 단가 정밀 계산
     const allow = g => (gradeAllow && gradeAllow[g]) || 0;
@@ -73,7 +77,7 @@ function calcStaffPay(code, counts, opts) {
     const avg = s0.fullpay / s0.nfull;
     fullpay = Math.max(0, s0.fullpay + (Math.max(1, nf) - s0.nfull) * avg);
   }
-  return { nf: Math.max(1, nf), fullpay };
+  return { nf, fullpay };
 }
 // 확정 정직원 급여(SAP) — ot_labor_monthly.ft_pay, 2026-09부터. 확정 급여가 있는 달은 맨파워 직급 단가 추정 대신 이 값을 정직원 급여로 쓴다 (2026-10-29).
 // 인원(연차·퇴직 계산용)·구성은 맨파워가 있으면 그것, 없으면 8월 실측 구성.
@@ -877,7 +881,10 @@ function staffTotals(code) {
 function updateStaffSum() {
   // 합계·월급여 문구는 화면이 번잡하다는 피드백으로 제거 (2026-10-02) — staffTotals()는 render()가
   // 계속 그대로 쓰므로 계산에는 영향 없음. 구성의 출처(맨파워 업로드 vs 8월 실측 기본값)만 한 줄로 알려준다.
-  $('staffSum').innerHTML = staffSrcYm
+  const noStaff = !GRADE_ORDER.some(g => staffCnt[g] > 0);
+  $('staffSum').innerHTML = staffSrcYm && noStaff
+    ? `${staffSrcYm.replace('-', '년 ')}월 맨파워 현황에 이 매장이 없어 정직원 없음으로 계산합니다 — 값을 넣으면 이 시뮬레이션에만 반영됩니다`
+    : staffSrcYm
     ? `${staffSrcYm.replace('-', '년 ')}월 맨파워(업로드) 기준 구성 — 값을 고치면 이 시뮬레이션에만 반영됩니다`
     : '8월 근태 실측 기본 구성 — 실적 입력에서 정직원 맨파워를 올리면 그 값으로 채워집니다';
 }

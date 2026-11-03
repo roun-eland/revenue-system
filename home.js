@@ -219,9 +219,10 @@ async function laborMonth(ym) {
   const confPay = {}; ftRows.forEach(r => { if (r.ft_pay != null) confPay[r.store_code] = +r.ft_pay; }); // 확정 정직원 급여(SAP) — ot.js staffFor와 같은 규칙
   const staffBase = code => {
     const s0 = OT_DATA[code];
-    const k = Object.keys(ROSTER).filter(m => m <= ym && ROSTER[m][code]).sort().pop();
+    const k = Object.keys(ROSTER).filter(m => m <= ym).sort().pop(); // 가장 최근 맨파워 파일 — 거기에 매장이 없으면 정직원 없음 (ot.js rosterFor와 같은 규칙)
     if (!k) return { nfull: s0.nfull, fullpay: s0.fullpay };
-    const counts = ROSTER[k][code];
+    const counts = ROSTER[k][code] || {};
+    if (!GRADE_ORDER.some(g => counts[g] > 0)) return { nfull: 0, fullpay: 0 };
     const nf = GRADE_ORDER.reduce((t, g) => t + (counts[g] || 0), 0);
     let fullpay;
     if (gradeCost) {
