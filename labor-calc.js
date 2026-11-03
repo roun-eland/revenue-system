@@ -32,12 +32,15 @@ function lcSeniorMonthly(staff) {
 //  attByDate : 근태 일자별 {iso: mate_mh} (급여대장 시간 검증용, 휴점일 포함 전체)
 //  periods : 이 매장의 급여대장 구간 [{period_start, period_end, mate_pay, mate_mh}]
 // 반환: cutIso(누적 기준일), ratioSales(그 날까지 매출), labor(그 날까지 인건비), hasPay(급여대장 실제값 사용 여부) …
-function lcStoreCost({ dim, eff, staff, dayRows, attByDate, periods }) {
+//  dataThrough : 전 매장 중 매출·근태가 모두 올라온 마지막 일자 — 이 매장의 마지막 영업일보다 뒤여도 그 날까지의 급여대장 구간은 쓴다.
+//                (그 사이 날은 데이터가 올라온 상태에서 영업 기록이 없으니 휴무·폐점 후 정리 근무 — 실제 지급된 급여이므로 실제값으로 인정, 2026-11-03)
+function lcStoreCost({ dim, eff, staff, dayRows, attByDate, periods, dataThrough }) {
   const lastIso = dayRows[dayRows.length - 1].iso;
+  const payLimit = dataThrough && dataThrough > lastIso ? dataThrough : lastIso;
   let payActual = 0, cutIso = null;
   const covered = new Set(), bad = [];
   for (const p of periods || []) {
-    if (p.period_end > lastIso) continue;                  // 매출·근태가 아직 없는 날을 포함하는 구간은 쓰지 않음
+    if (p.period_end > payLimit) continue;                 // 데이터가 아직 올라오지 않은 날을 포함하는 구간은 쓰지 않음
     let att = 0;
     for (let d = p.period_start; d <= p.period_end; d = lcAddDay(d, 1)) att += +(attByDate[d] || 0);
     const r = att > 0 ? (+p.mate_mh || 0) / att : null;

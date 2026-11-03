@@ -504,6 +504,10 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
   salesRows.forEach(r => { (sBy[r.store_code] = sBy[r.store_code] || {})[r.sales_date] = r; });
   laborRows.forEach(r => { (lBy[r.store_code] = lBy[r.store_code] || {})[r.work_date] = r; });
   (periodRows || []).forEach(r => { (pBy[r.store_code] = pBy[r.store_code] || []).push(r); });
+  let sMax = '', lMax = '';
+  salesRows.forEach(r => { if (r.sales_date > sMax) sMax = r.sales_date; });
+  laborRows.forEach(r => { if (r.work_date > lMax) lMax = r.work_date; });
+  const dataThrough = sMax && lMax ? (sMax < lMax ? sMax : lMax) : null; // 전 매장 기준 매출·근태가 모두 올라온 마지막 일자 (labor-calc.js lcStoreCost)
   const out = [];
   for (const [code, s0] of Object.entries(OT_DATA)) {
     const S = sBy[code], L = lBy[code];
@@ -526,7 +530,7 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
     const sf = staffFor(code, ym); // 업로드된 정직원 맨파워(없으면 8월 실측 구성)
     const attByDate = {};
     for (const iso of Object.keys(L)) attByDate[iso] = +L[iso].mate_mh || 0;
-    const lc = lcStoreCost({ dim, eff: s0.eff, staff: sf, dayRows, attByDate, periods: pBy[code] });
+    const lc = lcStoreCost({ dim, eff: s0.eff, staff: sf, dayRows, attByDate, periods: pBy[code], dataThrough });
     const labor = lc.labor;
     const adjH = otAdjHours(code, ym, last), mh = mate + ft + adjH; // 보정시간(기준정보 특이값) 반영
     // 목표 인건비율(생산성 100%) = 이 매장이 목표(곡선) 생산성을 정확히 달성했을 때의 누적 인건비율.
@@ -537,8 +541,8 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
     for (const iso of Object.keys(L)) { if (iso > cutI) continue; const mm = +L[iso].mate_mh || 0; mateC += mm; wAllC += mm * (OT_HOLIDAYS.has(iso) ? 1.5 : 1); }
     let payRate = s0.eff;
     if (lc.hasPay) {
-      const lastIso = dayRows[dayRows.length - 1].iso, cov = new Set();
-      (pBy[code] || []).filter(p => p.period_end <= lastIso).forEach(p => { for (let d = p.period_start; d <= p.period_end; d = lcAddDay(d, 1)) cov.add(d); });
+      const lastIso = dayRows[dayRows.length - 1].iso, cov = new Set(), payLimit = dataThrough && dataThrough > lastIso ? dataThrough : lastIso;
+      (pBy[code] || []).filter(p => p.period_end <= payLimit).forEach(p => { for (let d = p.period_start; d <= p.period_end; d = lcAddDay(d, 1)) cov.add(d); });
       let wCov = 0; for (const iso of Object.keys(L)) if (cov.has(iso)) wCov += (+L[iso].mate_mh || 0) * (OT_HOLIDAYS.has(iso) ? 1.5 : 1);
       if (wCov > 0) payRate = lc.payActual / wCov;
     }

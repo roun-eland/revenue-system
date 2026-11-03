@@ -242,6 +242,10 @@ async function laborMonth(ym) {
   const pBy = {};
   perRows.forEach(r => { (pBy[r.store_code] = pBy[r.store_code] || []).push(r); });
   const dim = daysIn(ym);
+  let sMax = '', lMax = '';
+  sr.forEach(r => { if (r.sales_date > sMax) sMax = r.sales_date; });
+  lr.forEach(r => { if (r.work_date > lMax) lMax = r.work_date; });
+  const dataThrough = sMax && lMax ? (sMax < lMax ? sMax : lMax) : null; // 전 매장 기준 매출·근태가 모두 올라온 마지막 일자 (labor-calc.js lcStoreCost)
   let tSales = 0, tMH = 0, tLabor = 0, tRatioSales = 0, n = 0, nEst = 0, first = null, last = null, rCut = '';
   for (const [code, s0] of Object.entries(OT_DATA)) {
     const S = sBy[code], L = lBy[code];
@@ -259,7 +263,7 @@ async function laborMonth(ym) {
     if (!days) continue;
     const attByDate = {};
     for (const iso of Object.keys(L)) attByDate[iso] = +L[iso].mate_mh || 0;
-    const lc = lcStoreCost({ dim, eff: s0.eff, staff: staffFor(code), dayRows, attByDate, periods: pBy[code] });
+    const lc = lcStoreCost({ dim, eff: s0.eff, staff: staffFor(code), dayRows, attByDate, periods: pBy[code], dataThrough });
     tLabor += lc.labor;                 // 급여 등록일까지의 인건비
     tRatioSales += lc.ratioSales;       // 같은 날짜까지의 매출 (인건비율용)
     if (lc.cutIso > rCut) rCut = lc.cutIso;
