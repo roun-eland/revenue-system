@@ -17,6 +17,8 @@ const EST_ALLOC_SKIP = new Set(['food_gross', 'food_tax', 'skip72', 'UNMAPPED', 
 const EST_ZERO = new Set(['cogs.4.4', 'cogs.4.10', 'cogs.3.3', 'sga.2', 'sga.8', 'cogs.5', 'cogs.6']);
 const EST_PAYLINK = new Set(['cogs.4.1', 'cogs.4.8']);
 const EST_FIX_ITEMS = ['통신비', '소각', '청소', '방역', '리스', '대행', '유지보수'];
+// 로운샤브 프리미엄 매장 — 이력이 없는 신규점(동부산·수지)의 대체값은 전체 평균이 아니라 이 매장들의 평균을 쓴다 (사용자 지시 2026-11-03)
+const EST_PREMIUM = new Set(['RU042', 'RU043', 'RU044', 'RU045', 'RU046', 'RU047']);
 const estMean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
 const estMedian = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 
@@ -41,7 +43,12 @@ async function loadEst(ym) {
   const info = {}; for (const r of si.data || []) info[r.store_code] = { rate: r.rent_rate == null ? null : +r.rent_rate, contract: r.contract_type, area: +r.area_m2 || 0 };
   const fixed = {}, perItem = {};
   for (const r of fx.data || []) { (fixed[r.store_code] = fixed[r.store_code] || {})[r.item] = +r.amount; (perItem[r.item] = perItem[r.item] || []).push(+r.amount); }
-  const fixedMed = {}; for (const it of EST_FIX_ITEMS) fixedMed[it] = estMedian(perItem[it] || []);
+  const fixedMed = {}, fixedMedP = {};
+  for (const it of EST_FIX_ITEMS) {
+    fixedMed[it] = estMedian(perItem[it] || []);
+    const pv = Object.keys(fixed).filter(sc => EST_PREMIUM.has(sc)).map(sc => fixed[sc][it] || 0);
+    fixedMedP[it] = pv.length ? estMedian(pv) : fixedMed[it];
+  }
   // 안분: 법인 = 직전 3개월 평균, 브랜드 = 가장 최근 달
   const cm = {}, bm = {};                       // 계정 → 월 → 금액
   for (const r of corp.data || []) (cm[r.leaf] = cm[r.leaf] || {})[r.ym] = +r.amount;
@@ -50,21 +57,28 @@ async function loadEst(ym) {
   const corpAvg = {}, brandLast = {};
   for (const [lf, mm] of Object.entries(cm)) if (!EST_ALLOC_SKIP.has(lf) && !EST_ZERO.has(lf) && PNL_BY[lf]) corpAvg[lf] = base.reduce((t, m) => t + (mm[m] || 0), 0) / base.length;
   for (const [lf, mm] of Object.entries(bm)) if (!EST_ALLOC_SKIP.has(lf) && !EST_ZERO.has(lf) && PNL_BY[lf]) brandLast[lf] = mm[brandYm] || 0;
-  const E = { base, amt, sales, info, fixed, fixedMed, corpAvg, brandLast, brandYm, lastYm: months[months.length - 1], pool: {}, fb: new Set() };
-  // 이력 있는 매장 전체의 합산 통계 (신규점·이력 없는 매장의 대체값)
+  const E = { base, amt, sales, info, fixed, fixedMed, fixedMedP, corpAvg, brandLast, brandYm, lastYm: months[months.length - 1], pool: {}, poolP: {}, fb: new Map() };
+  // 이력 있는 매장들의 합산 통계 (신규점·이력 없는 매장의 대체값) — 전체 매장용(pool)과 프리미엄 매장용(poolP)
   const leaves = new Set(); for (const a of Object.values(amt)) for (const lf of Object.keys(a)) leaves.add(lf);
-  for (const lf of leaves) {
-    let sumA = 0, n = 0, sumS = 0, sumP = 0, sumAP = 0, area = 0;
-    for (const [sc, a] of Object.entries(amt)) {
-      for (const m of base) {
-        const s = (sales[sc] || {})[m] || 0; if (s <= 0) continue;
-        const v = (a[lf] || {})[m] || 0, p = ((a['pay_ft'] || {})[m] || 0) + ((a['pay_pt'] || {})[m] || 0);
-        sumA += v; n++; sumS += s; if (p > 0) { sumP += p; sumAP += v; }
+  const buildPool = pick => {
+    const out = {};
+    for (const lf of leaves) {
+      let sumA = 0, n = 0, sumS = 0, sumP = 0, sumAP = 0, area = 0;
+      for (const [sc, a] of Object.entries(amt)) {
+        if (!pick(sc)) continue;
+        for (const m of base) {
+          const s = (sales[sc] || {})[m] || 0; if (s <= 0) continue;
+          const v = (a[lf] || {})[m] || 0, p = ((a['pay_ft'] || {})[m] || 0) + ((a['pay_pt'] || {})[m] || 0);
+          sumA += v; n++; sumS += s; if (p > 0) { sumP += p; sumAP += v; }
+          if (lf === 'cogs.4.5' && info[sc]) area += info[sc].area || 0;
+        }
       }
-      if (lf === 'cogs.4.5' && info[sc]) area += (info[sc].area || 0) * base.filter(m => ((sales[sc] || {})[m] || 0) > 0).length;
+      out[lf] = { avg: n ? sumA / n : 0, ratio: sumS ? sumA / sumS : 0, payRatio: sumP ? sumAP / sumP : 0, perM2: area ? sumA / area : 0 };
     }
-    E.pool[lf] = { avg: n ? sumA / n : 0, ratio: sumS ? sumA / sumS : 0, payRatio: sumP ? sumAP / sumP : 0, perM2: area ? sumA / area : 0 };
-  }
+    return out;
+  };
+  E.pool = buildPool(() => true);
+  E.poolP = buildPool(sc => EST_PREMIUM.has(sc));
   return E;
 }
 
@@ -73,7 +87,8 @@ function estStore(code, c) {
   const E = S.D && S.D.est; if (!E) return { leaf: {}, pool: false };
   const A = E.amt[code] || {}, sal = E.sales[code] || {}, inf = E.info[code] || {};
   const hist = E.base.filter(m => (sal[m] || 0) > 0);
-  const own = hist.length > 0, P = lf => E.pool[lf] || { avg: 0, ratio: 0, payRatio: 0, perM2: 0 };
+  const own = hist.length > 0, prem = EST_PREMIUM.has(code) && Object.keys(E.poolP).length > 0;
+  const P = lf => (prem && E.poolP[lf]) || E.pool[lf] || { avg: 0, ratio: 0, payRatio: 0, perM2: 0 };   // 프리미엄 매장은 프리미엄 평균
   const val = (lf, m) => (A[lf] || {})[m] || 0;
   const avg = lf => own ? estMean(hist.map(m => val(lf, m))) : P(lf).avg;
   const ratio = lf => { if (!own) return P(lf).ratio; const s = hist.reduce((t, m) => t + sal[m], 0); return s ? hist.reduce((t, m) => t + val(lf, m), 0) / s : 0; };
@@ -91,7 +106,7 @@ function estStore(code, c) {
     if (EST_ZERO.has(lf)) v = 0;
     else if (lf === 'cogs.4.5') v = own ? avg(lf) * c.cf : (inf.area ? inf.area * P(lf).perM2 * c.cf : avg(lf) * c.cf);   // 수도광열비 — 이력 없는 신규점은 면적 × 단위면적당 평균
     else if (lf === 'cogs.4.9') {                                                                                          // 지급수수료(제조) = 기준표 합계
-      const f = E.fixed[code]; v = EST_FIX_ITEMS.reduce((t, it) => t + (f ? (f[it] || 0) : E.fixedMed[it]), 0) * c.cf;
+      const f = E.fixed[code], med = prem ? E.fixedMedP : E.fixedMed; v = EST_FIX_ITEMS.reduce((t, it) => t + (f ? (f[it] || 0) : med[it]), 0) * c.cf;
     }
     else if (lf === 'sga.12.1') v = inf.contract === '임대을' && inf.rate != null ? inf.rate / 100 * c.net : inf.contract === '임대갑' ? avg(lf) * c.cf : ratio(lf) * c.net;
     else if (lf === 'cogs.4.6') v = ratio(lf) * c.net;
@@ -99,8 +114,15 @@ function estStore(code, c) {
     else v = avg(lf) * c.cf;
     if (v) out[lf] = v;
   }
-  if (!E.amt[code] || !own) E.fb.add(code);
+  if (!E.amt[code] || !own) E.fb.set(code, prem ? '프리미엄' : '전체');
   return { leaf: out, pool: !own };
+}
+
+// 안분 합계 (매장 탭의 브랜드 판관비·법인 판관비 줄 — 매장 순매출 비율로 나눈다)
+function estAllocTotals() {
+  const E = S.D && S.D.est; if (!E) return null;
+  const sum = o => Object.values(o).reduce((t, v) => t + v, 0);
+  return { corp: sum(E.corpAvg), brand: sum(E.brandLast) };
 }
 
 // 안분비 말단 값 = 법인 안분(직전 3개월 평균) + 브랜드 안분(최근 달)

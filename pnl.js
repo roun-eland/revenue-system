@@ -178,12 +178,14 @@ async function loadData(ym) {
   for (const r of perCur.data || []) { const m = mateNow[r.store_code] = mateNow[r.store_code] || { mtd: 0, cover: '', salesNet: 0, days: 0 }; m.mtd += +r.mate_pay || 0; if (r.period_end > m.cover) m.cover = r.period_end; }
   for (const m of Object.values(mateNow)) m.days = +m.cover.slice(8);
   for (const r of salesCur.data || []) { const m = mateNow[r.store_code]; if (m && r.sales_date <= m.cover) m.salesNet += (+r.total || 0) / 1.1; }
-  return { run, ym, costYm, costRate, costSpan, brandCostRate, rYm, staff, base, mateRate, brandMateRate, mateNow, est };
+  const premAvg = m => { const v = [...EST_PREMIUM].filter(c => m[c] != null).map(c => m[c]); return v.length ? v.reduce((t, x) => t + x, 0) / v.length : null; };   // 이력 있는 프리미엄 매장의 단순 평균
+  return { run, ym, costYm, costRate, costSpan, brandCostRate, rYm, staff, base, mateRate, brandMateRate, premCost: premAvg(costRate), premMate: premAvg(mateRate), mateNow, est };
 }
 
 // 이력이 없는 매장(신규점)의 비율: 복제 원본 매장 → 없으면 브랜드 평균
-function rateOf(map, code, brandAvg) {
+function rateOf(map, code, brandAvg, premAvg) {
   if (map[code] != null) return { v: map[code], src: 'own' };
+  if (typeof EST_PREMIUM !== 'undefined' && EST_PREMIUM.has(code) && premAvg != null) return { v: premAvg, src: 'premium' };   // 프리미엄 신규점은 프리미엄 매장 평균
   const cl = typeof CLONE_FROM !== 'undefined' && CLONE_FROM[code];
   if (cl && map[cl[0]] != null) return { v: map[cl[0]], src: 'clone', of: cl[0] };
   return { v: brandAvg || 0, src: 'avg' };
@@ -215,7 +217,7 @@ function baseLeaf(code) {
   const gross = st ? +st.total || 0 : 0, net = gross / 1.1;
   const cf = otCloseFrac(code, D.ym);          // 영업 일수 비율 — 아르바이트·매출 쪽(오픈 전 휴점일 제외)
   const ff = ftFrac(code, D.ym);                // 정직원 급여·퇴직급여 — 오픈 달은 한 달치(오픈 전부터 근무), 폐점 달만 일할
-  const cr = rateOf(D.costRate, code, D.brandCostRate), mr = rateOf(D.mateRate, code, D.brandMateRate), sf = D.staff[code];
+  const cr = rateOf(D.costRate, code, D.brandCostRate, D.premCost), mr = rateOf(D.mateRate, code, D.brandMateRate, D.premMate), sf = D.staff[code];
   const mp = matePay(code, net, mr, D);
   const leaf = {
     gross_direct: gross,
@@ -246,9 +248,18 @@ function evalTree(leaf) {
   return memo;
 }
 
+// 고정값(mode='set')이 있는 매장은 비용 계정을 모두 그 값으로 대체한다 — 입력하지 않은 계정은 0, 매출(외형·부가세)만 예측 그대로.
+// 신촌 폐점 비용·수지 오픈 비용처럼 사용자가 매장 손익을 직접 추정한 경우에 쓴다
+function applySets(code, leaf) {
+  const sets = S.adj.filter(r => r.scope === code && r.mode === 'set' && PNL_BY[r.account_code]);
+  if (!sets.length) return leaf;
+  const out = { gross_direct: leaf.gross_direct, vat: leaf.vat };
+  for (const r of sets) out[r.account_code] = (out[r.account_code] || 0) + (+r.amount || 0);
+  return out;
+}
 function adjLeaf(scope) {
   const out = {};
-  for (const r of S.adj) if (r.scope === scope && PNL_BY[r.account_code]) out[r.account_code] = (out[r.account_code] || 0) + (+r.amount || 0);
+  for (const r of S.adj) if (r.scope === scope && r.mode !== 'set' && PNL_BY[r.account_code]) out[r.account_code] = (out[r.account_code] || 0) + (+r.amount || 0);
   return out;
 }
 const addLeaf = (a, b) => { const o = { ...a }; for (const k of Object.keys(b)) o[k] = (o[k] || 0) + b[k]; return o; };
@@ -259,7 +270,7 @@ function computeAll() {
   let sum = {};
   for (const c of STORES) {
     const b = baseLeaf(c); metas[c] = b.meta;
-    const leaf = addLeaf(b.leaf, adjLeaf(c));
+    const leaf = addLeaf(applySets(c, b.leaf), adjLeaf(c));
     store[c] = evalTree(leaf);
     sum = addLeaf(sum, leaf);
   }
@@ -398,11 +409,14 @@ function renderStore(C) {
   for (const a of visibleRows('main', true)) {
     h += `<tr class="${rowCls(a)}">${labelCell(a, 'main', a.id === 'op' ? 'op_ex' : null)}` + colsDef.map(([, , , M]) => `<td class="num">${nf(M[a.code])}</td><td class="num r">${pf(M[a.code], M.sales)}</td>`).join('') + '</tr>';
   }
-  // 영업이익 밑: 브랜드 판관비·법인 판관비 (데이터 대기) — 영업이익 줄을 눌러 접고 펼친다 → 안분 후 영업이익
+  // 영업이익 밑: 브랜드 판관비·법인 판관비 — 브랜드·법인 안분 합계를 매장 순매출 비율로 나눈다 → 안분 후 영업이익 (영업이익 줄을 눌러 접고 펼침)
+  const AL = estAllocTotals(), totNet = C.total.sales || 0;
+  const allocOf = (M, kind) => AL && totNet ? -(AL[kind] * (M.sales || 0) / totNet) : null;
+  const allocCells = (M, kind) => { const v = allocOf(M, kind); return v == null ? '<td class="num"><span class="z">-</span></td><td class="num r"></td>' : `<td class="num">${nf(v)}</td><td class="num r">${pf(v, M.sales)}</td>`; };
   if (!S.folded.has('op_ex')) {
-    for (const n of ['브랜드 판관비', '법인 판관비']) h += `<tr class="l1 lf ex"><td class="nm" style="padding-left:20px"><span class="car"></span>${n} <span class="pend">데이터 대기</span></td>` + colsDef.map(() => '<td class="num"><span class="z">-</span></td><td class="num r"></td>').join('') + '</tr>';
+    for (const [n, kind] of [['브랜드 판관비', 'brand'], ['법인 판관비', 'corp']]) h += `<tr class="l1 lf ex"><td class="nm" style="padding-left:20px"><span class="car"></span>${n} <span class="pend">${AL ? '매출 비례 안분' : '데이터 대기'}</span></td>` + colsDef.map(([, , , M]) => allocCells(M, kind)).join('') + '</tr>';
   }
-  h += `<tr class="l1 sub key"><td class="nm" style="padding-left:6px"><span class="car"></span>안분 후 영업이익</td>` + colsDef.map(([, , , M]) => `<td class="num">${nf(M.op)}</td><td class="num r">${pf(M.op, M.sales)}</td>`).join('') + '</tr>';
+  h += `<tr class="l1 sub key"><td class="nm" style="padding-left:6px"><span class="car"></span>안분 후 영업이익</td>` + colsDef.map(([, , , M]) => { const v = M.op + (allocOf(M, 'brand') || 0) + (allocOf(M, 'corp') || 0); return `<td class="num">${nf(v)}</td><td class="num r">${pf(v, M.sales)}</td>`; }).join('') + '</tr>';
   $('storeTable').innerHTML = h + '</tbody></table>';
 }
 
@@ -412,8 +426,8 @@ function renderNotes(C) {
   const est = [];
   for (const c of STORES) {
     const m = C.metas[c];
-    if (m.costSrc.src !== 'own') est.push(`${sname(c)} 원가율(${m.costSrc.src === 'clone' ? sname(m.costSrc.of) + ' 동일' : '브랜드 평균'})`);
-    if (m.mateSrc.src !== 'own') est.push(`${sname(c)} 메이트 급여율(${m.mateSrc.src === 'clone' ? sname(m.mateSrc.of) + ' 동일' : '브랜드 평균'})`);
+    if (m.costSrc.src !== 'own') est.push(`${sname(c)} 원가율(${m.costSrc.src === 'clone' ? sname(m.costSrc.of) + ' 동일' : m.costSrc.src === 'premium' ? '프리미엄 매장 평균' : '브랜드 평균'})`);
+    if (m.mateSrc.src !== 'own') est.push(`${sname(c)} 메이트 급여율(${m.mateSrc.src === 'clone' ? sname(m.mateSrc.of) + ' 동일' : m.mateSrc.src === 'premium' ? '프리미엄 매장 평균' : '브랜드 평균'})`);
   }
   const noStaff = STORES.filter(c => C.metas[c].noStaff).map(sname);
   const li = [];
@@ -426,10 +440,13 @@ function renderNotes(C) {
     const E = D.est, mm = ym => `${ym.slice(2, 4)}년${+ym.slice(5)}월`;
     li.push(`<b>제조경비·판관비</b>는 전표 기준 직전 3개월(${E.base.map(mm).join('·')})로 추정합니다 — 복리후생·세금과공과: 급여 연동(직전 3개월 계정합 ÷ 급여합 × 예상 급여) · 소모품비·감가상각·그 밖의 고정 계정: 직전 3개월 평균 × 영업일 비율 · 수도광열비: 직전 3개월 합계 평균(이력 없는 매장은 면적 × 단위면적당 평균) · 운반비: 직전 3개월 비율 × 예상 순매출 · 지급수수료(제조): 기타제조경비 기준표 합계 · 지급임차료: 임대을은 임차료율 × 순매출, 임대갑은 고정 · 견본비·광고선전비·성과상여는 0(특이비용으로 입력).`);
     li.push(`<b>안분비</b> = 법인 안분(EP 배부) ${mm(E.base[0])}~${mm(E.base[E.base.length - 1])} 평균 고정 금액 + 브랜드 안분 ${mm(E.brandYm)} 고정 금액 (+ 금융손익·진이익 차감). 안분 열의 금액은 각 계정 줄에서 볼 수 있습니다.`);
-    const fbs = [...E.fb].map(sname); if (fbs.length) li.push(`전표 이력이 없거나 짧아 전체 매장 평균으로 대체한 매장: ${fbs.join(', ')}. 기타제조경비 기준표에 없는 매장(${STORES.filter(c => !E.fixed[c]).map(sname).join(', ') || '없음'})은 항목별 중앙값을 썼습니다.`);
+    const fbs = [...E.fb].map(([c, k]) => `${sname(c)}(${k} 평균)`); if (fbs.length) li.push(`전표 이력이 없거나 짧아 평균으로 대체한 매장: ${fbs.join(', ')} — 프리미엄 매장(동탄·의정부·해운대·광명·동부산·수지)은 프리미엄 매장 평균을 씁니다. 기타제조경비 기준표에 없는 매장(${STORES.filter(c => !E.fixed[c]).map(sname).join(', ') || '없음'})은 항목별 중앙값(프리미엄 매장은 프리미엄 매장 중앙값)을 썼습니다.`);
   } else li.push('<b>제조경비·판관비·안분비</b>: 전표가 아직 없어 비어 있습니다 (전표 업로드 후 채워집니다).');
   if (est.length) li.push(`이력이 없어 대체한 값: ${est.join(' · ')}`);
   li.push(`<b>당기순이익</b> = (영업이익 + 영업외손익 0 + 금융손익 −${((FIN_COST_EST - INT_INC_EST) / 1e6).toFixed(0)}백만원) × (1 − 법인세율 ${(TAX_RATE * 100).toFixed(0)}%), 세전이익이 음수면 세금 0. 26년6~9월 실적 영업이익에 적용하면 실제 순이익과 평균 오차 0.8백만원 (영업이익 65% 방식은 28백만원). <b>진이익</b> = 당기순이익 − ${(TRUE_NET_DED / 1e6).toFixed(0)}백만원 (브랜드 차감, 추정 — 브랜드 탭의 안분비 열에 들어감).`);
+  const setSt = [...new Set(S.adj.filter(r => r.mode === 'set').map(r => r.scope))];
+  if (setSt.length) li.push(`<b>고정값 매장</b>: ${setSt.map(sname).join(', ')} — 사용자가 직접 추정한 폐점·오픈 비용(손익 전체)을 그대로 씁니다. 매출만 예측이고 비용 계정은 아래 "특이비용" 목록의 고정값 줄입니다(삭제하면 규칙 계산으로 돌아갑니다).`);
+  li.push('매장 탭의 브랜드·법인 판관비 줄은 브랜드·법인 안분 합계를 매장 순매출 비율로 나눈 값입니다.');
   li.push('선임점장 급여의 본부 안분(50%)은 아직 반영하지 않았습니다. 견본비는 데이터를 받은 뒤 별도로 채웁니다.');
   $('plNotes').innerHTML = '<ul>' + li.map(x => `<li>${x}</li>`).join('') + '</ul>';
 }
@@ -446,7 +463,7 @@ function renderAdjust() {
   const tot = rows.reduce((t, r) => t + (+r.amount || 0), 0);
   $('adjList').innerHTML = rows.length
     ? '<table class="pnl small"><thead><tr><th>범위</th><th>계정</th><th class="num">금액(원)</th><th>메모</th><th></th></tr></thead><tbody>' +
-      rows.map(r => `<tr><td>${r.scope === 'brand' ? '브랜드(본부)' : esc(sname(r.scope))}</td><td>${esc(PNL_BY[r.account_code] ? pathLabel(PNL_BY[r.account_code]) : r.account_code)}</td><td class="num">${nf(r.amount)}</td><td>${esc(r.note || '')}</td><td><button class="btn btn-sm" data-del="${r.id}" type="button">삭제</button></td></tr>`).join('') +
+      rows.map(r => `<tr><td>${r.scope === 'brand' ? '브랜드(본부)' : esc(sname(r.scope))}</td><td>${esc(PNL_BY[r.account_code] ? pathLabel(PNL_BY[r.account_code]) : r.account_code)}</td><td class="num">${nf(r.amount)}</td><td>${esc(r.note || '')}${r.mode === 'set' ? ' <span class="pend">고정값</span>' : ''}</td><td><button class="btn btn-sm" data-del="${r.id}" type="button">삭제</button></td></tr>`).join('') +
       `<tr class="key"><td colspan="2">합계</td><td class="num">${nf(tot)}</td><td colspan="2"></td></tr></tbody></table>`
     : '<p class="dnote">이 달에 입력한 특이비용이 없습니다.</p>';
   document.querySelectorAll('#adjList [data-del]').forEach(b => { b.onclick = () => delAdjust(+b.dataset.del); });
