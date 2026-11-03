@@ -7,6 +7,7 @@
   // 메뉴 아이콘 (선 아이콘, 24x24) — 섹션 id별
   const ICONS = {
     home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/>',
+    pnl: '<path d="M6 3.5h9l4 4V20.5H6z"/><path d="M15 3.5v4h4M9 12h7M9 15.5h7"/>',
     sales: '<path d="M5 20V11M12 20V4M19 20v-6"/>',
     labor: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     cost: '<circle cx="12" cy="12" r="8.5"/><path d="m8.5 8.5 3.5 4.5 3.5-4.5M8.5 12.5h7M8.5 15.5h7"/>',
@@ -18,6 +19,8 @@
 
   const SECTIONS = [
     { id: 'home', label: '홈', mark: '홈', href: 'home/' },
+    { id: 'pnl', label: '예상실적', mark: '예', href: 'pnl/', nav: '#plNav button', attr: 'view',
+      items: [['brand', '브랜드', 1], ['store', '매장', 1]] },
     { id: 'sales', label: '매출', mark: '매', href: 'sales/', nav: '#sfNav button', attr: 'view',
       items: [['brand', '브랜드 대시보드'], ['daily', '매장 일별'], ['weekly', '주차별 매출'], ['acc', '정확도 피드백'], ['admin', '발행 관리', 1]] },
     { id: 'labor', label: '생산성', mark: '생', href: 'labor/', nav: '#otNav button', attr: 'view',
@@ -45,7 +48,7 @@
   if (q.get('nav') === 'old' || q.get('nav') === 'new') ls.set('roun_nav', q.get('nav'));
   const OLD = q.get('nav') === 'old' || (q.get('nav') !== 'new' && ls.get('roun_nav') === 'old');
 
-  const curId = (location.pathname.match(/\/(home|sales|labor|cost|supply|demand|voc)(\/|$)/) || [])[1] || '';
+  const curId = (location.pathname.match(/\/(home|pnl|sales|labor|cost|supply|demand|voc)(\/|$)/) || [])[1] || '';
   const cur = SECTIONS.find(s => s.id === curId);
 
   // 화면 시작 탭: ?v=키 로 들어오면 그 탭을 먼저 연다 (각 화면의 init 끝에서 navStart('기본탭') 호출)

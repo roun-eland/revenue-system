@@ -1,0 +1,34 @@
+/* 예상실적 — 손익표. 첫 칸(계정명)은 가로 스크롤해도 고정 */
+.pnlwrap{overflow:auto;max-height:calc(100vh - 250px);border:1px solid #cfcfcf;border-radius:4px;background:#fff}
+table.pnl{border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px;font-variant-numeric:tabular-nums}
+table.pnl th,table.pnl td{padding:4px 8px;border-bottom:1px solid #e6e6e6;white-space:nowrap;overflow:hidden;text-overflow:clip}
+table.pnl thead th{position:sticky;top:0;z-index:3;background:#1f2937;color:#fff;font-weight:600;text-align:left}
+table.pnl thead tr:nth-child(2) th{top:26px}
+table.pnl thead tr:nth-child(3) th{top:52px}
+table.pnl thead th.ctr{text-align:center}
+table.pnl .num{text-align:right}
+table.pnl .r{color:var(--muted);font-size:11px}
+table.pnl .z{color:#bbb}
+table.pnl tr{background:#fff}
+table.pnl td:first-child,table.pnl thead th:first-child{position:sticky;left:0;z-index:2;background:inherit}
+table.pnl thead th:first-child{z-index:4;background:#1f2937}
+table.pnl td.nm{cursor:default;white-space:nowrap}
+table.pnl td.nm .car{display:inline-block;width:14px;color:var(--muted2);font-size:10px}
+table.pnl tr.l1{background:#e2efda;font-weight:700}
+table.pnl tr.l2{background:#f0f6ea;font-weight:600}
+table.pnl tr.l3.lf.mn,table.pnl tr.l4.lf.mn{background:#fff8e1}
+table.pnl tr.l3.sub,table.pnl tr.l4.sub{background:#fafafa}
+table.pnl tr.key{background:#c6e0b4;font-weight:700}
+table.pnl tr.ex{background:#fff}
+table.pnl tr.ex .pend{font-size:10px;font-weight:500;color:var(--muted2);margin-left:6px}
+table.pnl td.nm.has{cursor:pointer}
+table.pnl.small{table-layout:auto;width:100%}
+table.pnl.small thead th{position:static}
+table.pnl.small td:first-child,table.pnl.small thead th:first-child{position:static}
+#plMode{display:inline-flex;gap:0;align-self:flex-end}
+#plMode button{border:1px solid #cfcfcf;background:#fff;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+#plMode button+button{border-left:0}
+#plMode button.on{background:#1f2937;color:#fff;border-color:#1f2937}
+#plNotes ul{margin:6px 0 0;padding-left:18px;font-size:12px;line-height:1.7;color:var(--muted)}
+.adjform{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px}
+.adjform .fld input,.adjform .fld select{min-width:0}

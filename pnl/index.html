@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로운 예상실적</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="../ot.css?v=202610021614">
+<link rel="stylesheet" href="../nav.css?v=202610211230">
+<link rel="stylesheet" href="../pnl.css?v=202611031100">
+</head>
+<body>
+
+<div id="loginView" class="ot-login" hidden></div>
+
+<div id="appView" hidden>
+  <div class="gnav">
+    <span class="gnav-brand">로운</span>
+    <a class="gnav-item" href="../sales/">매출</a>
+    <a class="gnav-item" href="../labor/">생산성</a>
+    <a class="gnav-item" href="../cost/">원가</a>
+    <a class="gnav-item" href="../supply/">공급</a>
+    <a class="gnav-item" href="../voc/">고객</a>
+  </div>
+  <header class="ot-header">
+    <div class="ot-brand"><span class="mark">예상</span><span class="name">예상실적</span></div>
+    <div class="spacer"></div>
+    <span class="who"><span id="whoEmail"></span> <span class="role-chip" id="roleChip">기획자</span></span>
+    <button id="logoutBtn" class="btn btn-sm" type="button">로그아웃</button>
+  </header>
+
+  <nav class="ot-nav" id="plNav">
+    <button data-view="brand" class="on">브랜드</button>
+    <button data-view="store">매장</button>
+  </nav>
+
+  <main class="ot-main" id="plMain">
+    <div class="plan-actions" style="margin:0 0 14px">
+      <label class="fld" style="min-width:150px">예상 월<select id="plMonth"></select></label>
+      <div id="plMode" role="group" aria-label="계정 보기">
+        <button type="button" data-mode="l1">대분류만</button>
+        <button type="button" data-mode="main" class="on">주요 계정</button>
+        <button type="button" data-mode="all">전체 계정</button>
+      </div>
+      <span id="plMsg" style="align-self:flex-end;font-size:12px;color:var(--muted)">불러오는 중…</span>
+    </div>
+
+    <section id="view-brand" class="view">
+      <h2>브랜드 예상실적</h2>
+      <p class="view-sub">예상실적 = 매장(매장별 예상 손익 합계) + 안분비(브랜드·법인) + 특이비용. 비율은 매출액 대비입니다. 계정 이름을 누르면 하위 계정이 접히고 펴집니다.</p>
+      <div class="pnlwrap" id="brandTable"></div>
+      <p class="dnote">매장별 특이비용은 매장 열에 이미 들어 있고, 여기 특이비용 열은 브랜드(본부)로 입력한 금액입니다.</p>
+    </section>
+
+    <section id="view-store" class="view" hidden>
+      <h2>매장별 예상 손익</h2>
+      <p class="view-sub">맨 앞 열은 전 매장 합계입니다. 영업이익 아래의 브랜드·법인 판관비는 안분 데이터를 받으면 채워지고, 안분 후 영업이익에 반영됩니다.</p>
+      <div class="pnlwrap" id="storeTable"></div>
+    </section>
+
+    <div class="card" style="margin-top:14px">
+      <h3 style="margin:0 0 8px">값의 근거</h3>
+      <div id="plNotes"></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3 style="margin:0 0 8px">특이비용 입력</h3>
+      <p class="dnote" style="margin:0 0 10px">선택한 월의 계정에 금액을 더합니다(비용 계정은 +가 비용 증가, 차감은 −). 입력하면 예상실적에 바로 반영됩니다. 말단 계정만 고를 수 있습니다.</p>
+      <div class="adjform">
+        <label class="fld" style="min-width:150px">범위<select id="adjScope"></select></label>
+        <label class="fld" style="min-width:300px">계정<select id="adjAcc"></select></label>
+        <label class="fld" style="min-width:140px">금액(원)<input id="adjAmt" type="text" inputmode="numeric" placeholder="예: 1600000"></label>
+        <label class="fld" style="min-width:220px;flex:1">메모<input id="adjNote" type="text" placeholder="예: 신촌 폐점 정리 인건비"></label>
+        <button id="adjAdd" class="btn btn-sm" type="button">추가</button>
+        <span id="adjMsg" class="plan-msg"></span>
+      </div>
+      <div class="tblwrap" id="adjList"></div>
+    </div>
+  </main>
+</div>
+
+<script src="../vendor/supabase.min.js"></script>
+<script src="../nav.js?v=202611031100"></script>
+<script src="../ot-seed.js?v=202610291500"></script>
+<script src="../labor-calc.js?v=202611031003"></script>
+<script src="../pnl-accounts.js?v=202611031100"></script>
+<script src="../pnl.js?v=202611031100"></script>
+</body>
+</html>
