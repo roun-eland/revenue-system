@@ -409,12 +409,12 @@ function renderStore(C) {
   for (const a of visibleRows('main', true)) {
     h += `<tr class="${rowCls(a)}">${labelCell(a, 'main', a.id === 'op' ? 'op_ex' : null)}` + colsDef.map(([, , , M]) => `<td class="num">${nf(M[a.code])}</td><td class="num r">${pf(M[a.code], M.sales)}</td>`).join('') + '</tr>';
   }
-  // 영업이익 밑: 브랜드 판관비·법인 판관비 — 브랜드·법인 안분 합계를 매장 순매출 비율로 나눈다 → 안분 후 영업이익 (영업이익 줄을 눌러 접고 펼침)
+  // 영업이익 밑: 브랜드 안분비·법인 안분비 — 브랜드·법인 안분 합계를 매장 순매출 비율로 나눈다 → 안분 후 영업이익 (영업이익 줄을 눌러 접고 펼침)
   const AL = estAllocTotals(), totNet = C.total.sales || 0;
   const allocOf = (M, kind) => AL && totNet ? -(AL[kind] * (M.sales || 0) / totNet) : null;
   const allocCells = (M, kind) => { const v = allocOf(M, kind); return v == null ? '<td class="num"><span class="z">-</span></td><td class="num r"></td>' : `<td class="num">${nf(v)}</td><td class="num r">${pf(v, M.sales)}</td>`; };
   if (!S.folded.has('op_ex')) {
-    for (const [n, kind] of [['브랜드 판관비', 'brand'], ['법인 판관비', 'corp']]) h += `<tr class="l1 lf ex"><td class="nm" style="padding-left:20px"><span class="car"></span>${n} <span class="pend">${AL ? '매출 비례 안분' : '데이터 대기'}</span></td>` + colsDef.map(([, , , M]) => allocCells(M, kind)).join('') + '</tr>';
+    for (const [n, kind] of [['브랜드 안분비', 'brand'], ['법인 안분비', 'corp']]) h += `<tr class="l1 lf ex"><td class="nm" style="padding-left:20px"><span class="car"></span>${n} <span class="pend">${AL ? '매출 비례 안분' : '데이터 대기'}</span></td>` + colsDef.map(([, , , M]) => allocCells(M, kind)).join('') + '</tr>';
   }
   h += `<tr class="l1 sub key"><td class="nm" style="padding-left:6px"><span class="car"></span>안분 후 영업이익</td>` + colsDef.map(([, , , M]) => { const v = M.op + (allocOf(M, 'brand') || 0) + (allocOf(M, 'corp') || 0); return `<td class="num">${nf(v)}</td><td class="num r">${pf(v, M.sales)}</td>`; }).join('') + '</tr>';
   $('storeTable').innerHTML = h + '</tbody></table>';
@@ -446,7 +446,7 @@ function renderNotes(C) {
   li.push(`<b>당기순이익</b> = (영업이익 + 영업외손익 0 + 금융손익 −${((FIN_COST_EST - INT_INC_EST) / 1e6).toFixed(0)}백만원) × (1 − 법인세율 ${(TAX_RATE * 100).toFixed(0)}%), 세전이익이 음수면 세금 0. 26년6~9월 실적 영업이익에 적용하면 실제 순이익과 평균 오차 0.8백만원 (영업이익 65% 방식은 28백만원). <b>진이익</b> = 당기순이익 − ${(TRUE_NET_DED / 1e6).toFixed(0)}백만원 (브랜드 차감, 추정 — 브랜드 탭의 안분비 열에 들어감).`);
   const setSt = [...new Set(S.adj.filter(r => r.mode === 'set').map(r => r.scope))];
   if (setSt.length) li.push(`<b>고정값 매장</b>: ${setSt.map(sname).join(', ')} — 사용자가 직접 추정한 폐점·오픈 비용(손익 전체)을 그대로 씁니다. 매출만 예측이고 비용 계정은 아래 "특이비용" 목록의 고정값 줄입니다(삭제하면 규칙 계산으로 돌아갑니다).`);
-  li.push('매장 탭의 브랜드·법인 판관비 줄은 브랜드·법인 안분 합계를 매장 순매출 비율로 나눈 값입니다.');
+  li.push('매장 탭의 브랜드 안분비·법인 안분비 줄은 안분 합계를 매장 순매출 비율로 나눈 값입니다 (모든 매장이 매출 대비 같은 비율을 부담).');
   li.push('선임점장 급여의 본부 안분(50%)은 아직 반영하지 않았습니다. 견본비는 데이터를 받은 뒤 별도로 채웁니다.');
   $('plNotes').innerHTML = '<ul>' + li.map(x => `<li>${x}</li>`).join('') + '</ul>';
 }
