@@ -3966,6 +3966,106 @@ $('#usageFileInput').addEventListener('change', async (e) => {
 });
 
 // =====================================================================
+// 자재 사용량(부자재) = 견본비 (2026-11-03) — 식자재(material_usage)와 같은 EATS "매장별-자재사용량조회" 원본 양식, 원가율에 섞이지 않게 별도 테이블(material_usage_sub)에 저장.
+// 예상실적(pnl.js)의 견본비 = (그 월 부자재 사용액 ÷ 해당 기간 실매출) × 예상 순매출 — 원가율과 같은 방식. 분류(비고·품목·과세여부) 자동 채움은 하지 않는다.
+function renderSubWeekOptions() {
+  const monthValue = $('#subMonthInput').value; // "YYYY-MM"
+  const sel = $('#subWeekSelect');
+  if (!monthValue) { sel.innerHTML = ''; return; }
+  const [y, m] = monthValue.split('-').map(Number);
+  const weeks = computeWeekOptionsForMonth(y, m);
+  sel.innerHTML = weeks.map(w => `<option value="${w.periodStart}|${w.periodEnd}">${w.label}</option>`).join('');
+  if (weeks.length) sel.value = `${weeks[weeks.length - 1].periodStart}|${weeks[weeks.length - 1].periodEnd}`;
+}
+(() => {
+  const now = new Date();
+  $('#subMonthInput').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  renderSubWeekOptions();
+})();
+$('#subMonthInput').addEventListener('change', renderSubWeekOptions);
+
+function subWeekSelection() {
+  const monthValue = $('#subMonthInput').value;
+  if (!monthValue) { flash($('#subSaveMsg'), '등록 연월을 선택해주세요.', false); return null; }
+  const weekValue = $('#subWeekSelect').value; // "periodStart|periodEnd"
+  if (!weekValue) { flash($('#subSaveMsg'), '주차를 선택해주세요.', false); return null; }
+  const [periodStart, periodEnd] = weekValue.split('|');
+  return { periodStart, periodEnd, usageMonth: `${periodEnd.slice(0, 7)}-01` };
+}
+
+// 같은 주차에 매장+자재 조합이 이미 있으면 지우고 새 값으로 교체 (다른 주차는 그대로)
+async function saveSubRecords(rows, periodStart, periodEnd) {
+  const keys = new Set(rows.map(r => `${r.store_code}||${r.material_code}`));
+  const { data: existing } = await fetchAllRows('material_usage_sub',
+    q => q.eq('period_start', periodStart).eq('period_end', periodEnd), 'id, store_code, material_code');
+  const toDelete = (existing || []).filter(e => keys.has(`${e.store_code}||${e.material_code}`)).map(e => e.id);
+  if (toDelete.length) await deleteInChunks('material_usage_sub', toDelete);
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await sb.from('material_usage_sub').insert(rows.slice(i, i + 500));
+    if (error) throw new Error(error.message);
+  }
+  await loadSubView();
+  return toDelete.length;
+}
+
+$('#subFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const wk = subWeekSelection();
+  if (!wk) return;
+  flash($('#subSaveMsg'), '읽는 중…');
+  try {
+    const raw = await readSheetRows(file);
+    const rows = [];
+    raw.forEach(r => {
+      const code = String(r[0] || '').trim();
+      if (!/^RU\d{3}$/.test(code)) return;
+      const rec = { season_id: state.currentSeasonId || null, usage_month: wk.usageMonth, period_start: wk.periodStart, period_end: wk.periodEnd };
+      USAGE_GRID_FIELDS.forEach((f, i) => {
+        const v = r[i];
+        rec[f] = (i >= USAGE_NUMERIC_FROM && i <= USAGE_NUMERIC_TO) ? excelCellToNumber(v) : (v != null && String(v).trim() ? String(v).trim() : null);
+      });
+      rows.push(rec);
+    });
+    if (!rows.length) throw new Error('매장코드(RUxxx) 행을 찾지 못했습니다 — 자재사용량 원본인지 확인해주세요.');
+    const replaced = await saveSubRecords(rows, wk.periodStart, wk.periodEnd);
+    const nStores = new Set(rows.map(r => r.store_code)).size;
+    flash($('#subSaveMsg'), `저장됨 (${wk.periodStart}~${wk.periodEnd}): ${nStores}개 매장 · ${rows.length}행${replaced ? ` · 겹치는 ${replaced}개 교체` : ''}`);
+  } catch (err) {
+    flash($('#subSaveMsg'), '실패: ' + err.message, false);
+  }
+});
+
+// 저장된 부자재 사용량 — 기간별 요약 (잘못 올린 기간은 삭제)
+async function loadSubView() {
+  const body = $('#subViewBody');
+  const { data, error } = await fetchAllRows('material_usage_sub', q => q, 'period_start, period_end, store_code, actual_usage_amount');
+  if (error) { body.innerHTML = `<tr><td colspan="5" class="hint">불러오기 실패: ${error.message}</td></tr>`; return; }
+  if (!data || !data.length) { body.innerHTML = `<tr><td colspan="5" class="hint">저장된 부자재 사용량이 없습니다.</td></tr>`; return; }
+  const by = {};
+  data.forEach(r => {
+    const k = `${r.period_start}|${r.period_end}`;
+    const b = by[k] = by[k] || { stores: new Set(), n: 0, amt: 0 };
+    b.stores.add(r.store_code); b.n++; b.amt += Number(r.actual_usage_amount) || 0;
+  });
+  body.innerHTML = Object.keys(by).sort().reverse().map(k => {
+    const [s, e2] = k.split('|'), b = by[k];
+    return `<tr data-k="${k}"><td>${s} ~ ${e2}</td><td>${b.stores.size}</td><td>${b.n.toLocaleString('ko-KR')}</td><td>${Math.round(b.amt).toLocaleString('ko-KR')}</td><td><button type="button" class="row-del-btn" title="이 기간 삭제">×</button></td></tr>`;
+  }).join('');
+  body.querySelectorAll('.row-del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const tr = btn.closest('tr'), [s, e2] = tr.dataset.k.split('|');
+      if (!confirm(`${s} ~ ${e2} 부자재 사용량 전체를 삭제할까요?`)) return;
+      const { error: delErr } = await sb.from('material_usage_sub').delete().eq('period_start', s).eq('period_end', e2);
+      if (delErr) { flash($('#subSaveMsg'), '삭제 실패: ' + delErr.message, false); return; }
+      await loadSubView();
+    });
+  });
+}
+loadSubView();
+
+// =====================================================================
 // Tab 6b: 축산 고정단가 (소고기·돼지고기 등 — kg당단가, 전 매장 공통, 자재코드 1건당 1개)
 // 배경: EATS 자재사용량의 수량은 박스규격 기준 명목치라 실제 소비 무게가 아니다(금액만 정확·[[project_roun_consumption_model_pitfalls]]류 함정).
 // 여기 입력한 고정단가로 "금액÷단가=진짜 소비 무게"를 역산해 인당소비량에만 반영한다(원가율은 금액 기준이라 무관).

@@ -635,7 +635,7 @@
       </div>
       <div class="card">
         <div class="card-head">
-          <h3>② 자재 사용량</h3>
+          <h3>② 자재 사용량(식자재)</h3>
           <span class="hint">EATS "매장별-자재사용량조회" 원본 그대로. 주차를 확인하고 올려주세요 — 비고·품목·과세여부는 자재코드 기준 자동, 같은 주차 재업로드는 겹치는 매장×자재만 교체됩니다.</span>
         </div>
         <div class="history-year-row">
@@ -667,6 +667,26 @@
           <button id="addUsageRowBtn" class="btn btn-ghost btn-sm" type="button">+ 행 추가</button>
         </div>
         </details>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>②-2 자재 사용량(부자재)</h3>
+          <span class="hint">견본비 계산용 — 양식은 식자재와 같은 EATS "매장별-자재사용량조회" 원본입니다. 식자재 원가와는 따로 저장되고, 예상실적의 견본비는 이 월의 (부자재 사용액 ÷ 해당 기간 실매출) 비율을 매장별 예상 매출에 곱해 계산합니다. 같은 주차 재업로드는 겹치는 매장×자재만 교체됩니다.</span>
+        </div>
+        <div class="history-year-row">
+          <span class="hint">등록 연월</span>
+          <input type="month" id="subMonthInput">
+          <span class="hint">주차</span>
+          <select id="subWeekSelect"></select>
+          <input type="file" id="subFileInput" accept=".xlsx,.xls">
+          <span id="subSaveMsg" class="save-msg"></span>
+        </div>
+        <div class="table-scroll" style="margin-top:8px">
+          <table class="data-table">
+            <thead><tr><th>기간</th><th>매장 수</th><th>행 수</th><th>부자재 사용액(원)</th><th></th></tr></thead>
+            <tbody id="subViewBody"><tr><td colspan="5" class="hint">불러오는 중…</td></tr></tbody>
+          </table>
+        </div>
       </div>
       <div class="card">
         <div class="card-head">
@@ -855,6 +875,6 @@
 <script src="../nav.js?v=202611032100"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../export-tables.js?v=202610021405"></script>
-<script src="../app.js?v=202610272230"></script>
+<script src="../app.js?v=202611040200"></script>
 </body>
 </html>

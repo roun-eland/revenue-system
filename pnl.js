@@ -150,6 +150,24 @@ async function loadData(ym) {
     brandCostRate = n ? a / n : null;
   }
 
+  // 견본비율: 가장 최근 부자재 사용 월의 매장별 (부자재 사용액 ÷ 그 기간 순매출) — 원가율과 같은 방식. 부자재 사용량(원가 > 데이터 > 업로드)이 없으면 규칙을 적용하지 않는다(견본비 0)
+  let subRate = {}, subSpan = null, brandSubRate = null, subYm = null;
+  try {
+    const lm = await sb.from('material_usage_sub').select('usage_month').lte('usage_month', ym + '-01').order('usage_month', { ascending: false }).limit(1);
+    if (!lm.error && lm.data && lm.data.length) {
+      subYm = String(lm.data[0].usage_month).slice(0, 7);
+      const { data, error } = await sb.rpc('pnl_store_sub_rate', { p_month: subYm + '-01' });
+      if (error) throw error;
+      let a = 0, n = 0;
+      for (const r of data || []) {
+        const net = +r.net_sales || 0;
+        if (net > 0) { subRate[r.store_code] = (+r.usage_amount || 0) / net; a += +r.usage_amount || 0; n += net; }
+        if (r.d_from) subSpan = { from: r.d_from, to: r.d_to };
+      }
+      brandSubRate = n ? a / n : null;
+    }
+  } catch (e) { console.warn('견본비율을 불러오지 못했습니다', e); subYm = null; subRate = {}; }
+
   // 정직원: 맨파워(가장 최근 맨파워 월, 거기에 없는 매장은 정직원 없음) × 직급 단가 — ot.js rosterFor·calcStaffPay와 같은 규칙
   const gCost = {}, gAllow = {};
   for (const g of grades.data || []) { gCost[g.grade] = g.std_monthly_cost || 0; gAllow[g.grade] = g.allowance || 0; }
@@ -179,7 +197,7 @@ async function loadData(ym) {
   for (const m of Object.values(mateNow)) m.days = +m.cover.slice(8);
   for (const r of salesCur.data || []) { const m = mateNow[r.store_code]; if (m && r.sales_date <= m.cover) m.salesNet += (+r.total || 0) / 1.1; }
   const premAvg = m => { const v = [...EST_PREMIUM].filter(c => m[c] != null).map(c => m[c]); return v.length ? v.reduce((t, x) => t + x, 0) / v.length : null; };   // 이력 있는 프리미엄 매장의 단순 평균
-  return { run, ym, costYm, costRate, costSpan, brandCostRate, rYm, staff, base, mateRate, brandMateRate, premCost: premAvg(costRate), premMate: premAvg(mateRate), mateNow, est };
+  return { run, ym, costYm, costRate, costSpan, brandCostRate, rYm, staff, base, mateRate, brandMateRate, premCost: premAvg(costRate), premMate: premAvg(mateRate), mateNow, est, subYm, subSpan, subRate, brandSubRate, premSub: premAvg(subRate) };
 }
 
 // 이력이 없는 매장(신규점)의 비율: 복제 원본 매장 → 없으면 브랜드 평균
@@ -230,6 +248,7 @@ function baseLeaf(code) {
   };
   const e = estStore(code, { net, cf, pay: leaf.pay_ft + leaf.pay_pt });   // 제조경비·판관비 (pnl-est.js)
   Object.assign(leaf, e.leaf);
+  if (D.subYm) leaf['cogs.4.4'] = net * rateOf(D.subRate, code, D.brandSubRate, D.premSub).v;   // 견본비 = 부자재 사용액 ÷ 실매출 비율 × 예상 순매출
   return { leaf, meta: { inRun: !!st, costSrc: cr, mateSrc: mr, mate: mp, noStaff: sf.none, closeFrac: cf, estPool: e.pool } };
 }
 
@@ -438,7 +457,7 @@ function renderNotes(C) {
   li.push(`<b>급여_아르바이트</b> = 급여대장으로 확정된 누적 메이트 급여 + 남은 기간 예상 순매출 × 반영 비율(누적 비율과 ${+D.base.slice(5)}월 비율을 경과 일수/14로 섞음). 이번 달 급여대장이 있는 매장 ${mt}곳은 이 방식, 없는 매장은 ${+D.base.slice(5)}월 메이트 급여율 × 예상 순매출.`);
   if (D.est) {
     const E = D.est, mm = ym => `${ym.slice(2, 4)}년${+ym.slice(5)}월`;
-    li.push(`<b>제조경비·판관비</b>는 전표 기준 직전 3개월(${E.base.map(mm).join('·')})로 추정합니다 — 복리후생·세금과공과: 급여 연동(직전 3개월 계정합 ÷ 급여합 × 예상 급여) · 소모품비·감가상각·그 밖의 고정 계정: 직전 3개월 평균 × 영업일 비율 · 수도광열비: 직전 3개월 합계 평균(이력 없는 매장은 면적 × 단위면적당 평균) · 운반비: 직전 3개월 비율 × 예상 순매출 · 지급수수료(제조): 기타제조경비 기준표 합계 · 지급임차료: 임대을은 임차료율 × 순매출, 임대갑은 고정 · 견본비·광고선전비·성과상여는 0(특이비용으로 입력).`);
+    li.push(`<b>제조경비·판관비</b>는 전표 기준 직전 3개월(${E.base.map(mm).join('·')})로 추정합니다 — 복리후생·세금과공과: 급여 연동(직전 3개월 계정합 ÷ 급여합 × 예상 급여) · 소모품비·감가상각·그 밖의 고정 계정: 직전 3개월 평균 × 영업일 비율 · 수도광열비: 직전 3개월 합계 평균(이력 없는 매장은 면적 × 단위면적당 평균) · 운반비: 직전 3개월 비율 × 예상 순매출 · 지급수수료(제조): 기타제조경비 기준표 합계 · 지급임차료: 임대을은 임차료율 × 순매출, 임대갑은 고정 · 광고선전비·성과상여는 0(특이비용으로 입력) · 견본비는 부자재 사용량 비율(아래).`);
     li.push(`<b>안분비</b> = 법인 안분(EP 배부) ${mm(E.base[0])}~${mm(E.base[E.base.length - 1])} 평균 고정 금액 + 브랜드 안분 ${mm(E.brandYm)} 고정 금액 (+ 금융손익·진이익 차감). 안분 열의 금액은 각 계정 줄에서 볼 수 있습니다.`);
     const fbs = [...E.fb].map(([c, k]) => `${sname(c)}(${k} 평균)`); if (fbs.length) li.push(`전표 이력이 없거나 짧아 평균으로 대체한 매장: ${fbs.join(', ')} — 프리미엄 매장(동탄·의정부·해운대·광명·동부산·수지)은 프리미엄 매장 평균을 씁니다. 기타제조경비 기준표에 없는 매장(${STORES.filter(c => !E.fixed[c]).map(sname).join(', ') || '없음'})은 항목별 중앙값(프리미엄 매장은 프리미엄 매장 중앙값)을 썼습니다.`);
   } else li.push('<b>제조경비·판관비·안분비</b>: 전표가 아직 없어 비어 있습니다 (전표 업로드 후 채워집니다).');
@@ -447,7 +466,8 @@ function renderNotes(C) {
   const setSt = [...new Set(S.adj.filter(r => r.mode === 'set').map(r => r.scope))];
   if (setSt.length) li.push(`<b>고정값 매장</b>: ${setSt.map(sname).join(', ')} — 사용자가 직접 추정한 폐점·오픈 비용(손익 전체)을 그대로 씁니다. 매출만 예측이고 비용 계정은 아래 "특이비용" 목록의 고정값 줄입니다(삭제하면 규칙 계산으로 돌아갑니다).`);
   li.push('매장 탭의 브랜드 안분비·법인 안분비 줄은 안분 합계를 매장 순매출 비율로 나눈 값입니다 (모든 매장이 매출 대비 같은 비율을 부담).');
-  li.push('선임점장 급여의 본부 안분(50%)은 아직 반영하지 않았습니다. 견본비는 데이터를 받은 뒤 별도로 채웁니다.');
+  li.push(D.subYm ? `<b>견본비</b> = ${+D.subYm.slice(5)}월 부자재 사용액 ÷ 해당 기간 실매출${D.subSpan ? `(${D.subSpan.from.slice(5).replace('-', '/')}~${D.subSpan.to.slice(5).replace('-', '/')})` : ''} 비율(매장별, 이력 없는 프리미엄 매장은 프리미엄 평균) × 예상 순매출. 안분비의 견본비는 0입니다.` : '<b>견본비</b>: 부자재 사용량(원가 > 데이터 > 업로드 "자재 사용량(부자재)")이 아직 없어 0입니다 — 올리면 (부자재 사용액 ÷ 해당 기간 실매출) 비율 × 예상 순매출로 채워집니다.');
+  li.push('선임점장 급여의 본부 안분(50%)은 아직 반영하지 않았습니다.');
   $('plNotes').innerHTML = '<ul>' + li.map(x => `<li>${x}</li>`).join('') + '</ul>';
 }
 
