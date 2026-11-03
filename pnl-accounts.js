@@ -4,6 +4,9 @@
 //  main  : "주요 계정" 보기에서 보이는 줄 (원본 손익표에서 값이 있는 계정)
 //  calc  : 하위 합계가 아닌 계산식 — v('id')로 다른 계정 값을 읽는다
 // ⚠ 위치로 정한 코드는 pnl_adjust(특이비용)에 저장된다 — 계정을 끼워 넣으면 어긋나므로 새 계정은 같은 단계의 맨 뒤에 추가할 것.
+// 당기순이익 = 영업이익의 65% (2026-11-03 사용자 지정 추정) — 법인세비용(값)을 영업이익의 35%로 잡아 8→9→10 계산 흐름을 그대로 둔다
+const NET_OF_OP = 0.65;
+
 const PNL_TREE = [
   [1, '1. 매출액 (1)-(2)', { id: 'sales', main: 1, calc: v => v('gross') - v('vat') }],
   [2, '(1) 외형매출', { id: 'gross', main: 1 }],
@@ -87,9 +90,12 @@ const PNL_TREE = [
   [3, '① 이자수익', { id: 'int_inc' }],
   [3, '② 금융비용', { id: 'fin_cost' }],
   [1, '8. 법인세비용차감전순이익 ( 5 + 6 + 7 )', { id: 'pretax', calc: v => v('op') + v('other') + v('fin') }],
-  [1, '9. 법인세비용(값)', { id: 'tax_val' }],
+  [1, '9. 법인세비용(값)', { id: 'tax_val', calc: v => v('op') * (1 - NET_OF_OP) }],
   [1, '9. 법인세비용', { id: 'tax', calc: v => v('tax_val') }],
-  [1, '10. 당기순이익 ( 8 - 9 )', { id: 'net', calc: v => v('pretax') - v('tax') }]
+  [1, '10. 당기순이익 ( 8 - 9 )', { id: 'net', main: 1, calc: v => v('pretax') - v('tax') }],
+  // 진이익 = 당기순이익 − 브랜드 차감(72백만원 추정). 차감액은 브랜드 탭의 안분비 열로만 들어간다 (pnl.js TRUE_NET_DED)
+  [1, '11. 진이익 ( 10 - 브랜드 차감 )', { id: 'true_net', main: 1, calc: v => v('net') - v('true_ded') }],
+  [3, '- 브랜드 차감(추정)', { id: 'true_ded' }]
 ];
 
 // 평평한 목록으로 펼친다 — { code, label, level, parent, children, main, calc, id, leaf, path }

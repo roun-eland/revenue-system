@@ -1,10 +1,11 @@
 /* 예상실적 — 손익표. 첫 칸(계정명)은 가로 스크롤해도 고정 */
-.pnlwrap{overflow:auto;max-height:calc(100vh - 250px);border:1px solid #cfcfcf;border-radius:4px;background:#fff}
+.pnlwrap{overflow:auto;max-height:calc(100vh - 130px);border:1px solid #cfcfcf;border-radius:4px;background:#fff}
 table.pnl{border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px;font-variant-numeric:tabular-nums}
-table.pnl th,table.pnl td{padding:4px 8px;border-bottom:1px solid #e6e6e6;white-space:nowrap;overflow:hidden;text-overflow:clip}
+table.pnl th,table.pnl td{padding:3px 8px;line-height:18px;border-bottom:1px solid #e6e6e6;white-space:nowrap;overflow:hidden;text-overflow:clip}
 table.pnl thead th{position:sticky;top:0;z-index:3;background:#1f2937;color:#fff;font-weight:600;text-align:left}
-table.pnl thead tr:nth-child(2) th{top:26px}
-table.pnl thead tr:nth-child(3) th{top:52px}
+table.pnl thead th{height:27px;box-sizing:border-box}
+table.pnl thead tr:nth-child(2) th{top:27px}
+table.pnl thead tr:nth-child(3) th{top:54px}
 table.pnl thead th.ctr{text-align:center}
 table.pnl .num{text-align:right}
 table.pnl .r{color:var(--muted);font-size:11px}
@@ -25,10 +26,14 @@ table.pnl td.nm.has{cursor:pointer}
 table.pnl.small{table-layout:auto;width:100%}
 table.pnl.small thead th{position:static}
 table.pnl.small td:first-child,table.pnl.small thead th:first-child{position:static}
-#plMode{display:inline-flex;gap:0;align-self:flex-end}
-#plMode button{border:1px solid #cfcfcf;background:#fff;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
-#plMode button+button{border-left:0}
-#plMode button.on{background:#1f2937;color:#fff;border-color:#1f2937}
+#plMode,#plScope{display:inline-flex;gap:0;align-self:flex-end}
+#plMode[hidden],#plScope[hidden]{display:none}
+#plMode button,#plScope button{border:1px solid #cfcfcf;background:#fff;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+#plMode button+button,#plScope button+button{border-left:0}
+#plMode button.on,#plScope button.on{background:#1f2937;color:#fff;border-color:#1f2937}
 #plNotes ul{margin:6px 0 0;padding-left:18px;font-size:12px;line-height:1.7;color:var(--muted)}
 .adjform{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px}
 .adjform .fld input,.adjform .fld select{min-width:0}
+table.pnl td.ed{cursor:text;box-shadow:inset 0 0 0 1px #c3d3b4}
+table.pnl td.ed:hover{background:#fffbe6;box-shadow:inset 0 0 0 1px #8fa97a}
+table.pnl input.edin{width:100%;box-sizing:border-box;text-align:right;font:inherit;padding:0 4px;border:1px solid #0f4c3a;border-radius:2px;background:#fff}

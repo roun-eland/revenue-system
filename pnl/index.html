@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="../ot.css?v=202610021614">
 <link rel="stylesheet" href="../nav.css?v=202610211230">
-<link rel="stylesheet" href="../pnl.css?v=202611031100">
+<link rel="stylesheet" href="../pnl.css?v=202611031600">
 </head>
 <body>
 
@@ -42,19 +42,24 @@
         <button type="button" data-mode="main">주요 계정</button>
         <button type="button" data-mode="all">전체 계정</button>
       </div>
+      <div id="plScope" role="group" aria-label="매장 보기" hidden>
+        <button type="button" data-scope="all" class="on">전체 매장</button>
+        <button type="button" data-scope="one">매장 선택</button>
+      </div>
+      <label class="fld" id="plPickWrap" style="min-width:200px" hidden>매장<select id="plPick"></select></label>
       <span id="plMsg" style="align-self:flex-end;font-size:12px;color:var(--muted)">불러오는 중…</span>
     </div>
 
     <section id="view-brand" class="view">
       <h2>브랜드 예상실적</h2>
-      <p class="view-sub">예상실적 = 매장(매장별 예상 손익 합계) + 안분비(브랜드·법인) + 특이비용. 비율은 매출액 대비입니다. 계정 이름을 누르면 하위 계정이 접히고 펴집니다.</p>
+      <p class="view-sub">예상실적 = 매장(매장별 예상 손익 합계) + 안분비(브랜드·법인) + 특이비용. 비율은 매출액 대비입니다. 계정 이름을 누르면 하위 계정이 접히고 펴집니다. 주요·전체 계정 보기에서는 특이비용 칸(점선 테두리)을 눌러 바로 입력할 수 있습니다.</p>
       <div class="pnlwrap" id="brandTable"></div>
       <p class="dnote">매장별 특이비용은 매장 열에 이미 들어 있고, 여기 특이비용 열은 브랜드(본부)로 입력한 금액입니다.</p>
     </section>
 
     <section id="view-store" class="view" hidden>
       <h2>매장별 예상 손익</h2>
-      <p class="view-sub">맨 앞 열은 전 매장 합계입니다. 영업이익 아래의 브랜드·법인 판관비는 안분 데이터를 받으면 채워지고, 안분 후 영업이익에 반영됩니다.</p>
+      <p class="view-sub">주요 계정만 보여줍니다. "전체 매장"은 맨 앞 열이 합계이고, "매장 선택"은 고른 매장 하나만 보여줍니다. 영업이익 줄을 누르면 아래 브랜드·법인 판관비가 접히고 펴집니다 (안분 데이터를 받으면 채워지고 안분 후 영업이익에 반영).</p>
       <div class="pnlwrap" id="storeTable"></div>
     </section>
 
@@ -83,7 +88,7 @@
 <script src="../nav.js?v=202611031500"></script>
 <script src="../ot-seed.js?v=202610291500"></script>
 <script src="../labor-calc.js?v=202611031003"></script>
-<script src="../pnl-accounts.js?v=202611031100"></script>
-<script src="../pnl.js?v=202611031330"></script>
+<script src="../pnl-accounts.js?v=202611031600"></script>
+<script src="../pnl.js?v=202611031600"></script>
 </body>
 </html>
