@@ -56,3 +56,5 @@ table.pnl td.drl:hover{background:#fffbe6;text-decoration:underline}
 table.pnl.act thead tr:nth-child(2) th{font-weight:500;font-size:11px;background:#2f3b4b}
 table.pnl.act thead tr:nth-child(2) th.est{background:#1b6b52}
 table.pnl.act thead th[rowspan]{vertical-align:middle}
+/* 2단 머리글의 둘째 줄 첫 칸(첫 달의 '액')이 첫 열 고정 규칙(thead th:first-child)에 걸려 계정명 칸 위에 겹치던 문제 */
+table.pnl.act thead tr:nth-child(2) th:first-child{position:sticky;top:27px;left:auto;z-index:3;background:#2f3b4b}
