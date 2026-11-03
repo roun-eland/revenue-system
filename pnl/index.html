@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="../ot.css?v=202610021614">
 <link rel="stylesheet" href="../nav.css?v=202610211230">
-<link rel="stylesheet" href="../pnl.css?v=202611031800">
+<link rel="stylesheet" href="../pnl.css?v=202611032100">
 </head>
 <body>
 
@@ -33,6 +33,7 @@
     <button data-view="brand" class="on">브랜드</button>
     <button data-view="store">매장</button>
     <button data-view="actual">실적 추이</button>
+    <button data-view="upload">전표 업로드</button>
   </nav>
 
   <main class="ot-main" id="plMain">
@@ -43,6 +44,7 @@
         <button type="button" data-mode="main">주요 계정</button>
         <button type="button" data-mode="all">전체 계정</button>
       </div>
+      <label class="fld" id="acScopeWrap" style="min-width:260px" hidden>보기 대상<select id="acScope"><option value="sheet">브랜드 실적표 (받은 실적)</option></select></label>
       <div id="plUnit" role="group" aria-label="단위" hidden>
         <button type="button" data-unit="mm" class="on">금액(백만원)</button>
         <button type="button" data-unit="pct">매출 대비 %</button>
@@ -72,14 +74,29 @@
       <h2>브랜드 월별 실적 추이</h2>
       <p class="view-sub">받은 브랜드 실적(25년1월~)과 선택한 월의 예상실적을 한 표에 나란히 둡니다. 보기(대분류·주요·전체)와 계정 접기는 브랜드 탭과 같습니다. 실적은 백만원 단위로 받은 값이라 합계에 ±1~2 오차가 있을 수 있습니다.</p>
       <div class="pnlwrap" id="actualTable"></div>
+      <div id="actualNote" class="dnote-list"></div>
     </section>
 
-    <div class="card" style="margin-top:14px">
+    <section id="view-upload" class="view" hidden>
+      <h2>전표 업로드</h2>
+      <p class="view-sub">SAP 원가요소 전표 엑셀(전표 헤더 텍스트·원가 요소·원가요소이름·금액·코스트 센터·기능 영역·전표 번호·전기일)을 올리면, 파일에 들어 있는 월의 전표를 교체해 저장합니다. 다음 달부터도 같은 화면으로 올리면 됩니다.</p>
+      <div class="card">
+        <div class="adjform">
+          <label class="fld" style="min-width:320px">엑셀 파일<input id="upFile" type="file" accept=".xlsx,.xls"></label>
+          <button id="upSave" class="btn btn-sm" type="button" disabled>저장 (해당 월 교체)</button>
+          <span id="upMsg" class="plan-msg"></span>
+        </div>
+        <div class="upbar"><div id="upBar"></div></div>
+        <div id="upPreview"></div>
+      </div>
+    </section>
+
+    <div class="card" id="plNotesCard" style="margin-top:14px">
       <h3 style="margin:0 0 8px">값의 근거</h3>
       <div id="plNotes"></div>
     </div>
 
-    <div class="card" style="margin-top:14px">
+    <div class="card" id="adjCard" style="margin-top:14px">
       <h3 style="margin:0 0 8px">특이비용 입력</h3>
       <p class="dnote" style="margin:0 0 10px">선택한 월의 계정에 금액을 더합니다(비용 계정은 +가 비용 증가, 차감은 −). 입력하면 예상실적에 바로 반영됩니다. 말단 계정만 고를 수 있습니다.</p>
       <div class="adjform">
@@ -95,11 +112,20 @@
   </main>
 </div>
 
+<div id="glModal" class="glmodal" hidden>
+  <div class="glbox">
+    <div class="glhead"><b id="glTitle"></b><button id="glClose" class="btn btn-sm" type="button">닫기</button></div>
+    <div id="glBody"></div>
+  </div>
+</div>
+
 <script src="../vendor/supabase.min.js"></script>
-<script src="../nav.js?v=202611031800"></script>
+<script src="../vendor/xlsx.full.min.js"></script>
+<script src="../nav.js?v=202611032100"></script>
 <script src="../ot-seed.js?v=202610291500"></script>
 <script src="../labor-calc.js?v=202611031003"></script>
-<script src="../pnl-accounts.js?v=202611031800"></script>
-<script src="../pnl.js?v=202611031800"></script>
+<script src="../pnl-accounts.js?v=202611032100"></script>
+<script src="../pnl-gl.js?v=202611032100"></script>
+<script src="../pnl.js?v=202611032100"></script>
 </body>
 </html>

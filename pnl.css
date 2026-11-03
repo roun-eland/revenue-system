@@ -39,3 +39,17 @@ table.pnl td.ed:hover{background:#fffbe6;box-shadow:inset 0 0 0 1px #8fa97a}
 table.pnl input.edin{width:100%;box-sizing:border-box;text-align:right;font:inherit;padding:0 4px;border:1px solid #0f4c3a;border-radius:2px;background:#fff}
 table.pnl.act th.est{background:#0f4c3a}
 table.pnl.act td.est{font-weight:700;box-shadow:inset 2px 0 0 #0f4c3a}
+table.pnl td.drl{cursor:pointer}
+table.pnl td.drl:hover{background:#fffbe6;text-decoration:underline}
+.dnote-list ul{margin:8px 0 0;padding-left:18px;font-size:11px;line-height:1.7;color:var(--muted2)}
+.glmodal{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+.glmodal[hidden]{display:none}
+.glbox{background:#fff;border-radius:6px;max-width:1100px;width:100%;padding:16px 18px;box-shadow:0 8px 30px rgba(0,0,0,.25)}
+.glhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;font-size:14px}
+.glwrap{overflow:auto;max-height:65vh;border:1px solid #e0e0e0}
+.glwrap table.pnl.small{table-layout:auto;width:100%}
+.glwrap table.pnl.small th{position:sticky;top:0;z-index:2;background:#1f2937;color:#fff}
+.glwrap table.pnl.small td{white-space:nowrap}
+.upbar{height:6px;background:#eee;border-radius:3px;overflow:hidden;margin:6px 0 12px}
+.upbar #upBar{height:100%;width:0;background:#0f4c3a;transition:width .2s}
+.upnote{margin:10px 0 0;padding-left:18px;font-size:12px;line-height:1.7}

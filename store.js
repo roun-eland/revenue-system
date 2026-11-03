@@ -71,7 +71,7 @@ function sorted() {
   });
 }
 function render() {
-  const rows = S.rows;
+  const rows = S.rows.filter(r => (r.extra || {})['상태'] !== '폐점');   // 폐점 매장은 요약에서 제외 (표에는 남김)
   const sum = f => rows.reduce((a, r) => a + (Number(r[f]) || 0), 0);
   const rent = rows.map(r => Number(r.rent_rate)).filter(x => x > 0);
   const avg = rent.length ? rent.reduce((a, b) => a + b, 0) / rent.length : 0;

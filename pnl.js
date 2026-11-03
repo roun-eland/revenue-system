@@ -21,7 +21,7 @@ const sname = c => ((OT_DATA[c] && OT_DATA[c].name) || c).replace(/\s*\(신규\)
 const shiftYm = (ym, n) => { const [y, m] = ym.split('-').map(Number); const t = y * 12 + (m - 1) + n; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, '0')}`; };
 const lastDay = ym => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
 
-const S = { ym: null, tab: 'brand', mode: 'l1', scope: 'all', unit: 'mm', act: {}, pick: null, folded: new Set(), months: [], D: null, adj: [] };
+const S = { ym: null, tab: 'brand', mode: 'l1', scope: 'all', unit: 'mm', act: {}, acScope: 'sheet', gl: {}, glLeaves: new Set(), glHidden: new Set(), storeInfo: [], storeByCc: {}, pick: null, folded: new Set(), months: [], D: null, adj: [] };
 
 // ---------- 시작 ----------
 async function init() {
@@ -46,9 +46,15 @@ async function init() {
   document.querySelectorAll('#plScope button').forEach(b => { b.onclick = () => { S.scope = b.dataset.scope; renderAll(); }; });
   $('plPick').onchange = () => { S.pick = $('plPick').value; renderAll(); };
   $('plMonth').onchange = () => loadMonth($('plMonth').value);
+  $('acScope').onchange = () => { S.acScope = $('acScope').value; S.actScrolled = false; renderAll(); if (S.tab === 'actual') showTab('actual'); };
+  $('upFile').onchange = () => glChoose($('upFile').files[0]);
+  $('upSave').onclick = glSave;
+  $('glClose').onclick = () => { $('glModal').hidden = true; };
+  $('glModal').onclick = e => { if (e.target === $('glModal')) $('glModal').hidden = true; };
   $('adjAdd').onclick = addAdjust;
   $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace('../'); };
   fillAdjustAccounts();
+  loadGlMeta().catch(e => setMsg('전표 매핑·매장정보를 불러오지 못했습니다: ' + (e.message || e), true));
   await loadMonths();
   loadActual().then(a => { S.act = a; renderAll(); }).catch(e => setMsg('월별 실적을 불러오지 못했습니다: ' + (e.message || e), true));
   showTab(typeof navStart === 'function' ? navStart('brand') : 'brand');
@@ -56,16 +62,20 @@ async function init() {
 $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace('../'); };
 
 function showTab(t) {
-  S.tab = t === 'store' || t === 'actual' ? t : 'brand';
+  S.tab = ['store', 'actual', 'upload'].includes(t) ? t : 'brand';
   document.querySelectorAll('#plNav button').forEach(b => b.classList.toggle('on', b.dataset.view === S.tab));
   $('view-brand').hidden = S.tab !== 'brand';
   $('view-store').hidden = S.tab !== 'store';
   $('view-actual').hidden = S.tab !== 'actual';
+  $('view-upload').hidden = S.tab !== 'upload';
   $('plUnit').hidden = S.tab !== 'actual';
-  $('plMode').hidden = S.tab === 'store';   // 매장 탭은 주요 계정 고정, 대신 전체 매장/매장 선택
+  $('acScopeWrap').hidden = S.tab !== 'actual';
+  $('plMode').hidden = S.tab === 'store' || S.tab === 'upload';   // 매장 탭은 주요 계정 고정, 대신 전체 매장/매장 선택
   $('plScope').hidden = S.tab !== 'store';
+  $('plNotesCard').hidden = S.tab === 'upload';
+  $('adjCard').hidden = S.tab === 'upload' || S.tab === 'actual';
   renderAll();
-  if (S.tab === 'actual' && !S.actScrolled && S.act && Object.keys(S.act).length) { const w = $('actualTable'); w.scrollLeft = w.scrollWidth; S.actScrolled = true; }   // 처음 열면 최근 월이 보이도록 오른쪽 끝으로
+  if (S.tab === 'actual' && !S.actScrolled && $('actualTable').querySelector('table')) { const w = $('actualTable'); w.scrollLeft = w.scrollWidth; S.actScrolled = true; }   // 처음 열면 최근 월이 보이도록 오른쪽 끝으로
 }
 
 // ---------- 데이터 ----------
@@ -174,19 +184,27 @@ function rateOf(map, code, brandAvg) {
 }
 
 // ---------- 계산 ----------
+// 정직원 급여 일할 비율 — 폐점(OT_CLOSE_FROM)만 반영하고 신규 오픈(OT_OPEN_FROM)은 반영하지 않는다
+function ftFrac(code, ym) {
+  const cf = OT_CLOSE_FROM[code]; if (!cf) return 1;
+  const dim = new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate(), first = ym + '-01', last = ym + '-' + String(dim).padStart(2, '0');
+  return cf <= first ? 0 : cf > last ? 1 : (+cf.slice(8) - 1) / dim;
+}
+
 // 매장별 말단 계정 값 (특이비용 제외)
 function baseLeaf(code) {
   const D = S.D, st = D.run.daily.stores[code];
   const gross = st ? +st.total || 0 : 0, net = gross / 1.1;
-  const cf = otCloseFrac(code, D.ym);
+  const cf = otCloseFrac(code, D.ym);          // 영업 일수 비율 — 아르바이트·매출 쪽(오픈 전 휴점일 제외)
+  const ff = ftFrac(code, D.ym);                // 정직원 급여·퇴직급여 — 오픈 달은 한 달치(오픈 전부터 근무), 폐점 달만 일할
   const cr = rateOf(D.costRate, code, D.brandCostRate), mr = rateOf(D.mateRate, code, D.brandMateRate), sf = D.staff[code];
   const leaf = {
     gross_direct: gross,
     vat: gross - net,
     food: net * cr.v,
     food_tax: -net * FOOD_TAX_PCT,
-    pay_ft: (sf.fullpay + sf.nfull * LC.LEAVE_PER_FT) * cf,
-    retire: sf.nfull * LC.RETIRE_PER_FT * cf,
+    pay_ft: (sf.fullpay + sf.nfull * LC.LEAVE_PER_FT) * ff,
+    retire: sf.nfull * LC.RETIRE_PER_FT * ff,
     pay_pt: net * mr.v
   };
   return { leaf, meta: { inRun: !!st, costSrc: cr, mateSrc: mr, noStaff: sf.none, closeFrac: cf } };
@@ -343,25 +361,6 @@ function renderBrand(C) {
 
 // 월별 실적 추이 — 받은 실적(백만원) + 선택한 월의 예상실적 열. 금액 / 매출 대비 % 전환
 const ymLabel = ym => `${ym.slice(2, 4)}년${+ym.slice(5)}월`;
-function renderActual(C) {
-  const yms = Object.keys(S.act).sort();
-  if (!yms.length) { $('actualTable').innerHTML = '<p class="dnote" style="padding:12px">월별 실적이 아직 없습니다.</p>'; return; }
-  const pct = S.unit === 'pct';
-  const cols = yms.map(y => ({ head: ymLabel(y), M: S.act[y], est: false })).concat([{ head: `${+S.ym.slice(5)}월 예상`, M: C.brand, est: true }]);
-  const cw = pct ? 58 : 62, W = 250 + cols.length * cw + 20;
-  let h = `<table class="pnl act" style="width:${W}px"><colgroup><col style="width:250px">${cols.map(() => `<col style="width:${cw}px">`).join('')}</colgroup><thead><tr><th>로운 · ${pct ? '매출액 대비 %' : '백만원'}</th>` +
-    cols.map(c => `<th class="num${c.est ? ' est' : ''}">${c.head}</th>`).join('') + '</tr></thead><tbody>';
-  const sv = (M, code) => M[code] == null ? null : M[code];
-  for (const a of visibleRows(S.mode)) {
-    h += `<tr class="${rowCls(a)}">${labelCell(a, S.mode)}` + cols.map(c => {
-      const v = sv(c.M, a.code), base = c.M.sales;
-      const txt = v == null ? '<span class="z">-</span>' : pct ? (base && Math.round(v / 1e6) ? (v / base * 100).toFixed(1) + '%' : '<span class="z">-</span>') : nf(v / 1e6);
-      return `<td class="num${c.est ? ' est' : ''}">${txt}</td>`;
-    }).join('') + '</tr>';
-  }
-  $('actualTable').innerHTML = h + '</tbody></table>';
-}
-
 function renderStore(C) {
   const one = S.scope === 'one';
   if (!S.pick || !C.store[S.pick]) S.pick = STORES[0];
@@ -399,7 +398,7 @@ function renderNotes(C) {
   const li = [];
   li.push(`<b>외형매출·부가세</b> = 매출 앱 확정 예측 v${r.version}${pub ? ` (${pub} 발행)` : ''} — 폐점·신규 오픈 보정 반영. 매출액 = 외형매출 ÷ 1.1, 비율은 모두 매출액 대비.`);
   li.push(`<b>식재료원가</b> = ${D.costYm ? `${+D.costYm.slice(5)}월 누적 원가율(${D.costSpan ? D.costSpan.from.slice(5).replace('-', '/') + '~' + D.costSpan.to.slice(5).replace('-', '/') : ''}, 매장별 실적)` : '원가율 없음'} × 예상 매출액. <b>의제매입세액 공제</b> = 매출액의 −${(FOOD_TAX_PCT * 100).toFixed(1)}% (원본 손익표 기준 가정).`);
-  li.push(`<b>급여_직원</b> = ${D.rYm ? `${+D.rYm.slice(5)}월 맨파워` : '8월 실측 구성'} × 직급 단가(+직책수당) + 연차수당(1인 ${(LC.LEAVE_PER_FT / 10000).toFixed(0)}만원)${noStaff.length ? ` · 맨파워 현황에 없는 매장은 정직원 0명: ${noStaff.join(', ')}` : ''}. <b>퇴직급여</b> = 정직원 1인 ${(LC.RETIRE_PER_FT / 10000).toFixed(0)}만원. 폐점·오픈 월은 영업 일수 비율로 줄입니다.`);
+  li.push(`<b>급여_직원</b> = ${D.rYm ? `${+D.rYm.slice(5)}월 맨파워` : '8월 실측 구성'} × 직급 단가(+직책수당) + 연차수당(1인 ${(LC.LEAVE_PER_FT / 10000).toFixed(0)}만원)${noStaff.length ? ` · 맨파워 현황에 없는 매장은 정직원 0명: ${noStaff.join(', ')}` : ''}. <b>퇴직급여</b> = 정직원 1인 ${(LC.RETIRE_PER_FT / 10000).toFixed(0)}만원. 폐점 달은 영업 일수 비율로 줄이고, 신규 오픈 달은 정직원 한 달치를 잡습니다(오픈 전부터 근무).`);
   li.push(`<b>급여_아르바이트</b> = ${+D.base.slice(5)}월 메이트 급여(급여대장) ÷ 순매출 비율 × 예상 매출액.`);
   if (est.length) li.push(`이력이 없어 대체한 값: ${est.join(' · ')}`);
   li.push(`<b>당기순이익</b> = (영업이익 + 영업외손익 0 + 금융손익 −${((FIN_COST_EST - INT_INC_EST) / 1e6).toFixed(0)}백만원) × (1 − 법인세율 ${(TAX_RATE * 100).toFixed(0)}%), 세전이익이 음수면 세금 0. 26년6~9월 실적 영업이익에 적용하면 실제 순이익과 평균 오차 0.8백만원 (영업이익 65% 방식은 28백만원). <b>진이익</b> = 당기순이익 − ${(TRUE_NET_DED / 1e6).toFixed(0)}백만원 (브랜드 차감, 추정 — 브랜드 탭의 안분비 열에 들어감).`);
