@@ -17,7 +17,7 @@ const sname = c => (OT_DATA[c] && OT_DATA[c].name) || c;
 const shiftYm = (ym, n) => { const [y, m] = ym.split('-').map(Number); const t = y * 12 + (m - 1) + n; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, '0')}`; };
 const lastDay = ym => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
 
-const S = { ym: null, tab: 'brand', mode: 'main', folded: new Set(), months: [], D: null, adj: [] };
+const S = { ym: null, tab: 'brand', mode: 'l1', folded: new Set(), months: [], D: null, adj: [] };
 
 // ---------- 시작 ----------
 async function init() {
@@ -218,10 +218,16 @@ function hasVisibleChild(a) {
   if (S.mode === 'l1') return false;
   return a.children.some(c => S.mode === 'all' || PNL_BY[c].main);
 }
+// "대분류만" 보기 — 계정 트리의 1단계가 아니라 사용자가 정한 요약 줄들 (원가·인건비·제조경비는 매출원가의 (1-1)(1-2)(1-3))
+const L1_ROWS = [
+  ['sales', '매출액'], ['cogs.2', '원가'], ['cogs.3', '인건비'], ['cogs.4', '제조경비'], ['gp', '매출총이익'],
+  ['sga', '판관비'], ['op', '영업이익'], ['net', '당기순이익'], [null, '진이익', '추후 설명']
+];
+const L1_PSEUDO = L1_ROWS.map(([code, label, pend]) => ({ code: code || 'true_net', label, pend, level: 1, children: [], calc: null, main: false, id: code && PNL_BY[code].id }));
 function visibleRows() {
+  if (S.mode === 'l1') return L1_PSEUDO;
   const out = [];
   for (const a of PNL_ACC) {
-    if (S.mode === 'l1' && a.level > 1) continue;
     if (S.mode === 'main' && !a.main) continue;
     if (S.mode !== 'l1') { let p = a.parent, hide = false; while (p) { if (S.folded.has(p)) { hide = true; break; } p = PNL_BY[p].parent; } if (hide) continue; }
     out.push(a);
@@ -230,7 +236,7 @@ function visibleRows() {
 }
 function labelCell(a) {
   const caret = hasVisibleChild(a) ? `<span class="car">${S.folded.has(a.code) ? '▸' : '▾'}</span>` : '<span class="car"></span>';
-  return `<td class="nm${hasVisibleChild(a) ? ' has' : ''}" data-code="${a.code}" style="padding-left:${6 + (a.level - 1) * 14}px">${caret}${esc(a.label)}</td>`;
+  return `<td class="nm${hasVisibleChild(a) ? ' has' : ''}" data-code="${a.code}" style="padding-left:${6 + (a.level - 1) * 14}px">${caret}${esc(a.label)}${a.pend ? ` <span class="pend">${a.pend}</span>` : ''}</td>`;
 }
 const rowCls = a => `l${a.level}${a.children.length || a.calc ? ' sub' : ' lf'}${a.main ? ' mn' : ''}${['gp', 'op', 'net'].includes(a.id) ? ' key' : ''}`;
 
