@@ -48,8 +48,12 @@ table.pnl td.drl:hover{background:#fffbe6;text-decoration:underline}
 .glhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;font-size:14px}
 .glwrap{overflow:auto;max-height:65vh;border:1px solid #e0e0e0}
 .glwrap table.pnl.small{table-layout:auto;width:100%}
-.glwrap table.pnl.small th{position:sticky;top:0;z-index:2;background:#1f2937;color:#fff}
-.glwrap table.pnl.small td{white-space:nowrap}
+.glwrap table.pnl.small th{position:sticky;top:0;z-index:4;background:#1f2937;color:#fff}
+.glwrap table.pnl.small td{white-space:nowrap;text-align:left}
+.glwrap table.pnl.small td.num{text-align:right}
+.glwrap table.pnl.small td:first-child{position:static}                       /* 첫 칸 고정(표 공통 규칙)을 풀어야 스크롤할 때 '전기일' 머리글이 가려지지 않는다 */
+.glwrap table.pnl.small th:first-child{left:0;z-index:5}
+.glwrap table.pnl.small td:last-child{white-space:normal;min-width:260px}     /* 텍스트: 왼쪽 정렬, 길면 줄바꿈해서 앞부분부터 보이게 */
 .upbar{height:6px;background:#eee;border-radius:3px;overflow:hidden;margin:6px 0 12px}
 .upbar #upBar{height:100%;width:0;background:#0f4c3a;transition:width .2s}
 .upnote{margin:10px 0 0;padding-left:18px;font-size:12px;line-height:1.7}
