@@ -79,7 +79,6 @@
     <button data-view="praise">칭찬 사원</button>
     <button data-view="red">레드플래그</button>
     <button data-view="reviews">리뷰·조치</button>
-    <button data-view="dessert">디저트 리뷰</button>
     <button data-view="upload">데이터 업로드</button>
   </nav>
 
@@ -213,23 +212,6 @@
       <div class="plan-actions"><button id="rvMore" class="btn btn-sm" type="button" hidden>더 보기</button><span class="plan-msg" id="rvCount"></span><button id="rvExportBtn" class="btn btn-sm" type="button">엑셀 다운로드 ⬇</button></div>
     </section>
 
-    <!-- 디저트 리뷰: 고객 리뷰 중 디저트·후식 이야기만 모아 보기 + 엑셀 -->
-    <section id="view-dessert" class="view" hidden>
-      <h2>디저트 리뷰</h2>
-      <p class="view-sub">고객 리뷰 중 디저트·후식 이야기(디저트·아이스크림·젤라또·와플·케이크·도지마롤·빠스·요거트·샤베트 등)가 들어간 글을 원문 그대로 모았습니다. 긍정·아쉬움·요청 표시는 단어 기준 자동 분류라 참고용입니다.</p>
-      <div id="dsSummary"></div>
-      <div class="plan-actions" style="margin:14px 0">
-        <label class="fld" style="min-width:180px">매장<select id="dsStore"></select></label>
-        <label class="fld" style="min-width:160px">디저트 종류<select id="dsMenu"></select></label>
-        <label class="fld" style="min-width:130px">분류<select id="dsTone">
-          <option value="">전체</option><option>긍정</option><option>아쉬움</option><option>요청</option><option>언급</option>
-        </select></label>
-      </div>
-      <div id="dsList"></div>
-      <div class="plan-actions"><button id="dsMore" class="btn btn-sm" type="button" hidden>더 보기</button><span class="plan-msg" id="dsCount"></span><button id="dsExportBtn" class="btn btn-sm" type="button">엑셀 다운로드 ⬇</button></div>
-      <div id="dsExt" style="margin-top:22px"></div>
-    </section>
-
     <!-- V5 데이터 업로드 (planner) -->
     <section id="view-upload" class="view narrow" hidden>
       <h2>데이터 업로드</h2>
@@ -267,11 +249,11 @@
 </div>
 
 <script src="../vendor/supabase.min.js"></script>
-<script src="../nav.js?v=202611050100"></script>
+<script src="../nav.js?v=202611041930"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../vendor/chart.umd.min.js"></script>
 <script src="../export-tables.js?v=202610021415"></script>
 <script src="../ot-seed.js?v=202610291500"></script>
-<script src="../voc.js?v=202611050100"></script>
+<script src="../voc.js?v=202610191830"></script>
 </body>
 </html>
