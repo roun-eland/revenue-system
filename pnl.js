@@ -301,21 +301,27 @@ const addLeaf = (a, b) => { const o = { ...a }; for (const k of Object.keys(b)) 
 function computeAll() {
   const D = S.D, store = {}, metas = {};
   let sum = {};
+  const mSum = { gen: {}, prem: {} };      // 모델별(일반 매장 / 프리미엄 매장) 합 — 매장 탭에서 선택 매장과 같은 모델 열로 쓴다
   for (const c of STORES) {
     const b = baseLeaf(c); metas[c] = b.meta;
     const leaf = addLeaf(applyFix(c, applySets(c, b.leaf)), adjLeaf(c));
     store[c] = evalTree(leaf);
     sum = addLeaf(sum, leaf);
+    const mk = storeModel(c); mSum[mk] = addLeaf(mSum[mk], leaf);
   }
   const total = evalTree(sum);
+  const model = { gen: evalTree(mSum.gen), prem: evalTree(mSum.prem) };
   const alloc = evalTree({ ...estAllocLeaves(), [PNL_ID.true_ded]: TRUE_NET_DED, [PNL_ID.int_inc]: INT_INC_EST, [PNL_ID.fin_cost]: FIN_COST_EST });   // 안분비 = 법인 안분(직전 3개월 평균) + 브랜드 안분(최근 달) + 금융손익·진이익 차감
   const special = evalTree(adjLeaf('brand'));
   const brand = {};
   for (const a of PNL_ACC) brand[a.code] = total[a.code] + alloc[a.code] + special[a.code];
   // 세전이익이 음수면 법인세비용 0 — 열을 더한 값이 아니라 예상실적 열 자체의 세전이익으로 다시 계산 (양수일 때는 열 합과 같다)
   if (brand.pretax <= 0) { brand.tax = 0; brand.net = brand.pretax; brand.true_net = brand.net - brand.true_ded; }
-  return { store, total, alloc, special, brand, metas };
+  return { store, total, alloc, special, brand, metas, model };
 }
+// 매장 모델 — 로운샤브 프리미엄 매장(EST_PREMIUM) / 그 밖은 일반 매장
+const storeModel = c => (typeof EST_PREMIUM !== 'undefined' && EST_PREMIUM.has(c)) ? 'prem' : 'gen';
+const MODEL_NAME = { gen: '일반 매장', prem: '프리미엄 매장' };
 
 // ---------- 표시 ----------
 const nf = v => { const r = Math.round(v); if (!r) return '<span class="z">-</span>'; return r < 0 ? '(' + Math.abs(r).toLocaleString('ko-KR') + ')' : r.toLocaleString('ko-KR'); };
@@ -432,10 +438,13 @@ function renderStore(C) {
   const pickSel = $('plPick');
   if (pickSel.options.length !== STORES.length) pickSel.innerHTML = STORES.map(c => `<option value="${c}">${esc(sname(c))}</option>`).join('');
   pickSel.value = S.pick;
-  const colsDef = one ? [[S.pick, sname(S.pick), S.pick, C.store[S.pick]]] : [['sum', '로운', '', C.total], ...STORES.map(c => [c, sname(c), c, C.store[c]])];
-  const cw = one ? 160 : 112, pw = one ? 80 : 60;
+  // 매장 선택: 비고 | 로운(브랜드 전체) | 같은 모델 합계 | 선택 매장 — 열을 붙여서 한눈에 비교
+  const mk = storeModel(S.pick);
+  const colsDef = one ? [['sum', '로운', '', C.total], ['model', MODEL_NAME[mk], '모델', C.model[mk]], [S.pick, sname(S.pick), S.pick, C.store[S.pick]]]
+                      : [['sum', '로운', '', C.total], ...STORES.map(c => [c, sname(c), c, C.store[c]])];
+  const cw = one ? 128 : 112, pw = one ? 62 : 60;
   const W = 250 + colsDef.length * (cw + pw);
-  let h = `<table class="pnl" style="width:100%;min-width:${W}px"><colgroup><col style="width:250px">${colsDef.map(() => `<col style="width:${cw}px"><col style="width:${pw}px">`).join('')}</colgroup><thead>` +
+  let h = `<table class="pnl" style="${one ? `width:${W}px` : `width:100%;min-width:${W}px`}"><colgroup><col style="width:250px">${colsDef.map(() => `<col style="width:${cw}px"><col style="width:${pw}px">`).join('')}</colgroup><thead>` +
     `<tr><th>매장코드</th>${colsDef.map(([, , code]) => `<th colspan="2" class="ctr">${code || '합계'}</th>`).join('')}</tr>` +
     `<tr><th>매장명</th>${colsDef.map(([, n]) => `<th colspan="2" class="ctr">${esc(n)}</th>`).join('')}</tr>` +
     `<tr><th>비고</th>${colsDef.map(() => '<th class="num">금액(원)</th><th class="num">비율</th>').join('')}</tr></thead><tbody>`;
