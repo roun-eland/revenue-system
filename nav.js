@@ -27,7 +27,7 @@
     { id: 'labor', label: '생산성', mark: '생', href: 'labor/', nav: '#otNav button', attr: 'view',
       items: [['dash', '전사 대시보드'], ['plan', '계획 시뮬레이션'], ['feedback', '매장 피드백'], ['actual', '실적 입력', 1], ['ref', '기준정보', 1]] },
     { id: 'cost', label: '원가', mark: '원', href: 'cost/', nav: '.tab-nav .tab-btn', attr: 'tab',
-      items: [['pivot', '대시보드'], ['season-design', '시즌설계'], ['produce', '농산 모니터링'], ['data-group', '데이터']] },
+      items: [['pivot', '대시보드'], ['season-design', '시즌설계'], ['produce', '농산 모니터링'], ['data-group', '데이터', 1]] },
     { id: 'supply', label: '공급', mark: '공', href: 'supply/', nav: '#spNav button', attr: 'view',
       items: [['hq', '본부 재고', 1], ['upload', '데이터 업로드', 1]] },
     { id: 'demand', label: '수요', mark: '수', href: 'demand/', nav: '#dmNav button', attr: 'view',
@@ -84,7 +84,8 @@
   function itemsFor(sec) {
     if (!sec.items) return [];
     if (sec.id === curId) {   // 현재 섹션은 화면의 실제 탭 버튼을 따른다 (권한으로 숨겨진 탭은 자동 제외)
-      return btnsOf(sec).filter(b => !b.hidden && !b.disabled).map(b => ({ key: keyOf(b, sec), label: b.textContent.replace(/\s+/g, ' ').trim() }));
+      const planOnly = new Set(sec.items.filter(([, , p]) => p).map(([k]) => k));   // 기획자 전용 항목은 권한을 확인한 뒤 매장 관리자 메뉴에서 뺀다 (화면 쪽 숨김 처리보다 늦게 적용돼도 안 보이게)
+      return btnsOf(sec).filter(b => !b.hidden && !b.disabled && !(role && role !== 'planner' && planOnly.has(keyOf(b, sec)))).map(b => ({ key: keyOf(b, sec), label: b.textContent.replace(/\s+/g, ' ').trim() }));
     }
     return sec.items.filter(([, , p]) => !p || role === 'planner').map(([key, label]) => ({ key, label }));
   }
@@ -110,7 +111,7 @@
     document.body.appendChild(sidebar);
     document.body.appendChild(Object.assign(el('div', 'sb-scrim'), { onclick: () => document.body.classList.remove('sbopen') }));
     render();
-    if (curId === 'cost' && q.get('v')) { const b = btnsOf(cur).find(x => keyOf(x, cur) === q.get('v')); if (b) setTimeout(() => b.click(), 0); }
+    if (curId === 'cost' && q.get('v')) { const b = btnsOf(cur).find(x => keyOf(x, cur) === q.get('v')); if (b && !b.hidden) setTimeout(() => b.click(), 0); }
 
     // 탭이 바뀌면 사이드바 강조와 경로를 따라간다
     if (cur && cur.nav) {

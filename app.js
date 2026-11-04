@@ -165,6 +165,8 @@ async function bootApp() {
     const { data: prof } = await sb.from('ot_profiles').select('role').eq('user_id', u.user.id).maybeSingle();
     if (!prof || prof.role !== 'planner') {
       document.body.classList.add('viewer');
+      const dataTab = document.querySelector('.tab-btn[data-tab="data-group"]');   // 데이터(업로드·시장·자재 사용량) 탭은 기획자 전용 — 조회 전용 계정에는 숨긴다
+      if (dataTab) { dataTab.hidden = true; dataTab.style.display = 'none'; }
       const bar = document.createElement('div');
       bar.className = 'viewer-banner';
       bar.textContent = '조회 전용 계정입니다 — 데이터 수정은 관리자 계정에서만 가능합니다.';
