@@ -35,10 +35,10 @@ async function init() {
     if (data && data.role) role = data.role;
   } catch (e) { /* 무시 */ }
   $('roleChip').textContent = role === 'planner' ? '기획자' : '매장 관리자';
-  if (role !== 'planner') {
-    $('plNav').hidden = true;
-    $('plMain').innerHTML = '<h2>예상실적</h2><p class="view-sub">손익 자료는 기획자만 볼 수 있습니다.</p>';
-    return;
+  S.planner = role === 'planner';
+  if (!S.planner) {   // 매장 관리자: 조회 전용 — 전표 업로드·특이비용 입력·표 직접 입력·전표 내역 보기는 숨긴다 (쓰기는 DB 권한도 막음)
+    document.querySelector('#plNav button[data-view="upload"]').hidden = true;
+    $('adjCard').hidden = true;
   }
   document.querySelectorAll('#plNav button').forEach(b => { b.onclick = () => showTab(b.dataset.view); });
   document.querySelectorAll('#plMode button').forEach(b => { b.onclick = () => { S.mode = b.dataset.mode; renderAll(); }; });
@@ -62,6 +62,7 @@ $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace
 
 function showTab(t) {
   S.tab = ['store', 'actual', 'upload'].includes(t) ? t : 'brand';
+  if (S.tab === 'upload' && !S.planner) S.tab = 'brand';
   document.querySelectorAll('#plNav button').forEach(b => b.classList.toggle('on', b.dataset.view === S.tab));
   $('view-brand').hidden = S.tab !== 'brand';
   $('view-store').hidden = S.tab !== 'store';
@@ -71,7 +72,7 @@ function showTab(t) {
   $('plMode').hidden = S.tab === 'store' || S.tab === 'upload';   // 매장 탭은 주요 계정 고정, 대신 전체 매장/매장 선택
   $('plScope').hidden = S.tab !== 'store';
   $('plNotesCard').hidden = S.tab === 'upload';
-  $('adjCard').hidden = S.tab === 'upload' || S.tab === 'actual';
+  $('adjCard').hidden = S.tab === 'upload' || S.tab === 'actual' || !S.planner;
   renderAll();
   if (S.tab === 'actual' && !S.actScrolled && $('actualTable').querySelector('table')) { const w = $('actualTable'); w.scrollLeft = w.scrollWidth; S.actScrolled = true; }   // 처음 열면 최근 월이 보이도록 오른쪽 끝으로
 }
@@ -118,19 +119,20 @@ async function loadAdjust(ym) {
 
 async function loadData(ym) {
   const base = shiftYm(ym, -1);   // 직전 월 = 메이트 급여율 기준
-  const [runR, usageTot, grades, roster, ftpay, per, sales, perCur, salesCur, est] = await Promise.all([
+  const [runR, usageTot, grades, roster, ftpay, per, sales, perCur, salesCur, est, ftRpc] = await Promise.all([
     sb.from('sf_forecast_runs').select('ym,version,kind,daily,published_at').eq('ym', ym).eq('kind', '확정').order('version', { ascending: false }).limit(1),
     sb.rpc('material_usage_monthly_totals'),
-    sb.from('ot_grades').select('grade,std_monthly_cost,allowance'),
+    S.planner ? sb.from('ot_grades').select('grade,std_monthly_cost,allowance') : Promise.resolve({ data: null }),   // 직급 단가는 기획자만 — 매장 관리자는 아래 pnl_store_ftpay(매장별 합계)로 계산
     sb.from('ot_staff_roster').select('ym,store_code,grade,headcount').limit(5000),
     sb.from('ot_labor_monthly').select('store_code,ft_pay').eq('ym', ym).not('ft_pay', 'is', null),
     sb.from('ot_labor_periods').select('store_code,period_start,period_end,mate_pay').gte('period_start', base + '-01').lte('period_end', lastDay(base)).limit(2000),
     sb.from('ot_sales_daily').select('store_code,sales_date,total').gte('sales_date', base + '-01').lte('sales_date', lastDay(base)).limit(1000),
     sb.from('ot_labor_periods').select('store_code,period_start,period_end,mate_pay').gte('period_start', ym + '-01').lte('period_end', lastDay(ym)).limit(2000),   // 이번 달 급여대장(누적 메이트 급여)
     sb.from('ot_sales_daily').select('store_code,sales_date,total').gte('sales_date', ym + '-01').lte('sales_date', lastDay(ym)).limit(5000),
-    loadEst(ym).catch(e => { console.warn('추정 규칙 데이터를 불러오지 못했습니다', e); return null; })   // 전표가 없으면 null → 규칙 미적용
+    loadEst(ym).catch(e => { console.warn('추정 규칙 데이터를 불러오지 못했습니다', e); return null; }),   // 전표가 없으면 null → 규칙 미적용
+    S.planner ? Promise.resolve({ data: null }) : sb.rpc('pnl_store_ftpay', { p_ym: ym })
   ]);
-  for (const r of [runR, usageTot, grades, roster, per, sales, perCur, salesCur]) if (r.error) throw r.error;
+  for (const r of [runR, usageTot, grades, roster, per, sales, perCur, salesCur, ftRpc]) if (r.error) throw r.error;
   if (!runR.data || !runR.data.length) throw new Error(`${ym} 확정 매출예측이 없습니다`);
   const run = otApplyClosures(runR.data)[0];   // 폐점·신규 오픈 보정 (화면 메모리에서만)
 
@@ -181,7 +183,9 @@ async function loadData(ym) {
     const nfull = GRADE_ORDER.reduce((t, g) => t + (counts[g] || 0), 0);
     let fullpay = GRADE_ORDER.reduce((t, g) => t + (counts[g] || 0) * ((gCost[g] || 0) + (gAllow[g] || 0)), 0);
     if (conf[c] != null) fullpay = conf[c];     // 확정 정직원 급여(SAP)가 있으면 그 값
-    const snrPay = (counts['선임점장'] || 0) * ((gCost['선임점장'] || 0) + (gAllow['선임점장'] || 0));   // 선임점장 급여(단가+직책수당) — 이 중 SNR_HQ_SHARE 는 본부 안분
+    let snrPay = (counts['선임점장'] || 0) * ((gCost['선임점장'] || 0) + (gAllow['선임점장'] || 0));   // 선임점장 급여(단가+직책수당) — 이 중 SNR_HQ_SHARE 는 본부 안분
+    if (!S.planner) { const f = (ftRpc.data || []).find(x => x.store_code === c); fullpay = f ? +f.fullpay : 0; snrPay = f ? +f.snr_pay : 0; }   // 매장 관리자: 직급 단가 없이 서버가 돌려준 매장별 합계를 쓴다
+    if (conf[c] != null) fullpay = conf[c];
     staff[c] = { nfull, fullpay, snrPay, none: !!rYm && !R[rYm][c] };
   }
 
@@ -423,7 +427,7 @@ function renderBrand(C) {
   for (const a of visibleRows(S.mode)) {
     const ed = editable(a, S.mode);
     h += `<tr class="${rowCls(a)}">${labelCell(a, S.mode)}` + cols.map(([n, M]) => {
-      const cell = ed && n === '특이비용';
+      const cell = S.planner && ed && n === '특이비용';   // 표에서 직접 입력은 기획자만
       return `<td class="num${cell ? ' ed' : ''}"${cell ? ` data-ed="${a.code}" title="눌러서 직접 입력 (Enter 저장, Esc 취소)"` : ''}>${nf(M[a.code])}</td><td class="num r">${pf(M[a.code], M.sales)}</td>`;
     }).join('') + '</tr>';
   }

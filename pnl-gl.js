@@ -152,7 +152,7 @@ function renderActual(C) {
       const has = v != null && Math.round(v / 1e6) !== 0;
       const amt = v == null ? '<span class="z">-</span>' : nf(v / 1e6);
       const rt = has && base ? (v / base * 100).toFixed(1) + '%' : '';
-      const click = dr && !c.est && c.ym && v != null && v !== 0;
+      const click = S.planner && dr && !c.est && c.ym && v != null && v !== 0;   // 전표 내역 보기는 기획자만 (인건비 전표 보호 — 조회 전용 계정은 DB도 막음)
       return `<td class="num${c.est ? ' est' : ''}${click ? ' drl' : ''}"${click ? ` data-code="${a.code}" data-ym="${c.ym}" title="눌러서 전표 내역 보기"` : ''}>${amt}</td><td class="num r${c.est ? ' est' : ''}">${rt}</td>`;
     }).join('') + '</tr>';
   }
