@@ -1,7 +1,7 @@
 // 예상실적 — 전표(원가요소 단위) 기반 과거 실적 · 전표 업로드 (2026-11-03)
 // pnl.js 보다 먼저 불러온다(최상위에서는 pnl.js 의 값을 쓰지 않고, 함수 안에서만 쓴다).
 //  · 실적 추이 탭: 보기 대상(브랜드 실적표 / 브랜드·매장합계·법인안분·브랜드안분·매장별 전표 합계) + 계정 칸을 누르면 전표 내역
-//  · 전표 업로드 탭: 엑셀(전표 헤더 텍스트·원가 요소·금액·코스트 센터·기능 영역·전표 번호·전기일) → gl_voucher (해당 월 교체)
+//  · 전표 업로드 탭: 엑셀(이름·전표 헤더 텍스트(분류용)·원가 요소·금액·코스트 센터·기능 영역·전표 번호·전기일) → gl_voucher (해당 월 교체)
 //  · 분류 규칙: 코스트센터가 store_info.cost_center 와 일치(끝 S 는 판관용 코스트센터) → 매장 / 그 밖의 비매장 중 텍스트에 EP → 법인 안분 / 나머지 → 브랜드 안분
 //  · 인건비 계열(급여·퇴직급여·상여, gl_acct_map.hide_detail)은 업로드 때 전표번호·텍스트를 비우고 금액만 저장, 화면에서도 내역을 보여주지 않는다
 //  · 식재료원가(전표 기준) = 식품매출원가(42010301) − 제조 비용 합 — 브랜드 실적표와 월 40~260백만원 차이가 나는 파생 값이다 (원가 시스템 값을 그대로 쓰는 예상 쪽과 다름)
@@ -227,7 +227,7 @@ async function glParse(file) {
     if (hi < 0) { skipped.noHeader.push(name); continue; }
     const H = rows[hi].map(c => String(c == null ? '' : c).trim());
     const ix = k => H.findIndex(h => h === k);
-    const col = { text: ix('전표 헤더 텍스트'), acct: ix('원가 요소'), acctName: ix('원가요소이름'), amt: H.findIndex(h => h.startsWith('Var')), cc: ix('코스트 센터'), ccName: ix('CO 오브젝트이름'), func: ix('기능 영역'), doc: ix('전표 번호'), date: ix('전기일') };
+    const col = { hdr: ix('전표 헤더 텍스트'), text: ix('이름'), acct: ix('원가 요소'), acctName: ix('원가요소이름'), amt: H.findIndex(h => h.startsWith('Var')), cc: ix('코스트 센터'), ccName: ix('CO 오브젝트이름'), func: ix('기능 영역'), doc: ix('전표 번호'), date: ix('전기일') };
     if ([col.acct, col.amt, col.cc, col.func, col.date].some(v => v < 0)) { skipped.noHeader.push(name); continue; }
     for (let i = hi + 1; i < rows.length; i++) {
       const r = rows[i]; if (!r || r[col.cc] == null) continue;
@@ -237,7 +237,9 @@ async function glParse(file) {
       out.push({
         ym: posted.slice(0, 7), posted, doc: r[col.doc] == null ? null : String(r[col.doc]).trim(), cc: String(r[col.cc]).trim(), ccName: col.ccName >= 0 && r[col.ccName] != null ? String(r[col.ccName]).trim() : null,
         acct: String(r[col.acct]).trim(), acctName: col.acctName >= 0 && r[col.acctName] != null ? String(r[col.acctName]).trim() : null, func: String(r[col.func]).trim(),
-        amount: amt, text: col.text >= 0 && r[col.text] != null ? String(r[col.text]).trim() : null
+        amount: amt,
+        hdr: col.hdr >= 0 && r[col.hdr] != null ? String(r[col.hdr]).trim() : null,                    // 전표 헤더 텍스트 — 법인 안분(EP) 분류에만 쓰고 저장·표시하지 않는다
+        text: col.text >= 0 && r[col.text] != null ? String(r[col.text]).trim() || null : null          // 전표 내역에 보이는 텍스트 = '이름' 열
       });
     }
   }
@@ -248,7 +250,7 @@ function glClassify(rows, storeByCc, hiddenPairs) {
   for (const r of rows) {
     const base = /^RU01S\d{4}S$/.test(r.cc) ? r.cc.slice(0, -1) : r.cc;
     r.store = storeByCc[base] || null;
-    r.part = r.store ? 'store' : GL_EP.test(r.text || '') ? 'corp' : 'brand';
+    r.part = r.store ? 'store' : GL_EP.test(r.hdr || '') ? 'corp' : 'brand';   // EP 배부 표시는 전표 헤더 텍스트에 있다 (표시용 텍스트는 '이름' 열이라 따로 둔다)
     r.hide = hiddenPairs.has(r.acct + '|' + r.func);
   }
   return rows;
