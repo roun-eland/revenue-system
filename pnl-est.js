@@ -26,6 +26,27 @@ const EST_PREMIUM = new Set(['RU042', 'RU043', 'RU044', 'RU045', 'RU046', 'RU047
 const estMean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
 const estMedian = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 
+// 수도광열비 계절 비율 = 전년 같은 달 ÷ 전년 직전 3개월(추정 기준 3개월의 1년 전) 평균
+//   같은 조건으로 계속 영업한 매장만 묶는다: 기준 3개월 앞 3개월부터 전년 같은 달까지 매달 전표가 있고 중앙값의 0.5~2배 안인 매장 (신규 오픈·리뉴얼 휴점 매장의 왜곡을 뺀다)
+//   26년 11월: 12개 매장 0.80 — 26년 4~9월 백테스트 평균 오차 9.2%(직전 3개월 평균) → 3.6%
+//   묶을 매장이 3곳 미만이거나 전년 전표가 없으면 1(보정 없음)
+async function estSeasonRatio(ym, base) {
+  const ly = shiftYm(ym, -12), lyb = base.map(m => shiftYm(m, -12));
+  const win = []; for (let m = shiftYm(lyb[0], -3); m <= ly; m = shiftYm(m, 1)) win.push(m);
+  try {
+    const { data, error } = await sb.rpc('gl_leaf_monthly', { p_from: win[0], p_leaf: 'cogs.4.5' });
+    if (error) throw error;
+    const by = {}; for (const r of data || []) (by[r.store_code] = by[r.store_code] || {})[r.ym] = +r.amount;
+    let num = 0, den = 0, n = 0;
+    for (const v of Object.values(by)) {
+      const xs = win.map(m => v[m]); if (xs.some(x => x == null || x <= 0)) continue;
+      const med = estMedian(xs); if (xs.some(x => x < 0.5 * med || x > 2 * med)) continue;
+      num += v[ly]; den += lyb.reduce((t, m) => t + v[m], 0) / lyb.length; n++;
+    }
+    return n >= 3 && den > 0 ? { s: num / den, n, ly, lyb } : { s: 1, n, ly, lyb };
+  } catch (e) { console.warn('수도광열비 계절 비율을 불러오지 못했습니다', e); return { s: 1, n: 0, ly, lyb }; }
+}
+
 async function loadEst(ym) {
   const from = shiftYm(ym, -7);   // 최근 6개월 평균 계정까지 쓰려면 7개월 전부터
   const [gs, ss, corp, brand, fx, si] = await Promise.all([
@@ -61,7 +82,8 @@ async function loadEst(ym) {
   const corpAvg = {}, brandLast = {};
   for (const [lf, mm] of Object.entries(cm)) if (!EST_ALLOC_SKIP.has(lf) && !EST_ALLOC_ZERO.has(lf) && PNL_BY[lf]) corpAvg[lf] = base.reduce((t, m) => t + (mm[m] || 0), 0) / base.length;
   for (const [lf, mm] of Object.entries(bm)) if (!EST_ALLOC_SKIP.has(lf) && !EST_ALLOC_ZERO.has(lf) && PNL_BY[lf]) brandLast[lf] = mm[brandYm] || 0;
-  const E = { base, base6, amt, sales, info, fixed, fixedMed, fixedMedP, corpAvg, brandLast, brandYm, lastYm: months[months.length - 1], pool: {}, poolP: {}, pool6: {}, poolP6: {}, fb: new Map() };
+  const seas = await estSeasonRatio(ym, base);   // 수도광열비 계절 비율
+  const E = { base, base6, amt, sales, info, fixed, fixedMed, fixedMedP, corpAvg, brandLast, brandYm, seas, lastYm: months[months.length - 1], pool: {}, poolP: {}, pool6: {}, poolP6: {}, fb: new Map() };
   // 이력 있는 매장들의 합산 통계 (신규점·이력 없는 매장의 대체값) — 전체 매장용(pool)과 프리미엄 매장용(poolP)
   const leaves = new Set(); for (const a of Object.values(amt)) for (const lf of Object.keys(a)) leaves.add(lf);
   const buildPool = (pick, mons) => {
@@ -112,7 +134,7 @@ function estStore(code, c) {
     if (EST_SKIP.has(lf) || !PNL_BY[lf] || PNL_BY[lf].children.length) continue;
     let v;
     if (EST_ZERO.has(lf)) v = 0;
-    else if (lf === 'cogs.4.5') v = own ? avg(lf) * c.cf : (inf.area ? inf.area * P(lf).perM2 * c.cf : avg(lf) * c.cf);   // 수도광열비 — 이력 없는 신규점은 면적 × 단위면적당 평균
+    else if (lf === 'cogs.4.5') v = (own ? avg(lf) * c.cf : (inf.area ? inf.area * P(lf).perM2 * c.cf : avg(lf) * c.cf)) * (E.seas ? E.seas.s : 1);   // 수도광열비 — 이력 없는 신규점은 면적 × 단위면적당 평균, 전부 × 전년 계절 비율(냉방 많은 여름 평균을 가을·겨울로 그대로 잇지 않는다)
     else if (lf === 'cogs.4.9') v = 0;                                                                                     // ⑨ 지급수수료(제조) — 기준표 항목은 ⑩ 기타제조경비로 넣는다
     else if (lf === 'sga.12.1') v = inf.contract === '임대을' && inf.rate != null ? inf.rate / 100 * c.net : inf.contract === '임대갑' ? avg(lf) * c.cf : ratio(lf) * c.net;
     else if (lf === 'cogs.4.6') v = ratio(lf) * c.net;
