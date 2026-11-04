@@ -201,7 +201,7 @@ async function openDrill(code, ym) {
   box.innerHTML = '<p class="dnote" style="margin:0">불러오는 중…</p>';
   const { data, error } = await sb.rpc('gl_detail', { p_scope: scope, p_store: store, p_ym: ym, p_leaves: shown });
   if (error) { box.innerHTML = `<p class="dnote" style="margin:0;color:var(--crit)">불러오지 못했습니다: ${esc(error.message)}</p>`; return; }
-  const rows = data || [], tot = rows.reduce((t, r) => t + (+r.amount || 0), 0);
+  const rows = (data || []).slice().sort((x, y) => (+y.amount || 0) - (+x.amount || 0)), tot = rows.reduce((t, r) => t + (+r.amount || 0), 0);   // 금액 큰 순(부호 기준) — 가장 큰 금액이 맨 위, 마이너스(취소·대체)는 맨 아래
   const money = v => { const r = Math.round(v); return r < 0 ? '(' + Math.abs(r).toLocaleString('ko-KR') + ')' : r.toLocaleString('ko-KR'); };
   let h = `<p class="dnote" style="margin:0 0 8px">${rows.length.toLocaleString('ko-KR')}건 · 합계 ${money(tot)}원${rows.length >= 1000 ? ' · 금액 큰 순 1,000건까지만 표시' : ''}${vl.length > shown.length ? ' · 인건비 계열은 제외' : ''}</p>` +
     '<div class="glwrap"><table class="pnl small"><thead><tr><th>전기일</th><th>전표번호</th><th>코스트센터</th><th>원가요소</th><th class="num">금액(원)</th><th>텍스트</th></tr></thead><tbody>';
