@@ -6,10 +6,24 @@
 //  · 인건비 계열(급여·퇴직급여·상여, gl_acct_map.hide_detail)은 업로드 때 전표번호·텍스트를 비우고 금액만 저장, 화면에서도 내역을 보여주지 않는다
 //  · 식재료원가(전표 기준) = 식품매출원가(42010301) − 제조 비용 합 — 브랜드 실적표와 월 40~260백만원 차이가 나는 파생 값이다 (원가 시스템 값을 그대로 쓰는 예상 쪽과 다름)
 
-const GL_MFG = ['cogs.4.1', 'cogs.4.2', 'cogs.4.3', 'cogs.4.4', 'cogs.4.5', 'cogs.4.6', 'cogs.4.7.1', 'cogs.4.7.2', 'cogs.4.7.3', 'cogs.4.8', 'cogs.4.9', 'cogs.4.10', 'pay_ft', 'pay_pt', 'retire', 'cogs.3.3', 'cogs.5', 'cogs.7'];
+const GL_MFG = ['cogs.4.1', 'cogs.4.2', 'cogs.4.3.1', 'cogs.4.3.2', 'cogs.4.4.1', 'cogs.4.4.2', 'cogs.4.5', 'cogs.4.6', 'cogs.4.7.1', 'cogs.4.7.2', 'cogs.4.7.3', 'cogs.4.8', 'cogs.4.9', 'cogs.4.10', 'pay_ft', 'pay_pt', 'retire', 'cogs.3.3', 'cogs.5', 'cogs.7'];
 const GL_NO_BELOW_OP = ['other', 'fin', 'pretax', 'tax_val', 'tax', 'net', 'true_net', 'true_ded'];   // 매장 단위에는 영업외·세금 이하를 보여주지 않는다
 const GL_NO_TAX = ['tax_val', 'tax', 'net', 'true_net', 'true_ded'];                                      // 법인세는 추정식이라 전표 기준 표에는 넣지 않는다
 const GL_PART_LABEL = { store: '매장', corp: '법인 안분', brand: '브랜드 안분' };
+
+// 조회 API 는 한 번에 1000행까지만 준다 — 그보다 큰 집계(매장×월×계정 등)는 range 로 나눠 끝까지 읽는다 (2026-11-04: 이걸 안 해서 매장별 전표 일부가 빠져 수광비·감가상각이 낮게 나왔다)
+// make(from, to) → .range(from, to) 가 붙은 조회. 반환 = 전체 행 배열. 순서가 흔들리지 않게 호출쪽에서 order 를 붙인다.
+async function pageAll(make) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const r = await make(from, from + 999);
+    if (r.error) throw r.error;
+    const rows = r.data || [];
+    for (const x of rows) out.push(x);
+    if (rows.length < 1000) break;
+  }
+  return out;
+}
 
 // ---------- 메타(매핑·매장정보) ----------
 async function loadGlMeta() {
@@ -44,7 +58,9 @@ const acKind = () => S.acScope === 'sheet' ? 'sheet' : /^RU\d/.test(S.acScope) ?
 async function loadGlAlloc() {
   if (S.glAlloc) return S.glAlloc;
   const [co, br, sl] = await Promise.all([
-    sb.rpc('gl_monthly', { p_scope: 'corp', p_store: null }), sb.rpc('gl_monthly', { p_scope: 'brand', p_store: null }), sb.rpc('store_sales_monthly', { p_store: null })
+    pageAll((a, b) => sb.rpc('gl_monthly', { p_scope: 'corp', p_store: null }).order('ym').order('leaf').range(a, b)).then(data => ({ data })),
+    pageAll((a, b) => sb.rpc('gl_monthly', { p_scope: 'brand', p_store: null }).order('ym').order('leaf').range(a, b)).then(data => ({ data })),
+    sb.rpc('store_sales_monthly', { p_store: null })
   ]);
   for (const r of [co, br, sl]) if (r.error) throw r.error;
   const tot = rows => { const o = {}; for (const r of rows || []) if (PNL_BY[r.leaf] && !EST_ALLOC_SKIP.has(r.leaf)) o[r.ym] = (o[r.ym] || 0) + (+r.amount || 0); return o; };
@@ -59,7 +75,7 @@ async function loadGlScope(key) {
   const needSales = kind === 'all' || kind === 'stores' || kind === 'store';
   const store = kind === 'store' ? key : null;
   const [g, sl] = await Promise.all([
-    sb.rpc('gl_monthly', { p_scope: kind, p_store: store }),
+    pageAll((a, b) => sb.rpc('gl_monthly', { p_scope: kind, p_store: store }).order('ym').order('leaf').range(a, b)).then(data => ({ data })),
     needSales ? sb.rpc('store_sales_monthly', { p_store: kind === 'store' ? key : null }) : Promise.resolve({ data: [] }),
     kind === 'store' || kind === 'stores' ? loadGlAlloc() : Promise.resolve(null)
   ]);
