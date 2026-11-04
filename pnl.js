@@ -181,7 +181,8 @@ async function loadData(ym) {
     const nfull = GRADE_ORDER.reduce((t, g) => t + (counts[g] || 0), 0);
     let fullpay = GRADE_ORDER.reduce((t, g) => t + (counts[g] || 0) * ((gCost[g] || 0) + (gAllow[g] || 0)), 0);
     if (conf[c] != null) fullpay = conf[c];     // 확정 정직원 급여(SAP)가 있으면 그 값
-    staff[c] = { nfull, fullpay, none: !!rYm && !R[rYm][c] };
+    const snrPay = (counts['선임점장'] || 0) * ((gCost['선임점장'] || 0) + (gAllow['선임점장'] || 0));   // 선임점장 급여(단가+직책수당) — 이 중 SNR_HQ_SHARE 는 본부 안분
+    staff[c] = { nfull, fullpay, snrPay, none: !!rYm && !R[rYm][c] };
   }
 
   // 메이트 급여율 = 직전 월 메이트 급여(급여대장) ÷ 그 기간 순매출
@@ -210,6 +211,12 @@ function rateOf(map, code, brandAvg, premAvg) {
 }
 
 // ---------- 계산 ----------
+// 선임점장 급여 본부 안분 — 매장에서 뺀 금액의 합계(폐점 달은 일할). pnl-est.js 의 안분비(브랜드 안분 · 급여_직원)에 더한다
+const SNR_HQ_SHARE = 0.5;
+function snrHqTotal() {
+  const D = S.D; if (!D || !D.staff) return 0;
+  return STORES.reduce((t, c) => t + (D.staff[c].snrPay || 0) * SNR_HQ_SHARE * ftFrac(c, D.ym), 0);
+}
 // 정직원 급여 일할 비율 — 폐점(OT_CLOSE_FROM)만 반영하고 신규 오픈(OT_OPEN_FROM)은 반영하지 않는다
 function ftFrac(code, ym) {
   const cf = OT_CLOSE_FROM[code]; if (!cf) return 1;
@@ -242,7 +249,7 @@ function baseLeaf(code) {
     vat: gross - net,
     food: net * cr.v,
     food_tax: -net * FOOD_TAX_PCT,
-    pay_ft: (sf.fullpay + sf.nfull * LC.LEAVE_PER_FT) * ff,
+    pay_ft: (sf.fullpay - sf.snrPay * SNR_HQ_SHARE + sf.nfull * LC.LEAVE_PER_FT) * ff,   // 선임점장 급여의 50%는 매장에서 빼고 브랜드 안분비(급여_직원)로
     retire: sf.nfull * LC.RETIRE_PER_FT * ff,
     pay_pt: mp.v
   };
@@ -476,7 +483,8 @@ function renderNotes(C) {
   if (fixAcc.length) li.push(`<b>계정 고정값</b>: ${fixAcc.map(r => `${sname(r.scope)} ${PNL_BY[r.account_code] ? PNL_BY[r.account_code].label.replace(/^[①-⑮]\s*/, '') : r.account_code} ${Math.round(+r.amount / 10000).toLocaleString('ko-KR')}만원`).join(' · ')} — 규칙 계산 대신 입력값을 씁니다(특이비용 목록의 고정값 줄, 삭제하면 규칙으로 복귀).`);
   li.push('매장 탭의 브랜드 안분비·법인 안분비 줄은 안분 합계를 매장 순매출 비율로 나눈 값입니다 (모든 매장이 매출 대비 같은 비율을 부담).');
   li.push(D.subYm ? `<b>견본비</b> = ${+D.subYm.slice(5)}월 부자재 사용액 ÷ 해당 기간 실매출${D.subSpan ? `(${D.subSpan.from.slice(5).replace('-', '/')}~${D.subSpan.to.slice(5).replace('-', '/')})` : ''} 비율(매장별, 업로드에 없는 매장은 프리미엄 매장은 프리미엄 평균·그 밖은 전 매장 합산 ${D.brandSubRate != null ? (D.brandSubRate * 100).toFixed(2) + '%' : '-'}) × 예상 순매출. 안분비의 견본비는 0입니다.${Object.keys(D.subRate).length ? '' : ' <span style="color:var(--crit)">부자재 사용량은 있지만 같은 기간 매출을 찾지 못해 비율을 계산하지 못했습니다 — 견본비가 0으로 들어갑니다.</span>'}${D.subSpan && D.subSpan.to < D.ym + '-15' && D.subYm === D.ym ? ' 월 초 며칠치 비율이라 변동이 큽니다(주차가 쌓일수록 안정).' : ''}` : '<b>견본비</b>: 부자재 사용량(원가 > 데이터 > 업로드 "자재 사용량(부자재)")이 아직 없어 0입니다 — 올리면 (부자재 사용액 ÷ 해당 기간 실매출) 비율 × 예상 순매출로 채워집니다.');
-  li.push('선임점장 급여의 본부 안분(50%)은 아직 반영하지 않았습니다.');
+  { const sn = STORES.filter(c => (D.staff[c].snrPay || 0) > 0 && ftFrac(c, D.ym) > 0).map(sname);
+    li.push(`<b>선임점장 급여 50% 본부 안분</b>: 선임점장(${sn.join('·') || '없음'}) 급여(단가+직책수당)의 ${SNR_HQ_SHARE * 100}%는 매장 급여_직원에서 빼고, 합계 ${Math.round(snrHqTotal() / 1e6 * 10) / 10}백만원을 브랜드 안분비의 급여_직원으로 넣었습니다(매장 탭에서는 브랜드 안분비 줄에 매출 비례로 나뉨). 연차수당·퇴직급여는 그대로 매장에 둡니다.`); }
   $('plNotes').innerHTML = '<ul>' + li.map(x => `<li>${x}</li>`).join('') + '</ul>';
 }
 

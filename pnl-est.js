@@ -131,14 +131,17 @@ function estStore(code, c) {
 function estAllocTotals() {
   const E = S.D && S.D.est; if (!E) return null;
   const sum = o => Object.values(o).reduce((t, v) => t + v, 0);
-  return { corp: sum(E.corpAvg), brand: sum(E.brandLast) };
+  return { corp: sum(E.corpAvg), brand: sum(E.brandLast) + snrHqTotal() };   // 브랜드 안분 = 전표 브랜드 안분 + 선임점장 급여 50%
 }
 
 // 안분비 말단 값 = 법인 안분(직전 3개월 평균) + 브랜드 안분(최근 달)
 function estAllocLeaves() {
-  const E = S.D && S.D.est; if (!E) return {};
+  const E = S.D && S.D.est;
   const out = {};
-  for (const [lf, v] of Object.entries(E.corpAvg)) out[lf] = (out[lf] || 0) + v;
-  for (const [lf, v] of Object.entries(E.brandLast)) out[lf] = (out[lf] || 0) + v;
+  if (E) {
+    for (const [lf, v] of Object.entries(E.corpAvg)) out[lf] = (out[lf] || 0) + v;
+    for (const [lf, v] of Object.entries(E.brandLast)) out[lf] = (out[lf] || 0) + v;
+  }
+  const snr = snrHqTotal(); if (snr) out[PNL_ID.pay_ft] = (out[PNL_ID.pay_ft] || 0) + snr;   // 선임점장 급여 50% → 브랜드 안분 · 급여_직원
   return out;
 }
