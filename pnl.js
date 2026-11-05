@@ -21,7 +21,7 @@ const sname = c => ((OT_DATA[c] && OT_DATA[c].name) || c).replace(/\s*\(신규\)
 const shiftYm = (ym, n) => { const [y, m] = ym.split('-').map(Number); const t = y * 12 + (m - 1) + n; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, '0')}`; };
 const lastDay = ym => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
 
-const S = { ym: null, tab: 'brand', mode: 'l1', scope: 'all', unit: 'mm', act: {}, acScope: 'sheet', gl: {}, glLeaves: new Set(), glHidden: new Set(), storeInfo: [], storeByCc: {}, pick: null, folded: new Set(), months: [], D: null, adj: [] };
+const S = { ym: null, tab: 'brand', mode: 'l1', scope: 'all', unit: 'mm', act: {}, acScope: 'sheet', gl: {}, glLeaves: new Set(), glHidden: new Set(), storeInfo: [], storeByCc: {}, pick: null, folded: new Set(), months: [], D: null, adj: [], fc: { amt: {}, plan: {} }, F: null };
 
 // ---------- 시작 ----------
 async function init() {
@@ -61,18 +61,19 @@ async function init() {
 $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace('../'); };
 
 function showTab(t) {
-  S.tab = ['store', 'actual', 'upload'].includes(t) ? t : 'brand';
+  S.tab = ['store', 'fcst', 'actual', 'upload'].includes(t) ? t : 'brand';
   if (S.tab === 'upload' && !S.planner) S.tab = 'brand';
   document.querySelectorAll('#plNav button').forEach(b => b.classList.toggle('on', b.dataset.view === S.tab));
   $('view-brand').hidden = S.tab !== 'brand';
   $('view-store').hidden = S.tab !== 'store';
+  $('view-fcst').hidden = S.tab !== 'fcst';
   $('view-actual').hidden = S.tab !== 'actual';
   $('view-upload').hidden = S.tab !== 'upload';
   $('acScopeWrap').hidden = S.tab !== 'actual';
-  $('plMode').hidden = S.tab === 'store' || S.tab === 'upload';   // 매장 탭은 주요 계정 고정, 대신 전체 매장/매장 선택
-  $('plScope').hidden = S.tab !== 'store';
-  $('plNotesCard').hidden = S.tab === 'upload';
-  $('adjCard').hidden = S.tab === 'upload' || S.tab === 'actual' || !S.planner;
+  $('plMode').hidden = S.tab === 'store' || S.tab === 'fcst' || S.tab === 'upload';   // 매장·매장예측 탭은 주요 계정 고정, 대신 전체 매장/매장 선택
+  $('plScope').hidden = S.tab !== 'store' && S.tab !== 'fcst';
+  $('plNotesCard').hidden = S.tab === 'upload' || S.tab === 'fcst';
+  $('adjCard').hidden = S.tab === 'upload' || S.tab === 'actual' || S.tab === 'fcst' || !S.planner;
   renderAll();
   if (S.tab === 'actual' && !S.actScrolled && $('actualTable').querySelector('table')) { const w = $('actualTable'); w.scrollLeft = w.scrollWidth; S.actScrolled = true; }   // 처음 열면 최근 월이 보이도록 오른쪽 끝으로
 }
@@ -95,8 +96,8 @@ async function loadMonth(ym) {
   S.ym = ym; S.D = null;
   setMsg('불러오는 중…');
   try {
-    const [D, adj] = await Promise.all([loadData(ym), loadAdjust(ym)]);
-    S.D = D; S.adj = adj;
+    const [D, adj, fc] = await Promise.all([loadData(ym), loadAdjust(ym), loadForecast(ym).catch(e => { console.warn('매장예측을 불러오지 못했습니다', e); return { amt: {}, plan: {} }; })]);
+    S.D = D; S.adj = adj; S.fc = fc;
     setMsg('');
     renderAll();
   } catch (e) { setMsg('불러오기 실패: ' + (e.message || e), true); }
@@ -367,11 +368,11 @@ const rowCls = a => `l${a.level}${a.children.length || a.calc ? ' sub' : ' lf'}$
 function renderAll() {
   document.querySelectorAll('#plMode button').forEach(b => b.classList.toggle('on', b.dataset.mode === S.mode));
   document.querySelectorAll('#plScope button').forEach(b => b.classList.toggle('on', b.dataset.scope === S.scope));
-  $('plPickWrap').hidden = !(S.tab === 'store' && S.scope === 'one');
+  $('plPickWrap').hidden = !((S.tab === 'store' || S.tab === 'fcst') && S.scope === 'one');
   if (!S.D) return;
   const C = computeAll();
   S.C = C;
-  renderBrand(C); renderStore(C); renderActual(C); renderNotes(C); renderAdjust();
+  renderBrand(C); renderStore(C); renderFcst(); renderActual(C); renderNotes(C); renderAdjust();
   document.querySelectorAll('td.nm[data-fold]').forEach(td => {
     td.onclick = () => { const k = td.dataset.fold; if (S.folded.has(k)) S.folded.delete(k); else S.folded.add(k); renderAll(); };
   });
@@ -464,6 +465,111 @@ function renderStore(C) {
   }
   h += `<tr class="l1 sub key"><td class="nm" style="padding-left:6px"><span class="car"></span>안분 후 영업이익</td>` + colsDef.map(([, , , M]) => { const v = M.op + (allocOf(M, 'brand') || 0) + (allocOf(M, 'corp') || 0); return `<td class="num">${nf(v)}</td><td class="num r">${pf(v, M.sales)}</td>`; }).join('') + '</tr>';
   $('storeTable').innerHTML = h + '</tbody></table>';
+}
+
+// ---------- 매장예측 (점장님이 직접 예상해 적는 손익) ----------
+// 말단 계정 금액은 pnl_store_forecast(ym·매장·계정)에 저장한다. 하위 계정이 숨겨진 줄(소모품비·견본비 등)은 첫 하위 계정에 넣고,
+// 계획 글은 화면에 보이는 줄의 코드에 저장한다. 매장 값은 기획자·매장 관리자 누구나 입력할 수 있다 (매장별 잠금 없음).
+async function loadForecast(ym) {
+  const data = await pageAll((a, b) => sb.from('pnl_store_forecast').select('store_code,account_code,amount,plan').eq('ym', ym).order('store_code').order('account_code').range(a, b));
+  const amt = {}, plan = {};
+  for (const r of data) {
+    if (r.amount != null) (amt[r.store_code] = amt[r.store_code] || {})[r.account_code] = +r.amount;
+    if (r.plan) (plan[r.store_code] = plan[r.store_code] || {})[r.account_code] = r.plan;
+  }
+  return { amt, plan };
+}
+const fcEditable = a => !a.calc && !hasVisibleChild(a, 'main') && (EDIT_ROOTS.has(rootOf(a).code) || rootOf(a).code === 'sales');
+function fcLeaves(code) {
+  const leaf = { ...(S.fc.amt[code] || {}) };
+  if (leaf.gross_direct) leaf.vat = leaf.gross_direct / 11;   // 부가세 = 외형매출 ÷ 11 (매출액 = 외형매출 ÷ 1.1)
+  return leaf;
+}
+function computeForecast() {
+  const store = {}, mSum = { gen: {}, prem: {} };
+  let sum = {};
+  for (const c of STORES) {
+    const leaf = fcLeaves(c);
+    store[c] = evalTree(leaf);
+    sum = addLeaf(sum, leaf);
+    const mk = storeModel(c); mSum[mk] = addLeaf(mSum[mk], leaf);
+  }
+  return { store, total: evalTree(sum), model: { gen: evalTree(mSum.gen), prem: evalTree(mSum.prem) } };
+}
+const fcFilled = c => Object.values(S.fc.amt[c] || {}).some(v => v);
+function fcAutoH(el) { el.style.height = 'auto'; el.style.height = Math.max(24, el.scrollHeight) + 'px'; }
+
+function renderFcst() {
+  const box = $('fcstTable'); if (!box) return;
+  const act = document.activeElement;
+  if (act && box.contains(act) && (act.tagName === 'TEXTAREA' || act.tagName === 'INPUT')) return;   // 입력 중에는 다시 그리지 않는다 (쓰던 글이 사라지지 않게)
+  const F = computeForecast(); S.F = F;
+  const one = S.scope === 'one';
+  if (!S.pick || !F.store[S.pick]) S.pick = STORES[0];
+  const filled = STORES.filter(fcFilled).length;
+  $('fcStat').innerHTML = `${S.ym.slice(0, 4)}년 ${+S.ym.slice(5)}월 · 점장님 예상 입력 <b>${filled} / ${STORES.length}</b>개 매장${one ? '' : ' — 매장 이름을 누르면 그 매장 입력 화면으로 이동합니다.'}`;
+  const mk = storeModel(S.pick);
+  const colsDef = one ? [['sum', '로운', '합계', F.total], ['model', MODEL_NAME[mk], '모델', F.model[mk]], [S.pick, sname(S.pick), S.pick, F.store[S.pick]]]
+                      : [['sum', '로운', '합계', F.total], ...STORES.map(c => [c, sname(c), c, F.store[c]])];
+  const cw = one ? 128 : 112, pw = one ? 62 : 60, planW = 380;
+  const W = 250 + colsDef.length * (cw + pw) + (one ? planW : 0);
+  const planTh = one ? '<th rowspan="3" class="ctr" style="vertical-align:middle;white-space:normal;line-height:1.5">개선 계획<br><span style="font-weight:400;font-size:11px">계정별로 어떻게 해서 얼마나 달성할지 적어 주세요</span></th>' : '';
+  let h = `<table class="pnl" style="width:100%;min-width:${W}px"><colgroup><col style="width:250px">${colsDef.map(() => `<col style="width:${cw}px"><col style="width:${pw}px">`).join('')}${one ? `<col style="min-width:${planW}px">` : ''}</colgroup><thead>` +
+    `<tr><th>매장코드</th>${colsDef.map(([, , code]) => `<th colspan="2" class="ctr">${esc(code)}</th>`).join('')}${planTh}</tr>` +
+    `<tr><th>매장명</th>${colsDef.map(([id, n]) => `<th colspan="2" class="ctr"${!one && id !== 'sum' ? ` data-go="${id}" style="cursor:pointer" title="눌러서 이 매장 입력하기"` : ''}>${esc(n)}${!one && id !== 'sum' && !fcFilled(id) ? ' <span class="pend" style="color:#cbd5e1">미입력</span>' : ''}</th>`).join('')}</tr>` +
+    `<tr><th>비고</th>${colsDef.map(() => '<th class="num">금액(원)</th><th class="num">비율</th>').join('')}</tr></thead><tbody>`;
+  for (const a of visibleRows('main', true)) {
+    const ed = one && fcEditable(a);
+    h += `<tr class="${rowCls(a)}">${labelCell(a, 'main')}` + colsDef.map(([id, , , M], i) => {
+      const cell = ed && i === 2;
+      return `<td class="num${cell ? ' ed' : ''}"${cell ? ` data-fe="${a.code}" title="눌러서 입력 (Enter 저장, Esc 취소)"` : ''}>${nf(M[a.code])}</td><td class="num r">${pf(M[a.code], M.sales)}</td>`;
+    }).join('');
+    if (one) h += `<td class="plan"><textarea class="plin" rows="1" data-pl="${a.code}" placeholder="개선 계획">${esc((S.fc.plan[S.pick] || {})[a.code] || '')}</textarea></td>`;
+    h += '</tr>';
+  }
+  box.innerHTML = h + '</tbody></table>';
+  box.querySelectorAll('th[data-go]').forEach(th => { th.onclick = () => { S.scope = 'one'; S.pick = th.dataset.go; renderAll(); }; });
+  box.querySelectorAll('td[data-fe]').forEach(td => { td.onclick = () => startFcEdit(td); });
+  box.querySelectorAll('textarea.plin').forEach(t => {
+    fcAutoH(t);
+    t.oninput = () => fcAutoH(t);
+    t.onblur = () => fcSavePlan(S.pick, t.dataset.pl, t.value);
+  });
+}
+function startFcEdit(td) {
+  if (td.querySelector('input')) return;
+  const a = PNL_BY[td.dataset.fe], store = S.pick;
+  const cur = Math.round(S.F.store[store][a.code]);
+  td.innerHTML = `<input class="edin" type="text" inputmode="numeric" value="${cur || ''}">`;
+  const inp = td.firstChild; inp.focus(); inp.select();
+  let done = false;
+  const finish = ok => { if (done) return; done = true; const v = inp.value; inp.blur(); if (ok) fcSaveAmount(store, a, v); else renderAll(); };   // blur로 포커스를 먼저 풀어야 renderFcst가 다시 그린다
+  inp.onkeydown = e => { if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); };
+  inp.onblur = () => finish(true);
+}
+async function fcSaveAmount(store, a, text) {
+  const t = String(text).trim().replace(/,/g, '');
+  const nv = t === '' ? null : Math.round(Number(t));
+  if (nv !== null && !isFinite(nv)) { setMsg('숫자를 입력해 주세요.', true); renderAll(); return; }
+  const leaf = firstLeaf(a).code, m = S.fc.amt[store] || (S.fc.amt[store] = {});
+  if ((m[leaf] == null ? null : m[leaf]) === nv) { renderAll(); return; }
+  setMsg('저장 중…');
+  const { error } = await sb.from('pnl_store_forecast').upsert({ ym: S.ym, store_code: store, account_code: leaf, amount: nv }, { onConflict: 'ym,store_code,account_code' });
+  if (error) { setMsg('저장 실패: ' + error.message, true); renderAll(); return; }
+  if (nv === null) delete m[leaf]; else m[leaf] = nv;
+  setMsg('저장했습니다');
+  setTimeout(() => { if ($('plMsg').textContent === '저장했습니다') setMsg(''); }, 1500);
+  renderAll();
+}
+async function fcSavePlan(store, code, text) {
+  const t = String(text).trim(), m = S.fc.plan[store] || (S.fc.plan[store] = {});
+  if (t === (m[code] || '')) return;
+  setMsg('저장 중…');
+  const { error } = await sb.from('pnl_store_forecast').upsert({ ym: S.ym, store_code: store, account_code: code, plan: t || null }, { onConflict: 'ym,store_code,account_code' });
+  if (error) { setMsg('저장 실패: ' + error.message, true); return; }
+  if (t) m[code] = t; else delete m[code];
+  setMsg('저장했습니다');
+  setTimeout(() => { if ($('plMsg').textContent === '저장했습니다') setMsg(''); }, 1500);
 }
 
 function renderNotes(C) {
