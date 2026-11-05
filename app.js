@@ -731,6 +731,7 @@ $('#targetCostSeasonFilter').addEventListener('change', renderTargetCostLog);
 // 자재사용량이 27만 행이 넘어서 예전엔 전체를 다 받아와 브라우저에서 월별로 더했음 — 시즌 전환할 때마다
 // 100초 넘게 걸리며 다른 모든 요청을 굶기던 원인. DB에 만든 집계 함수(material_usage_monthly_totals)로
 // 월별 합계만 받아오도록 바꿈.
+let pivotMonthTouched = false;   // 사용자가 피벗 연월을 직접 바꿨는지 (바꿨으면 자동 보정하지 않는다)
 async function loadCostTrend() {
   const [{ data: usage, error: usageErr }, { data: sales }] = await Promise.all([
     sb.rpc('material_usage_monthly_totals'),
@@ -749,6 +750,15 @@ async function loadCostTrend() {
     salesByMonth[m] = (salesByMonth[m] || 0) + (Number(r.sales_total) || 0);
   });
   const months = [...new Set([...Object.keys(costByMonth), ...Object.keys(salesByMonth)])].sort();
+  // 피벗(①비교·②모델·③전 매장)의 연월 기본값 = 달력상 이번 달인데, 월초에는 아직 자재 사용량이 올라오지 않아 "0개점"으로 비어 보인다 →
+  // 사용자가 연월을 직접 고르기 전에는, 이번 달에 자재 사용량이 없으면 자재 사용량이 있는 가장 최근 달로 맞춘다
+  if (!pivotMonthTouched) {
+    const inp = $('#pivotMonthInput'), have = Object.keys(costByMonth).filter(m => costByMonth[m] > 0).sort();
+    if (inp && have.length && !have.includes(inp.value)) {
+      const pick = have.filter(m => m <= inp.value).pop() || have[have.length - 1];
+      if (pick && pick !== inp.value) { inp.value = pick; renderPivotWeekOptions(); }
+    }
+  }
   const ratios = months.map(m => salesByMonth[m] ? (costByMonth[m] || 0) / (salesByMonth[m] / 1.1) * 100 : null);
 
   const target = weightedTotals(state.categorySummary, 'target');
@@ -4990,6 +5000,7 @@ function updatePivotUnitVisibility() {
   renderPivotWeekOptions();
   updatePivotUnitVisibility();
 })();
+$('#pivotMonthInput').addEventListener('change', e => { if (e.isTrusted) pivotMonthTouched = true; });
 $('#pivotMonthInput').addEventListener('change', renderPivotWeekOptions);
 $('#pivotUnitSelect').addEventListener('change', updatePivotUnitVisibility);
 $('#pivotSeasonSelect').addEventListener('change', loadPivotCompareView);
