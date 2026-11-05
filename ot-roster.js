@@ -23,7 +23,8 @@ function rosterNormCode(v) {
 
 // rows: sheet_to_json(header:1) 결과(2차원 배열). validCodes: 등록된 매장코드 Set.
 // 반환: { stores: [{code, name, counts, total, headcountCell, warnings:[]}], notes:[], errors:[] }
-function parseRoster(rows, validCodes) {
+function parseRoster(rows, validCodes, opts) {
+  opts = opts || {};
   const out = { stores: [], notes: [], errors: [] };
   const norm = v => String(v == null ? '' : v).replace(/\s+/g, '');
   // 1) 헤더 행 찾기: '매장코드'·'매장명'이 함께 있는 행 (FOH/BOH 그룹 행은 그 위)
@@ -75,17 +76,19 @@ function parseRoster(rows, validCodes) {
     const counts = {}; let total = 0;
     const side = { foh: 0, boh: 0 }; // 홀 관리자(FOH)·주방 관리자(BOH) 인원 — 이름은 세기만 하고 버린다
     const names = {}; // 직급 → 이름 목록 (겸직 판별용, 임시)
+    const people = []; // opts.keepNames일 때만 결과에 남긴다: 출퇴근 기록부의 정직원을 홀/주방에 연결할 때 메모리에서만 쓰고 저장하지 않는다 (이름 → 홀/주방)
     for (const { col, grade, side: sd } of gradeCols) {
       const ns = rosterSplitNames(row[col]);
       if (!ns.length) continue;
       if (sd) side[sd] += ns.length;
       counts[grade] = (counts[grade] || 0) + ns.length;
       (names[grade] = names[grade] || []).push(...ns);
+      if (sd) ns.forEach(n => people.push({ name: n, side: sd }));
       total += ns.length;
     }
     const seniorNames = cSenior >= 0 ? rosterSplitNames(row[cSenior]) : [];
     const cell = cCnt >= 0 ? Math.round(Number(String(row[cCnt]).replace(/,/g, ''))) : NaN;
-    parsed.push({ code, name: rawName, counts, total, side: cBoh >= 0 ? side : null, names, seniorNames, headcountCell: isFinite(cell) ? cell : null, warnings: fix ? [fix] : [] });
+    parsed.push({ code, name: rawName, counts, total, side: cBoh >= 0 ? side : null, names, seniorNames, people, headcountCell: isFinite(cell) ? cell : null, warnings: fix ? [fix] : [] });
   }
   if (!parsed.length) { out.errors.push('매장 행을 찾지 못했습니다.'); return out; }
 
@@ -120,6 +123,7 @@ function parseRoster(rows, validCodes) {
   for (const p of parsed) {
     if (p.headcountCell != null && p.headcountCell !== p.total) p.warnings.push(`인원수 칸 ${p.headcountCell}명 ≠ 이름 수 ${p.total}명 — 이름이 적힌 직급 기준으로 계산`);
     delete p.names; delete p.seniorNames; // 이름은 여기서 폐기
+    if (!opts.keepNames) delete p.people;
     out.stores.push(p);
   }
   out.stores.sort((a, b) => a.code.localeCompare(b.code));

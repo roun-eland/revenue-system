@@ -414,8 +414,13 @@ async function uploadPayroll(file) {
     const wkVal = $('acPayWeek') && $('acPayWeek').value;
     if (!wkVal) throw new Error('주차를 먼저 선택해주세요.');
     const [pStart, pEnd] = wkVal.split('|');
-    const rows = (await sheetRows(file)).filter(r => isCode(r[0]));
+    const allPay = await sheetRows(file);
+    const rows = allPay.filter(r => isCode(r[0]));
     if (!rows.length) throw new Error('매장코드(RUxxx) 행을 찾지 못했습니다 — 메이트 급여대장 원본인지 확인해주세요.');
+    // 사번 → 직무(홀/주방) 대응: 머리글에서 '직무'·사번 열을 찾아 사번과 홀/주방만 저장한다 (성명 등은 읽지 않음)
+    const pHdr = allPay.find(r => r.some(c => /직무/.test(String(c))));
+    const pDuty = pHdr ? pHdr.findIndex(c => /직무/.test(String(c))) : -1;
+    const pId = pHdr ? pHdr.findIndex(c => /사번|사용자\s*ID|직원\s*번호|인원\s*번호|^\s*ID\s*$/i.test(String(c))) : -1;
     const agg = {};
     rows.forEach(r => {
       const code = String(r[0]).trim();
@@ -427,6 +432,19 @@ async function uploadPayroll(file) {
       const a = (agg[code] = agg[code] || { pay: 0, mh: 0, n: 0 });
       a.pay += total; a.mh += nm / 60 + holH; a.n++;
     });
+    let partMsg = '';
+    if (pDuty >= 0 && pId >= 0) {
+      const pm = new Map();
+      rows.forEach(r => {
+        const id = String(r[pId]).trim(), duty = String(r[pDuty]).trim();
+        if (!/^\d{5,}$/.test(id) || !OT_DATA[String(r[0]).trim()]) return;
+        const part = duty.includes('주방') && duty.includes('홀') ? null : duty.includes('주방') ? 'boh' : duty.includes('홀') ? 'foh' : null;   // '홀/주방' 겸직·'관리'는 구분하지 않는다
+        if (part) pm.set(id, { emp_id: id, part, kind: 'mate', store_code: String(r[0]).trim(), updated_at: new Date().toISOString() });
+      });
+      if (pm.size) await upsertChunks('ot_person_part', [...pm.values()], 'emp_id');
+      const nh = [...pm.values()].filter(x => x.part === 'foh').length;
+      partMsg = ` · 홀/주방 대응표 갱신 ${pm.size}명 (홀 ${nh} · 주방 ${pm.size - nh}, 사번과 홀/주방만 저장)`;
+    } else partMsg = ` · <span style="color:var(--warn)">머리글에서 ${pDuty < 0 ? '직무' : ''}${pDuty < 0 && pId < 0 ? '·' : ''}${pId < 0 ? '사번' : ''} 열을 찾지 못해 홀/주방 대응표는 갱신하지 않았습니다</span>`;
     const out = Object.entries(agg).map(([code, a]) => ({
       store_code: code, period_start: pStart, period_end: pEnd,
       mate_pay: Math.round(a.pay), mate_mh: +a.mh.toFixed(1), headcount: a.n,
@@ -439,7 +457,7 @@ async function uploadPayroll(file) {
     const totPay = out.reduce((t, r) => t + r.mate_pay, 0);
     const wkLabel = $('acPayWeek').selectedOptions[0].textContent;
     report('acPayMsg', 'ok', `저장됨 <b>${$('acYm').value} ${wkLabel}</b>: ${out.length}개 매장 · 인원 ${Object.values(agg).reduce((t,a)=>t+a.n,0)}명 · 급여 합계 ${(totPay/1e8).toFixed(2)}억` +
-      (prev && prev.length ? ` · 기존 ${prev.length}개 매장 값 교체` : '') + ' · 성명 등 개인정보는 저장되지 않았습니다');
+      (prev && prev.length ? ` · 기존 ${prev.length}개 매장 값 교체` : '') + ' · 성명 등 개인정보는 저장되지 않았습니다' + partMsg);
   } catch (e) { report('acPayMsg', 'err', '실패: ' + e.message); }
 }
 
@@ -456,6 +474,34 @@ async function uploadAtt(file) {
     const otFrom = otIdx >= 0 ? `머리글 "${String(hdr[otIdx]).trim()}"` : '12번째 열(머리글에서 못 찾아 기본 위치)';
     if (otIdx < 0) otIdx = 11;
     const toCode = name => { for (const [k, c] of STORE_NAME_MAP) if (String(name).includes(k)) return c; return null; };
+    // ---- 홀/주방 구분: 사번 → 홀(foh)/주방(boh) 대응표. 메이트는 급여대장 업로드 때, 정직원은 아래 맨파워 현황 연결 때 쌓인다. 이름·연락처는 저장하지 않는다 ----
+    const nameIdx = (() => { const i = hdr ? hdr.findIndex(c => /성명|이름/.test(String(c))) : -1; return i >= 0 ? i : 1; })();
+    const partOf = new Map();
+    for (let i = 0; ; i++) {
+      const { data, error } = await sb.from('ot_person_part').select('emp_id,part').order('emp_id').range(i * 1000, i * 1000 + 999);
+      if (error) throw error;
+      (data || []).forEach(x => partOf.set(x.emp_id, x.part));
+      if (!data || data.length < 1000) break;
+    }
+    // 정직원은 급여대장에 없어서, (선택) 맨파워 현황에서 매장+이름 → FOH/BOH를 읽어 이 파일의 사번과 이어 준다 (이름은 메모리에서만 쓰고 버린다)
+    let rosterNote = '';
+    const rf = $('acAttRoster') && $('acAttRoster').files && $('acAttRoster').files[0];
+    if (rf) {
+      const rr = parseRoster(await sheetRows(rf), new Set(Object.keys(OT_DATA)), { keepNames: true });
+      if (rr.errors.length) rosterNote = ` · <span style="color:var(--warn)">맨파워 현황을 읽지 못해 정직원 연결은 건너뜀: ${rr.errors[0]}</span>`;
+      else {
+        const side = new Map(), ftNew = new Map();
+        rr.stores.forEach(s => (s.people || []).forEach(p => side.set(s.code + '|' + p.name, p.side)));
+        rows.forEach(r => {
+          if (!FT_ROLE_SET.has(String(r[3]).trim())) return;
+          const code = toCode(r[2]), sd = code ? side.get(code + '|' + String(r[nameIdx]).trim()) : null, id = String(r[0]).trim();
+          if (sd && !ftNew.has(id)) ftNew.set(id, { emp_id: id, part: sd, kind: 'ft', store_code: code, updated_at: new Date().toISOString() });
+        });
+        if (ftNew.size) { await upsertChunks('ot_person_part', [...ftNew.values()], 'emp_id'); ftNew.forEach((v, id) => partOf.set(id, v.part)); }
+        rosterNote = ` · 정직원 ${ftNew.size}명을 맨파워 현황의 홀/주방에 연결 (사번과 홀/주방만 저장)`;
+      }
+    }
+    const knownIds = new Set(), unknownIds = new Set();
     const tmin = v => {
       const m = String(v).match(/(\d{1,2}):(\d{2})(?::\d{2})?$/);
       return m ? (+m[1]) * 60 + (+m[2]) : null;
@@ -470,11 +516,13 @@ async function uploadAtt(file) {
       if (th <= 0) return;
       const d = normDate(r[4]);
       const key = code + '|' + d;
-      const o = (day[key] = day[key] || { code, d, mate: 0, ft: 0, mateOt: 0, ftOt: 0, hours: Array(16).fill(0) }); // 8~23시 (예전엔 9~21시 13칸이라 9시 이전·21시 이후 근무가 빠졌음)
+      const o = (day[key] = day[key] || { code, d, mate: 0, ft: 0, mateOt: 0, ftOt: 0, hours: Array(16).fill(0), foh: Array(16).fill(0), boh: Array(16).fill(0) }); // 8~23시 (예전엔 9~21시 13칸이라 9시 이전·21시 이후 근무가 빠졌음)
       const bucket = FT_ROLE_SET.has(String(r[3]).trim()) ? 'ft' : 'mate';
       o[bucket] += th;
       const ot = Math.max(0, num(r[otIdx]));   // 추가근무(OT) — 정직원(관리자)·메이트로 나눠 합산
       if (ot > 0) o[bucket === 'ft' ? 'ftOt' : 'mateOt'] += ot;
+      const empId = String(r[0]).trim(), part = partOf.get(empId), pa = part === 'foh' ? o.foh : part === 'boh' ? o.boh : null;
+      (part ? knownIds : unknownIds).add(empId);
       const ai = tmin(r[6]), ao = tmin(r[8]);
       if (ai != null && ao != null && ao > ai) {
         const brk = num(r[13]);
@@ -482,17 +530,21 @@ async function uploadAtt(file) {
         const f = span > 0 ? Math.max(0, (span - brk / 60) / span) : 0;
         for (let slot = 0; slot < 16; slot++) {
           const s0 = (8 + slot) * 60, s1 = (9 + slot) * 60;
-          o.hours[slot] += Math.max(0, Math.min(ao, s1) - Math.max(ai, s0)) / 60 * f;
+          const v = Math.max(0, Math.min(ao, s1) - Math.max(ai, s0)) / 60 * f;
+          o.hours[slot] += v;
+          if (pa) pa[slot] += v;
         }
       }
     });
     const out = Object.values(day).map(o => ({
       store_code: o.code, work_date: o.d, mate_mh: +o.mate.toFixed(2), ft_mh: +o.ft.toFixed(2),
       mate_ot: +o.mateOt.toFixed(2), ft_ot: +o.ftOt.toFixed(2),
-      by_hour: o.hours.map(x => +x.toFixed(2)) }));
+      by_hour: o.hours.map(x => +x.toFixed(2)),
+      by_hour_foh: partOf.size ? o.foh.map(x => +x.toFixed(2)) : null, by_hour_boh: partOf.size ? o.boh.map(x => +x.toFixed(2)) : null }));
     await upsertChunks('ot_labor_daily', out, 'store_code,work_date');
     const sumOt = k => out.reduce((t, r) => t + r[k], 0);
     report('acAttMsg', 'ok', `저장됨: ${out.length}일분(매장×일) · 원본 ${rows.length}행 · 추가근무(OT, ${otFrom}) 정직원 ${Math.round(sumOt('ft_ot')).toLocaleString('ko-KR')}h · 메이트 ${Math.round(sumOt('mate_ot')).toLocaleString('ko-KR')}h` +
+      (partOf.size ? ` · 홀/주방 구분 ${knownIds.size}/${knownIds.size + unknownIds.size}명${unknownIds.size ? ` (구분 못 한 ${unknownIds.size}명은 합계에만 포함 — 급여대장·맨파워 현황으로 연결하면 채워짐)` : ''}` : ' · <span style="color:var(--warn)">홀/주방 대응표가 비어 있어 홀/주방은 저장하지 않았습니다 (급여대장을 올리면 메이트가 채워짐)</span>') + rosterNote +
       (skipped ? ` · <span style="color:var(--warn)">매핑 실패 ${skipped}행 제외 — ${Object.entries(badNames).map(([n, c]) => `${n}(${c}행)`).join(', ')}</span>` : ''));
   } catch (e) { report('acAttMsg', 'err', '실패: ' + e.message); }
 }

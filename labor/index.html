@@ -212,6 +212,8 @@
         <div class="card">
           <h3 style="margin:0 0 6px">③ 출퇴근 기록부 (주 1회 — 시간대 분석용)</h3>
           <p class="dnote" style="margin:0 0 10px">일별·시간대별 투입 MH와 추가근무(OT) 시간을 계산합니다 (OT는 정직원·메이트로 나눠 매장×일 합계로 저장). 날짜는 파일에서 읽으므로 주차 선택이 필요 없습니다. 성명은 저장되지 않습니다 (매장×일 합계만). 없으면 피드백은 주/월 합계까지만 제공됩니다.</p>
+          <label class="fld" style="margin:0 0 10px;max-width:520px"><span>정직원 홀/주방 연결용 맨파워 현황 <b>(선택)</b> — 정직원이 새로 들어오거나 바뀐 달에만, 출퇴근 기록부보다 <b>먼저</b> 고르세요</span><input type="file" id="acAttRoster" accept=".xlsx,.xls,.csv"></label>
+          <p class="dnote" style="margin:0 0 6px">출퇴근 기록부 파일을 고르면 바로 저장됩니다. 홀/주방은 메이트 급여대장의 직무와 맨파워 현황의 FOH/BOH로 나눕니다. 이름·연락처는 저장하지 않고 <b>사번과 홀/주방만</b> 저장합니다.</p>
           <input type="file" id="acAttFile" accept=".xlsx,.xls,.csv">
           <p class="plan-msg" id="acAttMsg" style="margin-top:8px"></p>
         </div>
@@ -295,11 +297,11 @@
 <script src="../export-tables.js?v=202610021415"></script>
 <script src="../ot-seed.js?v=202610291500"></script>
 <script src="../ot-std.js?v=202610281800"></script>
-<script src="../ot-roster.js?v=202610291600"></script>
+<script src="../ot-roster.js?v=202611051000"></script>
 <script src="../labor-calc.js?v=202611031003"></script>
 <script src="../vendor/chart.umd.min.js"></script>
 <script src="../ot.js?v=202611050800"></script>
-<script src="../ot-actuals.js?v=202611050800"></script>
-<script src="../ot-charts.js?v=202611050300"></script>
+<script src="../ot-actuals.js?v=202611051000"></script>
+<script src="../ot-charts.js?v=202611051000"></script>
 </body>
 </html>

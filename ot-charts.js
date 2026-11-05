@@ -5,7 +5,7 @@
 // 정답이 아니라 "그 매장이 실제로 해낸 수준"이며, 인원이 모자랐던 날도 섞일 수 있다 — 논의용 지표.
 // ot.js·ot-actuals.js 뒤에 로드되어 그 전역(sb, $, OT_STD, OT_DATA, OT_HOLIDAYS, won, showView, loadFeedback)을 쓴다.
 
-const OC = { ready: null, byStore: {}, an: null, scatter: null, fbCharts: [], scatterKey: '' };
+const OC = { ready: null, byStore: {}, an: null, scatter: null, fbCharts: [], scatterKey: '', view: 'dt', partDt: 'weekday' };
 const OC_COL = { ink: '#2F3030', green: '#3F9E12', orange: '#D9822B', blue: '#378ADD', red: '#D9534F', gray: '#9AA0A6' };
 const OC_CATS = ['홀', '콜파트', '핫파트', '육절기', '프랩', 'DMO', '관리·기타'];
 const OC_DT = { weekday: '평일', weekend: '주말' };
@@ -30,7 +30,7 @@ function ocLoad() {
   OC.t = Date.now();
   OC.ready = (async () => {
     const [lab, sal] = await Promise.all([
-      ocPaged('ot_labor_daily', 'store_code,work_date,mate_mh,ft_mh,by_hour', 'work_date'),
+      ocPaged('ot_labor_daily', 'store_code,work_date,mate_mh,ft_mh,by_hour,by_hour_foh,by_hour_boh', 'work_date'),
       ocPaged('ot_sales_daily', 'store_code,sales_date,total,guests,is_closed', 'sales_date')]);
     const L = new Map(lab.map(r => [r.store_code + '|' + r.work_date, r]));
     OC.byStore = {};
@@ -40,7 +40,8 @@ function ocLoad() {
       const mh = (+l.mate_mh || 0) + (+l.ft_mh || 0); if (!(mh > 0)) continue;
       (OC.byStore[r.store_code] = OC.byStore[r.store_code] || []).push({
         date: r.sales_date, ym: r.sales_date.slice(0, 7), dt: ocDtOf(r.sales_date), mh, sales: +r.total,
-        guests: r.guests ? +r.guests : null, byHour: (l.by_hour || []).map(x => +x || 0) });
+        guests: r.guests ? +r.guests : null, byHour: (l.by_hour || []).map(x => +x || 0),
+        foh: l.by_hour_foh ? l.by_hour_foh.map(x => +x || 0) : null, boh: l.by_hour_boh ? l.by_hour_boh.map(x => +x || 0) : null });   // 홀/주방별 시간대 인원 (출퇴근 기록부 업로드 때 사번 대응표로 나눈 값)
     }
     OC.an = ocAnalyze();
   })().catch(e => { OC.ready = null; throw e; });
@@ -48,6 +49,17 @@ function ocLoad() {
 }
 
 // ---------- 분석 (매장별 직선·기준 매출, 매장 간 비교 기준) ----------
+// 표(계획)를 홀/주방으로 나눈 시간대별 인원: 블록 파트가 '주방'이면 주방, 그 외(홀·파트 미분류 정직원=점장·관리자)는 홀. 식사시간(밥차)은 제외
+function ocPartHourMap(code, dt) {
+  const out = { foh: {}, boh: {} };
+  const rec = OT_STD[code] && OT_STD[code][dt]; if (!rec) return out;
+  rec.blocks.forEach(b => b.slots.forEach(i => {
+    if (stdCat(b.taskAt[i], b.p, b.ft) === '밥차') return;
+    const h = 8 + Math.floor((i - 1) / 2), side = b.p === '주방' ? out.boh : out.foh;
+    side[h] = (side[h] || 0) + 0.5;
+  }));
+  return out;
+}
 const ocPlan = (code, dt) => (OT_STD[code] && OT_STD[code][dt]) ? OT_STD[code][dt].stats : null;
 function ocCatMH(stats) { const o = {}; OC_CATS.forEach(c => { o[c] = (stats.cat[c] || []).reduce((s, x) => s + x, 0) / 2; }); return o; }
 function ocHourMap(stats) { const m = {}; stats.hours.forEach(r => { m[r.h] = r.need; }); return m; }
@@ -223,6 +235,7 @@ function ocRenderScatter(data) {
 
 // ---------- 매장 피드백: 매장별 그래프 ----------
 function ocBadge(v) { const m = { orange: ['#fde9d9', '#b35a10'], blue: ['#dfeefc', '#1f5f9e'], green: ['#e6f5d6', '#2d7a0b'], gray: ['#eee', '#555'] }[v[1]]; return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:700;background:${m[0]};color:${m[1]}">${v[0]}</span>`; }
+const ocBtn = (attr, key, text, on) => `<button type="button" class="btn btn-sm" ${attr}="${key}" style="${on ? 'background:#2f3030;color:#fff;border-color:#2f3030' : ''}">${text}</button>`;
 const ocF1 = v => (v >= 0 ? '+' : '') + v.toFixed(1);
 
 
@@ -410,24 +423,44 @@ async function ocRenderFeedback(code, ym) {
   const planner = typeof currentRole === 'undefined' || currentRole === 'planner';
   box.innerHTML = `<div class="card" style="margin-bottom:14px">
     <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px"><h3 style="margin:0">${name} — 표 점검 그래프</h3><span class="dnote" style="margin:0">표 = 현재 표준 사용 계획표(V2.1) · 실제 = ${ym.slice(0, 4)}년 ${+ym.slice(5)}월 평균 · 기준(곡선) = 이 매출대에서 브랜드 목표 곡선이 요구하는 시간대별 인원 · 달성선 = 8월~ 일별 실적에서 잘 운영한 날 수준</span><span style="margin-left:auto">${planner ? ocBadge(dg.verdict) : ''}</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px"><span class="dnote" style="margin:0">보기</span>${ocBtn('data-ocview', 'dt', '평일 · 주말', OC.view === 'dt')}${ocBtn('data-ocview', 'part', '홀 · 주방', OC.view === 'part')}${OC.view === 'part' ? `<span class="dnote" style="margin:0 0 0 14px">요일</span>${ocBtn('data-ocdt', 'weekday', '평일', OC.partDt === 'weekday')}${ocBtn('data-ocdt', 'weekend', '주말', OC.partDt === 'weekend')}` : ''}</div>
     <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px"><div style="position:relative;height:260px"><canvas id="ocHrWd"></canvas></div><div style="position:relative;height:260px"><canvas id="ocHrWe"></canvas></div></div>
     <div style="display:grid;grid-template-columns:1.15fr 1fr 1fr;gap:12px;margin-top:10px"><div style="position:relative;height:270px"><canvas id="ocBars"></canvas></div><div id="ocPeer" style="grid-column:span 2;min-height:270px;padding:2px 4px"></div></div>
+    <div id="ocPartNote"></div>
     <ul style="margin:10px 0 6px;padding-left:20px;font-size:13px;line-height:1.7">${ocSentences(dg, ym, peer).map(s => `<li>${s}</li>`).join('')}</ul>
     ${planner ? `<div style="background:#f3fbe7;border-left:4px solid #82dc28;padding:8px 14px;font-size:13px"><b>확인 사항</b><ul style="margin:4px 0 0;padding-left:18px">${ocQuestions(dg, peer).map(q => `<li>${q}</li>`).join('')}</ul></div>` : ''}
     <p class="dnote" style="margin-top:8px">주황 음영 = 표가 실제보다 많이 배치한 시간 · 파랑 음영 = 실제가 표보다 많이 일한 시간. 파란 점선(기준) = 전 매장 V2.1 표의 평균 시간대 형태 × 이 매출대에서 곡선이 요구하는 하루 근무시간. 피어 비교 표의 빨강 = 같은 매출대 매장보다 시간을 더 쓰는 구간. 달성선은 정답이 아니라 "실제로 해낸 수준"이며 인원이 부족했던 날도 섞일 수 있습니다 — 확정 판단이 아닌 <b>논의용</b> 자료입니다.</p></div>`;
   const hrs = []; for (let h = 8; h <= 21; h++) hrs.push(h);
   const mk = (id, cfg) => { const c = new Chart($(id), cfg); OC.fbCharts.push(c); return c; };
   const base = { responsive: true, maintainAspectRatio: false };
-  for (const [id, dt] of [['ocHrWd', 'weekday'], ['ocHrWe', 'weekend']]) {
-    const hm = ocHourMap(ocPlan(code, dt)), plan = hrs.map(h => hm[h] || 0);
+  box.querySelectorAll('[data-ocview]').forEach(x => { x.onclick = () => { OC.view = x.dataset.ocview; ocRenderFeedback(code, ym); }; });
+  box.querySelectorAll('[data-ocdt]').forEach(x => { x.onclick = () => { OC.partDt = x.dataset.ocdt; ocRenderFeedback(code, ym); }; });
+  const panels = OC.view === 'part' ? [['ocHrWd', OC.partDt, 'foh'], ['ocHrWe', OC.partDt, 'boh']] : [['ocHrWd', 'weekday', null], ['ocHrWe', 'weekend', null]];
+  const noPart = [];
+  for (const [id, dt, part] of panels) {
     const days = (OC.byStore[code] || []).filter(d => d.ym === ym && d.dt === dt);
-    const act = days.length ? hrs.map(h => { const v = days.map(d => hourIdx(d.byHour, h)).filter(x => x != null); return v.length ? ocMean(v) : null; }) : null;
+    let plan, act;
+    if (!part) {
+      const hm = ocHourMap(ocPlan(code, dt)); plan = hrs.map(h => hm[h] || 0);
+      act = days.length ? hrs.map(h => { const v = days.map(d => hourIdx(d.byHour, h)).filter(x => x != null); return v.length ? ocMean(v) : null; }) : null;
+    } else {
+      const ph = ocPartHourMap(code, dt)[part]; plan = hrs.map(h => ph[h] || 0);
+      const pd = days.filter(d => d[part]);
+      act = pd.length ? hrs.map(h => { const v = pd.map(d => hourIdx(d[part], h)).filter(x => x != null); return v.length ? ocMean(v) : null; }) : null;
+      if (!act) noPart.push(part === 'foh' ? '홀' : '주방');
+    }
     const ds = [{ label: '표(계획)', data: plan, stepped: 'middle', borderColor: OC_COL.ink, borderWidth: 2, pointRadius: 0, fill: act ? { target: 1, above: 'rgba(217,130,43,.22)', below: 'rgba(55,138,221,.22)' } : false }];
     if (act) ds.push({ label: `${+ym.slice(5)}월 실제 평균`, data: act, borderColor: OC_COL.green, backgroundColor: OC_COL.green, borderWidth: 2, pointRadius: 3, tension: .15, fill: false });
     const rs = ocRefSeries(code, ym, dt, hrs);
-    if (rs) ds.push({ label: `기준(곡선, 일매출 ${rs.x.toFixed(1)}백만 → ${rs.mh.toFixed(0)}h)`, data: rs.data, borderColor: OC_COL.blue, borderDash: [6, 4], borderWidth: 2.5, pointRadius: 0, tension: .2, fill: false });
-    mk(id, { type: 'line', data: { labels: hrs.map(h => h + '시'), datasets: ds }, options: { ...base, plugins: { title: { display: true, text: `${OC_DT[dt]} — 시간대별 근무 인원`, align: 'start' }, legend: { position: 'bottom', labels: { boxWidth: 14 } } }, scales: { y: { beginAtZero: true, title: { display: true, text: '인원(명)' } } } } });
+    if (rs && part) {   // 곡선은 총 인원만 있어서 표의 시간대별 홀:주방 비율로 나눈다
+      const pm = ocPartHourMap(code, dt);
+      rs.data = rs.data.map((v, i) => { const f = pm.foh[hrs[i]] || 0, k = pm.boh[hrs[i]] || 0, t = f + k; return v * (t > 0 ? (part === 'foh' ? f : k) / t : 0.5); });
+    }
+    if (rs) ds.push({ label: part ? `기준(곡선 × 표의 ${part === 'foh' ? '홀' : '주방'} 비율)` : `기준(곡선, 일매출 ${rs.x.toFixed(1)}백만 → ${rs.mh.toFixed(0)}h)`, data: rs.data, borderColor: OC_COL.blue, borderDash: [6, 4], borderWidth: 2.5, pointRadius: 0, tension: .2, fill: false });
+    mk(id, { type: 'line', data: { labels: hrs.map(h => h + '시'), datasets: ds }, options: { ...base, plugins: { title: { display: true, text: part ? `${OC_DT[dt]} — ${part === 'foh' ? '홀' : '주방'} 근무자 시간대별 인원` : `${OC_DT[dt]} — 시간대별 근무 인원`, align: 'start' }, legend: { position: 'bottom', labels: { boxWidth: 14 } } }, scales: { y: { beginAtZero: true, title: { display: true, text: '인원(명)' } } } } });
   }
+  if (noPart.length) { const pn = $('ocPartNote'); if (pn) pn.innerHTML = `<p class="dnote" style="color:var(--warn);margin:6px 0 0">${noPart.join('·')} 근무자의 실제 인원 데이터가 아직 없어 표(계획)만 보입니다 — 메이트 급여대장과 출퇴근 기록부를 (다시) 올리면 채워집니다. 점장·정직원은 맨파워 현황으로 연결해야 홀/주방이 나뉩니다.</p>`; }
+  if (OC.view === 'part') { const pn = $('ocPartNote'); if (pn && !noPart.length) pn.innerHTML = '<p class="dnote" style="margin:6px 0 0">홀/주방 보기: 표(계획)는 표의 파트 기준(파트가 없는 정직원=점장·관리자는 홀), 실제는 사번 대응표 기준입니다. 대응표에 없는 사람은 홀/주방 어느 쪽에도 들어가지 않아 두 그래프를 더해도 총 인원보다 작을 수 있습니다. 파란 점선(기준)은 곡선 인원을 표의 홀:주방 비율로 나눈 값입니다.</p>'; }
   const g = dt => dg.dt[dt];
   mk('ocBars', { type: 'bar', data: { labels: ['평일', '주말'], datasets: [
     { label: '표(계획)', data: [g('weekday').plan, g('weekend').plan], backgroundColor: OC_COL.ink },
