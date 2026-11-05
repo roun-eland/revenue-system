@@ -553,7 +553,9 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
     // 필요MH=필요총MH-FT 고정이므로 mh-need = mate-(need-ft) = 메이트 몫 초과분과 대수적으로 같다).
     // 목표생산성 = 브랜드 목표 곡선(labor-calc.js PROD_CURVE) — 이 기간 일평균 매출에 해당하는 값. 점수·목표 달성은 이 값 기준 (2026-10-28 "3번 방식").
     // 표준표를 실제 매출에 적용했을 때의 생산성은 tableProd로 남겨 둔다(참고·메이트 초과시간 계산은 그대로 표 기준 need).
-    out.push({ code, name: s0.name, sales, mh, mate, ft, prod: sales / mh, need, over: mh - need,
+    // 초과시간 = 실제 총 근무시간 − 목표 생산성(브랜드 목표 곡선, 점수와 같은 기준)에서 필요한 시간(매출 ÷ 목표 생산성).
+    //   점수가 100% 이상이면 0 이하, 미만이면 양수 (2026-11-05 사용자: 표준 시간표 기준 → 목표 생산성 기준으로 변경). need(표준표 기준)는 tableProd 참고용으로만 남긴다.
+    out.push({ code, name: s0.name, sales, mh, mate, ft, prod: sales / mh, need, over: mh - sales / tProd,
                targetProd: prodTargetAt(sales / n / 1e6), tableProd: need ? sales / need : null, dailyX: sales / n / 1e6,
                ratio: labor / (lc.ratioSales / 1.1) * 100, labor, ratioSales: lc.ratioSales,
                costTarget, ratioTarget: costTarget / (lc.ratioSales / 1.1) * 100, seniorShift: lc.shift || 0, adjH, adjNote: OT_ADJ[code] ? OT_ADJ[code].note : '', cutIso: lc.cutIso, hasPay: lc.hasPay,
