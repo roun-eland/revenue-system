@@ -249,7 +249,7 @@ function ocRefSeries(code, ym, dt, hrs) {
 }
 
 // ---------- 피어그룹(같은 매출대 3개점) 비교 ----------
-const OC_BANDS = [['오픈 9~11시', [9, 10]], ['런치 11~14시', [11, 12, 13]], ['브레이크 14~17시', [14, 15, 16]], ['디너 17~20시', [17, 18, 19]], ['마감 20~22시', [20, 21]]];
+const OC_BANDS = [['오픈 9~11시', [9, 10]], ['런치 11~14시', [11, 12, 13]], ['스윙 14~17시', [14, 15, 16]], ['디너 17~20시', [17, 18, 19]], ['마감 20~22시', [20, 21]]];
 function ocMonthStat(code, ym) {
   const days = (OC.byStore[code] || []).filter(d => d.ym === ym); if (days.length < 5) return null;
   const sales = days.reduce((t, d) => t + d.sales, 0), adjH = typeof otAdjHours === 'function' ? otAdjHours(code, ym, days[days.length - 1].date) : 0;
@@ -289,11 +289,11 @@ function ocPeerCompare(code, ym) {
 }
 
 // ---------- 제안 (전사 대시보드 표 마지막 열, 2026-10-30) ----------
-// 어느 요일유형(평일/주말) × 시간대 구간(오픈·런치·브레이크·디너·마감)이 문제인지를 월 시간으로 보여준다.
+// 어느 요일유형(평일/주말) × 시간대 구간(오픈·런치·스윙·디너·마감)이 문제인지를 월 시간으로 보여준다.
 //   월 시간 = (우리 구간 평균 인원 − 비교 기준 평균 인원) × 구간 길이(h) × 그 달 영업일수(그 요일유형)
 //   비교 기준 둘: 피어(같은 매출대 3개점, 피어 비교 표와 같은 매장) / 목표(기준 곡선이 요구하는 시간대별 인원). 표시는 피어 대비를 먼저, 부족하면 목표 대비로 채운다.
 const OC_SUG_MIN = 10, OC_SUG_BRAND_MIN = 50;          // 월 10h(매장)·50h(브랜드 합) 미만은 제안하지 않음
-const OC_BAND_SHORT = ['오픈', '런치', '브레이크', '디너', '마감'];
+const OC_BAND_SHORT = ['오픈', '런치', '스윙', '디너', '마감'];
 function ocBandsByDt(days) {
   const out = {};
   for (const dt of ['weekday', 'weekend']) {
