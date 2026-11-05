@@ -56,9 +56,9 @@ table.pnl td.drl:hover{background:#fffbe6;text-decoration:underline}
 .glwrap table.pnl.small td:last-child{white-space:normal;min-width:260px}     /* 텍스트: 왼쪽 정렬, 길면 줄바꿈해서 앞부분부터 보이게 */
 /* 매장예측: 개선 계획 글 칸 */
 table.pnl td.plan{white-space:normal;overflow:visible;padding:2px 6px;vertical-align:middle}
-.plin{display:block;width:100%;box-sizing:border-box;font:inherit;font-size:12px;line-height:18px;padding:3px 6px;border:1px solid transparent;border-radius:3px;background:transparent;resize:none;overflow:hidden;color:inherit}
-.plin:hover{border-color:#cfcfcf;background:#fff}
-.plin:focus{outline:none;border-color:#0f4c3a;background:#fff}
+.plin{display:block;width:100%;box-sizing:border-box;font:inherit;font-size:12px;line-height:18px;padding:3px 6px;border:1px solid #e3e3e3;border-radius:3px;background:#fff;resize:none;overflow:hidden;color:var(--ink,#131518)}
+.plin:hover{border-color:#cfcfcf}
+.plin:focus{outline:none;border-color:#0f4c3a}
 .plin::placeholder{color:#c4c4c4}
 .upbar{height:6px;background:#eee;border-radius:3px;overflow:hidden;margin:6px 0 12px}
 .upbar #upBar{height:100%;width:0;background:#0f4c3a;transition:width .2s}

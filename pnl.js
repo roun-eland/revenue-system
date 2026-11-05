@@ -513,7 +513,7 @@ function renderFcst() {
                       : [['sum', '로운', '합계', F.total], ...STORES.map(c => [c, sname(c), c, F.store[c]])];
   const cw = one ? 128 : 112, pw = one ? 62 : 60, planW = 380;
   const W = 250 + colsDef.length * (cw + pw) + (one ? planW : 0);
-  const planTh = one ? '<th rowspan="3" class="ctr" style="vertical-align:middle;white-space:normal;line-height:1.5">개선 계획<br><span style="font-weight:400;font-size:11px">계정별로 어떻게 해서 얼마나 달성할지 적어 주세요</span></th>' : '';
+  const planTh = one ? '<th rowspan="3" class="ctr" style="vertical-align:middle;white-space:normal;line-height:1.5">EBG 계획</th>' : '';
   let h = `<table class="pnl" style="width:100%;min-width:${W}px"><colgroup><col style="width:250px">${colsDef.map(() => `<col style="width:${cw}px"><col style="width:${pw}px">`).join('')}${one ? `<col style="min-width:${planW}px">` : ''}</colgroup><thead>` +
     `<tr><th>매장코드</th>${colsDef.map(([, , code]) => `<th colspan="2" class="ctr">${esc(code)}</th>`).join('')}${planTh}</tr>` +
     `<tr><th>매장명</th>${colsDef.map(([id, n]) => `<th colspan="2" class="ctr"${!one && id !== 'sum' ? ` data-go="${id}" style="cursor:pointer" title="눌러서 이 매장 입력하기"` : ''}>${esc(n)}${!one && id !== 'sum' && !fcFilled(id) ? ' <span class="pend" style="color:#cbd5e1">미입력</span>' : ''}</th>`).join('')}</tr>` +
@@ -524,7 +524,7 @@ function renderFcst() {
       const cell = ed && i === 2;
       return `<td class="num${cell ? ' ed' : ''}"${cell ? ` data-fe="${a.code}" title="눌러서 입력 (Enter 저장, Esc 취소)"` : ''}>${nf(M[a.code])}</td><td class="num r">${pf(M[a.code], M.sales)}</td>`;
     }).join('');
-    if (one) h += `<td class="plan"><textarea class="plin" rows="1" data-pl="${a.code}" placeholder="개선 계획">${esc((S.fc.plan[S.pick] || {})[a.code] || '')}</textarea></td>`;
+    if (one) h += `<td class="plan"><textarea class="plin" rows="1" data-pl="${a.code}" placeholder="원인/대안">${esc((S.fc.plan[S.pick] || {})[a.code] || '')}</textarea></td>`;
     h += '</tr>';
   }
   box.innerHTML = h + '</tbody></table>';
