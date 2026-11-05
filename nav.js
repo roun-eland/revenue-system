@@ -25,7 +25,7 @@
     { id: 'sales', label: '매출', mark: '매', href: 'sales/', nav: '#sfNav button', attr: 'view',
       items: [['brand', '브랜드 대시보드'], ['daily', '매장 일별'], ['weekly', '주차별 매출'], ['acc', '정확도 피드백'], ['admin', '발행 관리', 1]] },
     { id: 'labor', label: '생산성', mark: '생', href: 'labor/', nav: '#otNav button', attr: 'view',
-      items: [['dash', '전사 대시보드'], ['plan', '계획 시뮬레이션'], ['feedback', '매장 피드백'], ['actual', '실적 입력', 1], ['ref', '기준정보', 1]] },
+      items: [['dash', '전사 대시보드'], ['feedback', '매장 피드백'], ['plan', '계획 시뮬레이션'], ['actual', '실적 입력', 1], ['ref', '기준정보', 1]] },
     { id: 'cost', label: '원가', mark: '원', href: 'cost/', nav: '.tab-nav .tab-btn', attr: 'tab',
       items: [['pivot', '대시보드'], ['season-design', '시즌설계'], ['produce', '농산 모니터링'], ['data-group', '데이터', 1]] },
     { id: 'supply', label: '공급', mark: '공', href: 'supply/', nav: '#spNav button', attr: 'view',

@@ -447,8 +447,14 @@ async function uploadPayroll(file) {
 async function uploadAtt(file) {
   report('acAttMsg', '', '읽는 중… (행이 많으면 수십 초 걸립니다)');
   try {
-    const rows = (await sheetRows(file)).filter(r => /^\d{5,}$/.test(String(r[0]).trim()) && normDate(r[4]));
+    const allRows = await sheetRows(file);
+    const rows = allRows.filter(r => /^\d{5,}$/.test(String(r[0]).trim()) && normDate(r[4]));
     if (!rows.length) throw new Error('사용자ID+근무일 형식의 행을 찾지 못했습니다 — 출퇴근 기록부 원본인지 확인해주세요.');
+    // 추가근무(OT, over time) 열 = 근무시간 외 추가로 일한 시간. 머리글에서 찾고, 머리글이 없으면 실근무(11번째 열) 바로 다음 열(12번째)을 쓴다
+    const hdr = allRows.find(r => r.some(c => /근무일/.test(String(c))));
+    let otIdx = hdr ? hdr.findIndex(c => /추가\s*근무|추가\s*시간|연장/.test(String(c))) : -1;
+    const otFrom = otIdx >= 0 ? `머리글 "${String(hdr[otIdx]).trim()}"` : '12번째 열(머리글에서 못 찾아 기본 위치)';
+    if (otIdx < 0) otIdx = 11;
     const toCode = name => { for (const [k, c] of STORE_NAME_MAP) if (String(name).includes(k)) return c; return null; };
     const tmin = v => {
       const m = String(v).match(/(\d{1,2}):(\d{2})(?::\d{2})?$/);
@@ -464,9 +470,11 @@ async function uploadAtt(file) {
       if (th <= 0) return;
       const d = normDate(r[4]);
       const key = code + '|' + d;
-      const o = (day[key] = day[key] || { code, d, mate: 0, ft: 0, hours: Array(16).fill(0) }); // 8~23시 (예전엔 9~21시 13칸이라 9시 이전·21시 이후 근무가 빠졌음)
+      const o = (day[key] = day[key] || { code, d, mate: 0, ft: 0, mateOt: 0, ftOt: 0, hours: Array(16).fill(0) }); // 8~23시 (예전엔 9~21시 13칸이라 9시 이전·21시 이후 근무가 빠졌음)
       const bucket = FT_ROLE_SET.has(String(r[3]).trim()) ? 'ft' : 'mate';
       o[bucket] += th;
+      const ot = Math.max(0, num(r[otIdx]));   // 추가근무(OT) — 정직원(관리자)·메이트로 나눠 합산
+      if (ot > 0) o[bucket === 'ft' ? 'ftOt' : 'mateOt'] += ot;
       const ai = tmin(r[6]), ao = tmin(r[8]);
       if (ai != null && ao != null && ao > ai) {
         const brk = num(r[13]);
@@ -480,9 +488,11 @@ async function uploadAtt(file) {
     });
     const out = Object.values(day).map(o => ({
       store_code: o.code, work_date: o.d, mate_mh: +o.mate.toFixed(2), ft_mh: +o.ft.toFixed(2),
+      mate_ot: +o.mateOt.toFixed(2), ft_ot: +o.ftOt.toFixed(2),
       by_hour: o.hours.map(x => +x.toFixed(2)) }));
     await upsertChunks('ot_labor_daily', out, 'store_code,work_date');
-    report('acAttMsg', 'ok', `저장됨: ${out.length}일분(매장×일) · 원본 ${rows.length}행` +
+    const sumOt = k => out.reduce((t, r) => t + r[k], 0);
+    report('acAttMsg', 'ok', `저장됨: ${out.length}일분(매장×일) · 원본 ${rows.length}행 · 추가근무(OT, ${otFrom}) 정직원 ${Math.round(sumOt('ft_ot')).toLocaleString('ko-KR')}h · 메이트 ${Math.round(sumOt('mate_ot')).toLocaleString('ko-KR')}h` +
       (skipped ? ` · <span style="color:var(--warn)">매핑 실패 ${skipped}행 제외 — ${Object.entries(badNames).map(([n, c]) => `${n}(${c}행)`).join(', ')}</span>` : ''));
   } catch (e) { report('acAttMsg', 'err', '실패: ' + e.message); }
 }

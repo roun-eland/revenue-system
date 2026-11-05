@@ -512,7 +512,7 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
   for (const [code, s0] of Object.entries(OT_DATA)) {
     const S = sBy[code], L = lBy[code];
     if (!S || !L) continue;
-    let sales = 0, mate = 0, ft = 0, need = 0, n = 0, first = null, last = null;
+    let sales = 0, mate = 0, ft = 0, need = 0, n = 0, first = null, last = null, mOt = 0, fOt = 0, hasOt = false;   // mOt·fOt = 추가근무(OT) 시간 누적 (메이트·정직원)
     const dayRows = [];
     for (const x of monthDates(ym, s0)) {
       const sr = S[x.iso], lr = L[x.iso];
@@ -520,6 +520,7 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
       const A = +sr.total;
       dayRows.push({ iso: x.iso, mate_mh: +lr.mate_mh || 0, ft_mh: +lr.ft_mh || 0, sales: A });
       sales += A; mate += +lr.mate_mh || 0; ft += +lr.ft_mh || 0; n++;
+      if (lr.mate_ot != null || lr.ft_ot != null) { hasOt = true; mOt += +lr.mate_ot || 0; fOt += +lr.ft_ot || 0; }
       if (!first) first = x.iso;
       last = x.iso;
       need += OT_STD[code] ? OT_STD[code][stdDayKey(x)].stats.totMH : needMHof(s0, A, x.hol ? 'H' : x.wd);
@@ -555,7 +556,7 @@ function otMtdRows(ym, salesRows, laborRows, periodRows) {
     // 표준표를 실제 매출에 적용했을 때의 생산성은 tableProd로 남겨 둔다(참고·메이트 초과시간 계산은 그대로 표 기준 need).
     // 초과시간 = 실제 총 근무시간 − 목표 생산성(브랜드 목표 곡선, 점수와 같은 기준)에서 필요한 시간(매출 ÷ 목표 생산성).
     //   점수가 100% 이상이면 0 이하, 미만이면 양수 (2026-11-05 사용자: 표준 시간표 기준 → 목표 생산성 기준으로 변경). need(표준표 기준)는 tableProd 참고용으로만 남긴다.
-    out.push({ code, name: s0.name, sales, mh, mate, ft, prod: sales / mh, need, over: mh - sales / tProd,
+    out.push({ code, name: s0.name, sales, mh, mate, ft, mateOt: mOt, ftOt: fOt, hasOt, prod: sales / mh, need, over: mh - sales / tProd,
                targetProd: prodTargetAt(sales / n / 1e6), tableProd: need ? sales / need : null, dailyX: sales / n / 1e6,
                ratio: labor / (lc.ratioSales / 1.1) * 100, labor, ratioSales: lc.ratioSales,
                costTarget, ratioTarget: costTarget / (lc.ratioSales / 1.1) * 100, seniorShift: lc.shift || 0, adjH, adjNote: OT_ADJ[code] ? OT_ADJ[code].note : '', cutIso: lc.cutIso, hasPay: lc.hasPay,
@@ -575,7 +576,7 @@ async function renderDashMTD(ym, myReq) {
   const start = `${ym}-01`, endEx = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
   const [sr, lr, pr] = await Promise.all([
     sb.from('ot_sales_daily').select('store_code,sales_date,total,is_closed').gte('sales_date', start).lt('sales_date', endEx).limit(1000),
-    sb.from('ot_labor_daily').select('store_code,work_date,mate_mh,ft_mh').gte('work_date', start).lt('work_date', endEx).limit(1000),
+    sb.from('ot_labor_daily').select('store_code,work_date,mate_mh,ft_mh,mate_ot,ft_ot').gte('work_date', start).lt('work_date', endEx).limit(1000),
     sb.from('ot_labor_periods').select('store_code,period_start,period_end,mate_pay,mate_mh').gte('period_start', start).lt('period_start', endEx).limit(1000)
   ]);
   if (myReq !== dashReqId) return; // 그 사이 더 최신 조회로 바뀜 — 이 결과는 버린다
@@ -607,15 +608,18 @@ async function renderDashMTD(ym, myReq) {
   // 브랜드(로운) 합계 행 — 생산성은 전 매장 합산, 인건비율은 본부 인건비 안분 포함, 목표 인건비율은 전 매장이 목표생산성을 달성했을 때
   const bTargetProd = tNeed > 0 ? tSales / tNeed : null, bSc = prodScore(tSales / tMH, bTargetProd);
   const bTargetRatio = (rows.reduce((t, r) => t + r.costTarget, 0) + hqCost) / (tRatioSales / 1.1) * 100, bOver = rows.reduce((t, r) => t + r.over, 0);
+  // OT 열: 출퇴근 기록부에서 읽은 추가근무 시간(누적). 아직 OT를 읽어 저장하지 않은 기간은 — 로 표시 (출퇴근 기록부를 다시 올리면 채워짐)
+  const otCells = r => r.hasOt ? `<td style="font-weight:600">${won(r.ftOt)}h</td><td style="font-weight:600">${won(r.mateOt)}h</td>` : '<td style="color:#bbb">—</td><td style="color:#bbb">—</td>';
   const rbOf = v => v > LABOR_CAP * 100 ? 'c' : v <= 24 ? 'g' : v <= 28 ? 'w' : 'c', scColOf = sc => !sc ? '' : sc.level === 'g' ? 'var(--good)' : sc.level === 'w' ? 'var(--warn)' : 'var(--crit)';
   // 생산성 점수 신호등 — 빨강 ≤85% / 초록 ≥95% / 사이 주황 (PROD_CURVE.lampRed·lampGreen)
   const lampTip = `생산성 점수 ${PROD_CURVE.lampRed}% 이하 빨강 · ${PROD_CURVE.lampGreen}% 이상 초록 · 사이 주황`;
   const lampDot = sc => sc ? `<span title="${lampTip} (점수 ${sc.raw.toFixed(1)}%)" style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${scColOf(sc)};vertical-align:middle;margin-right:7px"></span>` : '';
-  let html = '<table class="mtd"><colgroup><col style="width:16%"><col style="width:7%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:10%"><col style="width:7.5%"><col style="width:14%"><col style="width:7.5%"><col style="width:23%"></colgroup>' +
-    '<thead><tr><th>매장</th><th>누적<br>매출(억)</th><th title="브랜드 목표 곡선 — 일평균 매출에 따른 목표">목표<br>생산성</th><th>누적<br>생산성</th><th title="점 색 = 신호등: 생산성 점수 85% 이하 빨강 · 95% 이상 초록 · 사이 주황">생산성<br>점수</th><th>누적<br>인건비율</th><th>메이트<br>초과시간</th><th title="그 매장이 목표생산성(100%)을 달성했을 때의 인건비율">목표<br>인건비율</th><th style="text-align:left" title="어느 요일유형·시간대 구간에서 시간을 더 쓰는지(월 기준 시간). 피어(같은 매출대 3개점) 대비를 먼저, 2개가 안 되면 목표(곡선) 대비로 채움, 가장 큰 1가지. 월 10시간 미만은 표시하지 않음">조치할 것</th></tr></thead><tbody>';
+  let html = '<table class="mtd"><colgroup><col style="width:15%"><col style="width:6.5%"><col style="width:7%"><col style="width:7%"><col style="width:9.5%"><col style="width:7%"><col style="width:6%"><col style="width:6%"><col style="width:13%"><col style="width:7%"><col style="width:16%"></colgroup>' +
+    '<thead><tr><th>매장</th><th>누적<br>매출(억)</th><th title="브랜드 목표 곡선 — 일평균 매출에 따른 목표">목표<br>생산성</th><th>누적<br>생산성</th><th title="점 색 = 신호등: 생산성 점수 85% 이하 빨강 · 95% 이상 초록 · 사이 주황">생산성<br>점수</th><th>누적<br>인건비율</th><th title="출퇴근 기록부의 근무시간 외 추가근무(OT, over time) — 정직원(관리자). 이번 달 누적">관리자<br>OT</th><th title="출퇴근 기록부의 근무시간 외 추가근무(OT, over time) — 메이트. 이번 달 누적">메이트<br>OT</th><th>메이트<br>초과시간</th><th title="그 매장이 목표생산성(100%)을 달성했을 때의 인건비율">목표<br>인건비율</th><th style="text-align:left" title="어느 요일유형·시간대 구간에서 시간을 더 쓰는지(월 기준 시간). 피어(같은 매출대 3개점) 대비를 먼저, 2개가 안 되면 목표(곡선) 대비로 채움, 가장 큰 1가지. 월 10시간 미만은 표시하지 않음">조치할 것</th></tr></thead><tbody>';
   html += `<tr style="background:var(--surface-1);font-weight:700"><td title="브랜드 합계 — 인건비율에는 본부 인건비 안분액 포함">로운 <span style="font-size:11px;font-weight:400;color:var(--muted2)">브랜드</span></td><td>${(tSales / 1e8).toFixed(2)}</td>` +
     `<td>${bTargetProd != null ? won(bTargetProd) : '-'}</td><td><b>${won(tSales / tMH)}</b></td><td>${lampDot(bSc)}${bSc ? `<b style="color:${scColOf(bSc)}">${bSc.shown.toFixed(0)}%</b>` : '-'}</td>` +
     `<td><span class="band ${rbOf(ratioTot)}">${ratioTot.toFixed(1)}%</span></td>` +
+    otCells(rows.some(r => r.hasOt) ? { hasOt: true, ftOt: rows.reduce((t, r) => t + (r.ftOt || 0), 0), mateOt: rows.reduce((t, r) => t + (r.mateOt || 0), 0) } : { hasOt: false }) +
     `<td style="color:${bOver > 0 ? 'var(--crit)' : 'var(--good)'};font-weight:700">${bOver > 0 ? '+' + won(bOver) : won(bOver)}h</td>` +
     `<td><span class="band ${rbOf(bTargetRatio)}">${bTargetRatio.toFixed(1)}%</span></td><td class="sg" data-code="*" style="text-align:left;font-size:12px;font-weight:400;white-space:nowrap">…</td></tr>`;
   for (const r of rows) {
@@ -634,6 +638,7 @@ async function renderDashMTD(ym, myReq) {
     html += `<tr class="rowlink" data-code="${r.code}"><td title="${basis}">${r.name}${flag}</td><td>${(r.sales / 1e8).toFixed(2)}</td>` +
       `<td>${r.targetProd != null ? won(r.targetProd) : '-'}</td><td><b>${won(r.prod)}</b></td><td>${lampDot(sc)}${scTxt}</td>` +
       `<td><span class="band ${rb}"${capMark}>${r.ratio.toFixed(1)}%</span></td>` +
+      otCells(r) +
       `<td style="color:${overColor};font-weight:700">${r.over > 0 ? '+' + won(r.over) : won(r.over)}h <span class="mini" style="width:${w}px;background:${overColor}"></span></td>` +
       `<td><span class="band ${rbOf(r.ratioTarget)}" title="생산성 100% 달성 시 ${r.name} 인건비율">${r.ratioTarget.toFixed(1)}%</span></td><td class="sg" data-code="${r.code}" style="text-align:left;font-size:12px;white-space:nowrap">…</td></tr>`;
   }

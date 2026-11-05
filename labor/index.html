@@ -44,8 +44,8 @@
 
   <nav class="ot-nav" id="otNav">
     <button data-view="dash" class="on">전사 대시보드</button>
-    <button data-view="plan">계획 시뮬레이션</button>
     <button data-view="feedback">매장 피드백</button>
+    <button data-view="plan">계획 시뮬레이션</button>
     <button data-view="actual">실적 입력</button>
     <button data-view="ref">기준정보</button>
   </nav>
@@ -211,7 +211,7 @@
         </div>
         <div class="card">
           <h3 style="margin:0 0 6px">③ 출퇴근 기록부 (주 1회 — 시간대 분석용)</h3>
-          <p class="dnote" style="margin:0 0 10px">일별·시간대별 투입 MH를 계산합니다. 날짜는 파일에서 읽으므로 주차 선택이 필요 없습니다. 성명은 저장되지 않습니다 (매장×일 합계만). 없으면 피드백은 주/월 합계까지만 제공됩니다.</p>
+          <p class="dnote" style="margin:0 0 10px">일별·시간대별 투입 MH와 추가근무(OT) 시간을 계산합니다 (OT는 정직원·메이트로 나눠 매장×일 합계로 저장). 날짜는 파일에서 읽으므로 주차 선택이 필요 없습니다. 성명은 저장되지 않습니다 (매장×일 합계만). 없으면 피드백은 주/월 합계까지만 제공됩니다.</p>
           <input type="file" id="acAttFile" accept=".xlsx,.xls,.csv">
           <p class="plan-msg" id="acAttMsg" style="margin-top:8px"></p>
         </div>
@@ -290,7 +290,7 @@
 </div>
 
 <script src="../vendor/supabase.min.js"></script>
-<script src="../nav.js?v=202611050600"></script>
+<script src="../nav.js?v=202611050800"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../export-tables.js?v=202610021415"></script>
 <script src="../ot-seed.js?v=202610291500"></script>
@@ -298,8 +298,8 @@
 <script src="../ot-roster.js?v=202610291600"></script>
 <script src="../labor-calc.js?v=202611031003"></script>
 <script src="../vendor/chart.umd.min.js"></script>
-<script src="../ot.js?v=202611050500"></script>
-<script src="../ot-actuals.js?v=202611030945"></script>
+<script src="../ot.js?v=202611050800"></script>
+<script src="../ot-actuals.js?v=202611050800"></script>
 <script src="../ot-charts.js?v=202611050300"></script>
 </body>
 </html>
