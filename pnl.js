@@ -21,7 +21,7 @@ const sname = c => ((OT_DATA[c] && OT_DATA[c].name) || c).replace(/\s*\(신규\)
 const shiftYm = (ym, n) => { const [y, m] = ym.split('-').map(Number); const t = y * 12 + (m - 1) + n; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, '0')}`; };
 const lastDay = ym => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
 
-const S = { ym: null, tab: 'brand', mode: 'l1', scope: 'all', unit: 'mm', act: {}, acScope: 'sheet', gl: {}, glLeaves: new Set(), glHidden: new Set(), storeInfo: [], storeByCc: {}, pick: null, folded: new Set(), months: [], D: null, adj: [], fc: { amt: {}, plan: {} }, F: null };
+const S = { ym: null, tab: 'brand', mode: 'l1', scope: 'all', unit: 'mm', act: {}, acScope: 'sheet', gl: {}, glLeaves: new Set(), glHidden: new Set(), storeInfo: [], storeByCc: {}, pick: null, folded: new Set(), months: [], D: null, adj: [], fc: { amt: {}, plan: {} }, F: null, fb: null };
 
 // ---------- 시작 ----------
 async function init() {
@@ -61,19 +61,20 @@ async function init() {
 $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace('../'); };
 
 function showTab(t) {
-  S.tab = ['store', 'fcst', 'actual', 'upload'].includes(t) ? t : 'brand';
+  S.tab = ['store', 'fcst', 'actual', 'fb', 'upload'].includes(t) ? t : 'brand';
   if (S.tab === 'upload' && !S.planner) S.tab = 'brand';
   document.querySelectorAll('#plNav button').forEach(b => b.classList.toggle('on', b.dataset.view === S.tab));
   $('view-brand').hidden = S.tab !== 'brand';
   $('view-store').hidden = S.tab !== 'store';
   $('view-fcst').hidden = S.tab !== 'fcst';
+  $('view-fb').hidden = S.tab !== 'fb';
   $('view-actual').hidden = S.tab !== 'actual';
   $('view-upload').hidden = S.tab !== 'upload';
   $('acScopeWrap').hidden = S.tab !== 'actual';
-  $('plMode').hidden = S.tab === 'store' || S.tab === 'fcst' || S.tab === 'upload';   // 매장·매장예측 탭은 주요 계정 고정, 대신 전체 매장/매장 선택
-  $('plScope').hidden = S.tab !== 'store' && S.tab !== 'fcst';
-  $('plNotesCard').hidden = S.tab === 'upload' || S.tab === 'fcst';
-  $('adjCard').hidden = S.tab === 'upload' || S.tab === 'actual' || S.tab === 'fcst' || !S.planner;
+  $('plMode').hidden = S.tab === 'store' || S.tab === 'fcst' || S.tab === 'fb' || S.tab === 'upload';   // 매장·매장예측 탭은 주요 계정 고정, 대신 전체 매장/매장 선택
+  $('plScope').hidden = S.tab !== 'store' && S.tab !== 'fcst' && S.tab !== 'fb';
+  $('plNotesCard').hidden = S.tab === 'upload' || S.tab === 'fcst' || S.tab === 'fb';
+  $('adjCard').hidden = S.tab === 'upload' || S.tab === 'actual' || S.tab === 'fcst' || S.tab === 'fb' || !S.planner;
   renderAll();
   if (S.tab === 'actual' && !S.actScrolled && $('actualTable').querySelector('table')) { const w = $('actualTable'); w.scrollLeft = w.scrollWidth; S.actScrolled = true; }   // 처음 열면 최근 월이 보이도록 오른쪽 끝으로
 }
@@ -97,7 +98,7 @@ async function loadMonth(ym) {
   setMsg('불러오는 중…');
   try {
     const [D, adj, fc] = await Promise.all([loadData(ym), loadAdjust(ym), loadForecast(ym).catch(e => { console.warn('매장예측을 불러오지 못했습니다', e); return { amt: {}, plan: {} }; })]);
-    S.D = D; S.adj = adj; S.fc = fc;
+    S.D = D; S.adj = adj; S.fc = fc; S.fb = null;
     setMsg('');
     renderAll();
   } catch (e) { setMsg('불러오기 실패: ' + (e.message || e), true); }
@@ -306,10 +307,12 @@ const addLeaf = (a, b) => { const o = { ...a }; for (const k of Object.keys(b)) 
 function computeAll() {
   const D = S.D, store = {}, metas = {};
   let sum = {};
+  const leaves = {};                       // 매장별 말단 값 — 예상 스냅샷 저장·피드백 비교용
   const mSum = { gen: {}, prem: {} };      // 모델별(일반 매장 / 프리미엄 매장) 합 — 매장 탭에서 선택 매장과 같은 모델 열로 쓴다
   for (const c of STORES) {
     const b = baseLeaf(c); metas[c] = b.meta;
     const leaf = addLeaf(applyFix(c, applySets(c, b.leaf)), adjLeaf(c));
+    leaves[c] = leaf;
     store[c] = evalTree(leaf);
     sum = addLeaf(sum, leaf);
     const mk = storeModel(c); mSum[mk] = addLeaf(mSum[mk], leaf);
@@ -322,7 +325,7 @@ function computeAll() {
   for (const a of PNL_ACC) brand[a.code] = total[a.code] + alloc[a.code] + special[a.code];
   // 세전이익이 음수면 법인세비용 0 — 열을 더한 값이 아니라 예상실적 열 자체의 세전이익으로 다시 계산 (양수일 때는 열 합과 같다)
   if (brand.pretax <= 0) { brand.tax = 0; brand.net = brand.pretax; brand.true_net = brand.net - brand.true_ded; }
-  return { store, total, alloc, special, brand, metas, model };
+  return { store, total, alloc, special, brand, metas, model, leaves };
 }
 // 매장 모델 — 로운샤브 프리미엄 매장(EST_PREMIUM) / 그 밖은 일반 매장
 const storeModel = c => (typeof EST_PREMIUM !== 'undefined' && EST_PREMIUM.has(c)) ? 'prem' : 'gen';
@@ -368,11 +371,11 @@ const rowCls = a => `l${a.level}${a.children.length || a.calc ? ' sub' : ' lf'}$
 function renderAll() {
   document.querySelectorAll('#plMode button').forEach(b => b.classList.toggle('on', b.dataset.mode === S.mode));
   document.querySelectorAll('#plScope button').forEach(b => b.classList.toggle('on', b.dataset.scope === S.scope));
-  $('plPickWrap').hidden = !((S.tab === 'store' || S.tab === 'fcst') && S.scope === 'one');
+  $('plPickWrap').hidden = !((S.tab === 'store' || S.tab === 'fcst' || S.tab === 'fb') && S.scope === 'one');
   if (!S.D) return;
   const C = computeAll();
   S.C = C;
-  renderBrand(C); renderStore(C); renderFcst(); renderActual(C); renderNotes(C); renderAdjust();
+  renderBrand(C); renderStore(C); renderFcst(); renderFb(); renderActual(C); renderNotes(C); renderAdjust();
   document.querySelectorAll('td.nm[data-fold]').forEach(td => {
     td.onclick = () => { const k = td.dataset.fold; if (S.folded.has(k)) S.folded.delete(k); else S.folded.add(k); renderAll(); };
   });
@@ -570,6 +573,137 @@ async function fcSavePlan(store, code, text) {
   if (t) m[code] = t; else delete m[code];
   setMsg('저장했습니다');
   setTimeout(() => { if ($('plMsg').textContent === '저장했습니다') setMsg(''); }, 1500);
+}
+
+// ---------- 피드백: 월 확정 실적(전표) vs 매장(예상) vs 매장예측(점장님 예상) ----------
+// 월말에 쓴다. 확정 실적 = 그 달 전표(매장 전표 + 매장 매출). 매장(예상) = 월초에 저장해 둔 예상 스냅샷(없으면 지금 다시 계산한 값 — 실적이 섞여 차이가 작아 보일 수 있음).
+// GAP = 확정 − 예상(또는 확정 − 점장 예상): + 이면 실제가 더 컸다. 계정(말단 줄)별 GAP이 5백만원 이상이면 아래 목록에 올라와 차이 원인을 적는다.
+const FB_GAP_MIN = 5000000;
+async function loadFb(ym) {
+  const [g, s, sn, rs] = await Promise.all([
+    pageAll((a, b) => sb.rpc('gl_monthly_stores', { p_from: ym }).order('ym').order('store_code').order('leaf').range(a, b)),
+    sb.rpc('store_sales_all', { p_from: ym }),
+    pageAll((a, b) => sb.from('pnl_store_est_snap').select('store_code,account_code,amount,snapped_at').eq('ym', ym).order('store_code').order('account_code').range(a, b)),
+    pageAll((a, b) => sb.from('pnl_fb_reason').select('store_code,account_code,reason').eq('ym', ym).order('store_code').order('account_code').range(a, b))
+  ]);
+  if (s.error) throw s.error;
+  const act = {}; let nVoucher = 0;
+  for (const r of g) { if (r.ym !== ym) continue; nVoucher++; (act[r.store_code] = act[r.store_code] || {})[r.leaf] = +r.amount; }
+  for (const L of Object.values(act)) L.food = (L.food_gross || 0) - GL_MFG.reduce((t, k) => t + (L[k] || 0), 0) - (L.skip72 || 0);   // 식재료원가 = 총 식재료 − 제조 계정 − 72 (실적 추이와 같은 규칙)
+  for (const r of s.data || []) if (r.ym === ym) { const L = act[r.store_code] = act[r.store_code] || {}, gr = +r.gross || 0; L.gross_direct = gr; L.vat = gr - gr / 1.1; }
+  const snap = {}; let snapAt = '';
+  for (const r of sn) { (snap[r.store_code] = snap[r.store_code] || {})[r.account_code] = +r.amount; if (r.snapped_at > snapAt) snapAt = r.snapped_at; }
+  const reason = {};
+  for (const r of rs) if (r.reason) (reason[r.store_code] = reason[r.store_code] || {})[r.account_code] = r.reason;
+  return { ym, state: 'ready', act, nVoucher, snap, snapN: sn.length, snapAt, reason };
+}
+function fbModel() {
+  const FC = computeForecast(), useSnap = S.fb.snapN > 0;
+  const actL = {}, estL = {};
+  for (const c of STORES) { actL[c] = S.fb.act[c] || {}; estL[c] = useSnap ? (S.fb.snap[c] || {}) : (S.C.leaves[c] || {}); }
+  const M = { act: {}, est: {}, fc: { ...FC.store } };
+  let sa = {}, se = {}, sfa = {};
+  const filled = STORES.filter(fcFilled);
+  for (const c of STORES) { M.act[c] = evalTree(actL[c]); M.est[c] = evalTree(estL[c]); sa = addLeaf(sa, actL[c]); se = addLeaf(se, estL[c]); }
+  filled.forEach(c => { sfa = addLeaf(sfa, actL[c]); });
+  M.act.sum = evalTree(sa); M.est.sum = evalTree(se); M.fc.sum = FC.total;
+  M.actF = evalTree(sfa);   // 점장님이 입력한 매장만 모은 확정 실적 — 합계 보기에서 GAP(매장예측)을 같은 매장끼리 비교하려고
+  return { M, filled, useSnap };
+}
+const fbGapCell = v => {
+  if (v == null || !Math.round(v)) return '<td class="num"><span class="z">-</span></td>';
+  const big = Math.abs(v) >= FB_GAP_MIN;
+  return `<td class="num"${big ? ' style="color:var(--crit);font-weight:700"' : ''}>${v > 0 ? '+' : ''}${nf(v)}</td>`;
+};
+function renderFb() {
+  const box = $('fbTable'); if (!box) return;
+  const act = document.activeElement;
+  if (act && ($('view-fb').contains(act)) && (act.tagName === 'TEXTAREA' || act.tagName === 'INPUT')) return;   // 글을 쓰는 중에는 다시 그리지 않는다
+  if (S.tab !== 'fb') return;
+  if (!S.fb || S.fb.ym !== S.ym) {
+    if (!S.fb || S.fb.state !== 'loading' || S.fb.ym !== S.ym) {
+      const ym = S.ym; S.fb = { ym, state: 'loading' };
+      box.innerHTML = '<p class="dnote" style="padding:12px">확정 실적(전표)과 예상 스냅샷을 불러오는 중…</p>'; $('fbReasons').innerHTML = ''; $('fbBar').innerHTML = '';
+      loadFb(ym).then(d => { if (S.ym === ym) { S.fb = d; renderFb(); } }).catch(e => { if (S.ym === ym) { S.fb = { ym, state: 'error' }; box.innerHTML = `<p class="dnote" style="padding:12px;color:var(--crit)">불러오지 못했습니다: ${esc(e.message || e)}</p>`; } });
+    }
+    return;
+  }
+  if (S.fb.state !== 'ready') return;
+  const { M, filled, useSnap } = fbModel();
+  const one = S.scope === 'one', key = one ? S.pick : 'sum', nFilled = filled.length;
+  const hasAct = S.fb.nVoucher > 0, ymL = `${S.ym.slice(0, 4)}년 ${+S.ym.slice(5)}월`;
+  const snapTxt = useSnap ? `저장된 스냅샷 (${new Date(S.fb.snapAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })})` : '<span style="color:var(--warn)">저장된 스냅샷 없음 — 지금 다시 계산한 값</span>';
+  $('fbBar').innerHTML = `<div class="dnote" style="margin:0 0 6px">${ymL} · 확정 실적: ${hasAct ? '전표 반영' : '<span style="color:var(--crit)">이 달 전표가 아직 없어 비어 있습니다 (전표 업로드 후 채워짐)</span>'} · 매장(예상): ${snapTxt} · 매장예측: 점장님 입력 ${nFilled} / ${STORES.length}개 매장${one ? '' : ' (GAP(매장예측)은 입력한 매장끼리만 비교)'}` +
+    (S.planner ? ` <button id="fbSnapBtn" class="btn btn-sm" type="button" style="margin-left:10px">${useSnap ? '예상 스냅샷 다시 저장' : '지금 예상을 스냅샷으로 저장'}</button>` : '') + '</div>' +
+    (useSnap ? '' : '<div class="dnote" style="margin:0 0 6px;color:var(--warn)">월초에 "지금 예상을 스냅샷으로 저장"을 눌러 두면, 월말에 그때의 예상과 확정 실적을 비교할 수 있습니다. 저장하지 않은 채 월말에 보면 예상이 실적을 반영해 다시 계산돼 차이가 작게 나옵니다.</div>');
+  if ($('fbSnapBtn')) $('fbSnapBtn').onclick = fbSaveSnap;
+  const Ma = M.act[key], Me = M.est[key], Mf = M.fc[key];
+  const fcOk = one ? fcFilled(S.pick) : nFilled > 0;
+  const Maf = one ? Ma : M.actF;   // 합계 보기의 GAP(매장예측)은 입력한 매장의 확정 실적과 비교
+  const rows = visibleRows('main', true);
+  let h = `<table class="pnl" style="width:100%;min-width:${250 + 5 * 140}px"><colgroup><col style="width:250px">${'<col style="width:140px">'.repeat(5)}</colgroup><thead>` +
+    `<tr><th>${one ? esc(sname(S.pick)) : '로운 (전체 매장 합계)'} · ${ymL}</th><th class="num">월 확정 실적</th><th class="num">매장(예상)</th><th class="num">매장예측(점장님)</th><th class="num" title="확정 실적 − 매장(예상). +이면 실제가 더 컸음">GAP(매장)</th><th class="num" title="확정 실적 − 매장예측(점장님). +이면 실제가 더 컸음">GAP(매장예측)</th></tr>` +
+    `<tr><th>비고</th><th class="num">금액(원)</th><th class="num">금액(원)</th><th class="num">금액(원)</th><th class="num">확정 − 예상</th><th class="num">확정 − 점장예측</th></tr></thead><tbody>`;
+  for (const a of rows) {
+    const v = Ma[a.code] || 0, e = Me[a.code] || 0, f = Mf[a.code] || 0;
+    h += `<tr class="${rowCls(a)}">${labelCell(a, 'main')}<td class="num">${nf(v)}</td><td class="num">${nf(e)}</td><td class="num">${fcOk ? nf(f) : '<span class="z">-</span>'}</td>` +
+      fbGapCell(hasAct ? v - e : null) + fbGapCell(hasAct && fcOk ? (Maf[a.code] || 0) - f : null) + '</tr>';
+  }
+  box.innerHTML = h + '</tbody></table>';
+  box.querySelectorAll('td.nm[data-fold]').forEach(td => { td.onclick = () => { const k = td.dataset.fold; if (S.folded.has(k)) S.folded.delete(k); else S.folded.add(k); renderFb(); }; });
+
+  // ----- 맨 아래: 차이 5백만원 이상 계정 → 차이 원인 기술 -----
+  const items = [];
+  if (hasAct) for (const c of (one ? [S.pick] : STORES)) {
+    const ok = fcFilled(c);
+    for (const a of rows) {
+      if (!fcEditable(a)) continue;
+      const v = M.act[c][a.code] || 0, e = M.est[c][a.code] || 0, f = M.fc[c][a.code] || 0;
+      const gE = v - e, gF = ok ? v - f : null;
+      if (Math.abs(gE) >= FB_GAP_MIN || (gF != null && Math.abs(gF) >= FB_GAP_MIN)) items.push({ c, a, v, e, f: ok ? f : null, gE, gF, max: Math.max(Math.abs(gE), gF != null ? Math.abs(gF) : 0) });
+    }
+  }
+  items.sort((x, y) => y.max - x.max);
+  const sg = v => v == null ? '<span class="z">-</span>' : (v > 0 ? '+' : '') + nf(v).replace('<span class="z">-</span>', '0');
+  const gcell = v => v != null && Math.abs(v) >= FB_GAP_MIN ? 'style="color:var(--crit);font-weight:700"' : '';
+  $('fbReasons').innerHTML = `<h3 style="margin:22px 0 6px">차이 원인 기술 <span style="font-weight:400;font-size:12px;color:var(--muted)">GAP(매장) 또는 GAP(매장예측)이 ${FB_GAP_MIN / 10000}만원 이상인 계정</span></h3>` +
+    (!hasAct ? '<p class="dnote">확정 실적(전표)이 아직 없어 차이를 계산할 수 없습니다.</p>' :
+     !items.length ? '<p class="dnote">차이가 5백만원 이상 나는 계정이 없습니다.</p>' :
+     `<p class="dnote" style="margin:0 0 8px">${one ? '' : '전체 매장 중 해당하는 계정이 매장별로 모두 나옵니다. '}원인을 적으면 자동 저장됩니다 (기획자·점장님 누구나 입력).</p><div class="pnlwrap"><table class="pnl" style="width:100%;min-width:1000px"><colgroup><col style="width:90px"><col style="width:190px"><col style="width:110px"><col style="width:110px"><col style="width:110px"><col style="width:110px"><col style="width:110px"><col style="min-width:300px"></colgroup>` +
+     '<thead><tr><th>매장</th><th>계정</th><th class="num">월 확정</th><th class="num">매장(예상)</th><th class="num">매장예측</th><th class="num">GAP(매장)</th><th class="num">GAP(매장예측)</th><th>차이 원인</th></tr></thead><tbody>' +
+     items.map(it => `<tr><td class="nm" style="padding-left:8px">${esc(sname(it.c))}</td><td class="nm" style="padding-left:8px">${esc(it.a.label.replace(/^[①-⑮]\s*/, ''))}</td><td class="num">${nf(it.v)}</td><td class="num">${nf(it.e)}</td><td class="num">${it.f == null ? '<span class="z">-</span>' : nf(it.f)}</td><td class="num" ${gcell(it.gE)}>${sg(it.gE)}</td><td class="num" ${gcell(it.gF)}>${sg(it.gF)}</td>` +
+       `<td class="plan"><textarea class="plin" rows="1" data-fs="${it.c}" data-fa="${it.a.code}" placeholder="차이 원인">${esc((S.fb.reason[it.c] || {})[it.a.code] || '')}</textarea></td></tr>`).join('') + '</tbody></table></div>');
+  $('fbReasons').querySelectorAll('textarea.plin').forEach(t => {
+    fcAutoH(t); t.oninput = () => fcAutoH(t);
+    t.onblur = () => fbSaveReason(t.dataset.fs, t.dataset.fa, t.value);
+  });
+}
+async function fbSaveReason(store, code, text) {
+  const t = String(text).trim(), m = S.fb.reason[store] || (S.fb.reason[store] = {});
+  if (t === (m[code] || '')) return;
+  setMsg('저장 중…');
+  const { error } = await sb.from('pnl_fb_reason').upsert({ ym: S.ym, store_code: store, account_code: code, reason: t || null }, { onConflict: 'ym,store_code,account_code' });
+  if (error) { setMsg('저장 실패: ' + error.message, true); return; }
+  if (t) m[code] = t; else delete m[code];
+  setMsg('저장했습니다');
+  setTimeout(() => { if ($('plMsg').textContent === '저장했습니다') setMsg(''); }, 1500);
+}
+// 월초에 누르는 버튼 — 지금 매장 탭의 매장별 예상(말단 계정 값)을 그 월의 기준으로 저장한다 (기획자)
+async function fbSaveSnap() {
+  if (!S.planner || !S.C) return;
+  if (S.fb && S.fb.snapN && !confirm('이미 저장된 예상 스냅샷이 있습니다. 지금 계산값으로 다시 저장할까요? (기존 스냅샷은 지워집니다)')) return;
+  setMsg('스냅샷 저장 중…');
+  const rows = [];
+  for (const c of STORES) for (const [k, v] of Object.entries(S.C.leaves[c] || {})) if (PNL_BY[k] && Math.round(v)) rows.push({ ym: S.ym, store_code: c, account_code: k, amount: Math.round(v) });
+  const del = await sb.from('pnl_store_est_snap').delete().eq('ym', S.ym);
+  if (del.error) { setMsg('스냅샷 저장 실패: ' + del.error.message, true); return; }
+  for (let i = 0; i < rows.length; i += 300) {
+    const { error } = await sb.from('pnl_store_est_snap').insert(rows.slice(i, i + 300));
+    if (error) { setMsg('스냅샷 저장 실패: ' + error.message, true); return; }
+  }
+  S.fb = null; setMsg(`스냅샷을 저장했습니다 (${rows.length}행)`);
+  setTimeout(() => { if ($('plMsg').textContent.startsWith('스냅샷을 저장')) setMsg(''); }, 2500);
+  renderAll();
 }
 
 function renderNotes(C) {

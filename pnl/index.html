@@ -34,6 +34,7 @@
     <button data-view="store">매장</button>
     <button data-view="fcst">매장예측</button>
     <button data-view="actual">실적 추이</button>
+    <button data-view="fb">피드백</button>
     <button data-view="upload">전표 업로드</button>
   </nav>
 
@@ -81,6 +82,14 @@
       <div id="actualNote" class="dnote-list"></div>
     </section>
 
+    <section id="view-fb" class="view" hidden>
+      <h2>피드백 — 확정 실적 vs 예상 vs 점장님 예상</h2>
+      <p class="view-sub">위의 "예상 월"을 골라 월말에 확인합니다. <b>월 확정 실적</b>(전표가 반영된 최종 실적) · <b>매장(예상)</b>(매장 탭의 예상) · <b>매장예측(점장님)</b>(점장님이 입력한 예상)을 나란히 놓고, <b>GAP = 확정 − 예상</b>을 봅니다. 맨 아래에는 차이가 5백만원 이상인 계정이 올라오고, 차이 원인을 적을 수 있습니다.</p>
+      <div id="fbBar"></div>
+      <div class="pnlwrap" id="fbTable"></div>
+      <div id="fbReasons"></div>
+    </section>
+
     <section id="view-upload" class="view" hidden>
       <h2>전표 업로드</h2>
       <p class="view-sub">SAP 원가요소 전표 엑셀(이름·전표 헤더 텍스트·원가 요소·원가요소이름·금액·코스트 센터·기능 영역·전표 번호·전기일)을 올리면, 파일에 들어 있는 월의 전표를 교체해 저장합니다. 다음 달부터도 같은 화면으로 올리면 됩니다.</p>
@@ -125,12 +134,12 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../nav.js?v=202611050800"></script>
+<script src="../nav.js?v=202611060100"></script>
 <script src="../ot-seed.js?v=202610291500"></script>
 <script src="../labor-calc.js?v=202611031003"></script>
 <script src="../pnl-accounts.js?v=202611041000"></script>
 <script src="../pnl-gl.js?v=202611042300"></script>
 <script src="../pnl-est.js?v=202611041700"></script>
-<script src="../pnl.js?v=202611050700"></script>
+<script src="../pnl.js?v=202611060100"></script>
 </body>
 </html>
