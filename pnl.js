@@ -21,7 +21,7 @@ const sname = c => ((OT_DATA[c] && OT_DATA[c].name) || c).replace(/\s*\(신규\)
 const shiftYm = (ym, n) => { const [y, m] = ym.split('-').map(Number); const t = y * 12 + (m - 1) + n; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, '0')}`; };
 const lastDay = ym => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
 
-const S = { ym: null, tab: 'brand', mode: 'l1', scope: 'all', unit: 'mm', act: {}, acScope: 'sheet', gl: {}, glLeaves: new Set(), glHidden: new Set(), storeInfo: [], storeByCc: {}, pick: null, folded: new Set(), months: [], D: null, adj: [], fc: { amt: {}, plan: {} }, F: null, fb: null };
+const S = { sub: null, ym: null, tab: 'brand', mode: 'l1', scope: 'all', unit: 'mm', act: {}, acScope: 'sheet', gl: {}, glLeaves: new Set(), glHidden: new Set(), storeInfo: [], storeByCc: {}, pick: null, folded: new Set(), months: [], D: null, adj: [], fc: { amt: {}, plan: {} }, F: null, fb: null };
 
 // ---------- 시작 ----------
 async function init() {
@@ -38,6 +38,7 @@ async function init() {
   S.planner = role === 'planner';
   if (!S.planner) {   // 매장 관리자: 조회 전용 — 전표 업로드·특이비용 입력·표 직접 입력·전표 내역 보기는 숨긴다 (쓰기는 DB 권한도 막음)
     document.querySelector('#plNav button[data-view="upload"]').hidden = true;
+    document.querySelector('#plNav button[data-view="submit"]').hidden = true;
     $('adjCard').hidden = true;
   }
   document.querySelectorAll('#plNav button').forEach(b => { b.onclick = () => showTab(b.dataset.view); });
@@ -61,20 +62,21 @@ async function init() {
 $('logoutBtn').onclick = async () => { await sb.auth.signOut(); location.replace('../'); };
 
 function showTab(t) {
-  S.tab = ['store', 'fcst', 'actual', 'fb', 'upload'].includes(t) ? t : 'brand';
-  if (S.tab === 'upload' && !S.planner) S.tab = 'brand';
+  S.tab = ['store', 'fcst', 'actual', 'fb', 'submit', 'upload'].includes(t) ? t : 'brand';
+  if ((S.tab === 'upload' || S.tab === 'submit') && !S.planner) S.tab = 'brand';
   document.querySelectorAll('#plNav button').forEach(b => b.classList.toggle('on', b.dataset.view === S.tab));
   $('view-brand').hidden = S.tab !== 'brand';
   $('view-store').hidden = S.tab !== 'store';
   $('view-fcst').hidden = S.tab !== 'fcst';
   $('view-fb').hidden = S.tab !== 'fb';
+  $('view-submit').hidden = S.tab !== 'submit';
   $('view-actual').hidden = S.tab !== 'actual';
   $('view-upload').hidden = S.tab !== 'upload';
   $('acScopeWrap').hidden = S.tab !== 'actual';
-  $('plMode').hidden = S.tab === 'store' || S.tab === 'fcst' || S.tab === 'fb' || S.tab === 'upload';   // 매장·매장예측 탭은 주요 계정 고정, 대신 전체 매장/매장 선택
+  $('plMode').hidden = S.tab === 'store' || S.tab === 'fcst' || S.tab === 'fb' || S.tab === 'upload' || S.tab === 'submit';   // 매장·매장예측 탭은 주요 계정 고정, 대신 전체 매장/매장 선택
   $('plScope').hidden = S.tab !== 'store' && S.tab !== 'fcst' && S.tab !== 'fb';
-  $('plNotesCard').hidden = S.tab === 'upload' || S.tab === 'fcst' || S.tab === 'fb';
-  $('adjCard').hidden = S.tab === 'upload' || S.tab === 'actual' || S.tab === 'fcst' || S.tab === 'fb' || !S.planner;
+  $('plNotesCard').hidden = S.tab === 'upload' || S.tab === 'fcst' || S.tab === 'fb' || S.tab === 'submit';
+  $('adjCard').hidden = S.tab === 'upload' || S.tab === 'actual' || S.tab === 'fcst' || S.tab === 'fb' || S.tab === 'submit' || !S.planner;
   renderAll();
   if (S.tab === 'actual' && !S.actScrolled && $('actualTable').querySelector('table')) { const w = $('actualTable'); w.scrollLeft = w.scrollWidth; S.actScrolled = true; }   // 처음 열면 최근 월이 보이도록 오른쪽 끝으로
 }
@@ -375,7 +377,7 @@ function renderAll() {
   if (!S.D) return;
   const C = computeAll();
   S.C = C;
-  renderBrand(C); renderStore(C); renderFcst(); renderFb(); renderActual(C); renderNotes(C); renderAdjust();
+  renderBrand(C); renderStore(C); renderFcst(); renderFb(); renderSubmit(); renderActual(C); renderNotes(C); renderAdjust();
   document.querySelectorAll('td.nm[data-fold]').forEach(td => {
     td.onclick = () => { const k = td.dataset.fold; if (S.folded.has(k)) S.folded.delete(k); else S.folded.add(k); renderAll(); };
   });
@@ -704,6 +706,160 @@ async function fbSaveSnap() {
   S.fb = null; setMsg(`스냅샷을 저장했습니다 (${rows.length}행)`);
   setTimeout(() => { if ($('plMsg').textContent.startsWith('스냅샷을 저장')) setMsg(''); }, 2500);
   renderAll();
+}
+
+// ---------- 실적 제출 (기획자 전용): 월 실적을 KPI 표로 정리 → 엑셀로 내려받아 복사해 붙여넣기 ----------
+// 왼쪽 7칸 = 그 달 브랜드 예상실적(브랜드 탭 값). 오른쪽 KPI = 목표(월말·기준일까지) / 실적(기준일까지 누적) / 전년(같은 기간) / 달성 = 실적−목표(기준일까지) / 성장 = 실적−전년.
+// 자동 계산: 점당매출·식자재원가율·회전율·동일매장성장률·매장수·고객평점·인건비율. 직접 입력: 고객대기시간·재방문주기·피크타임점유율·EBG통과점장수·A점장후보수 (+ 자동값이 없는 칸).
+// dir: +1 = 클수록 좋음, −1 = 작을수록 좋음 (달성·성장 글자 색). prorate = 월말 목표를 기준일까지 일할 계산.
+const SUB_KPI = [
+  { k: 'perstore', label: '점당매출', unit: '억원', dec: 2, dir: 1, prorate: 1, xz: '0.0' },
+  { k: 'food', label: '식자재원가율', unit: '%', dec: 1, dir: -1, pct: 1 },
+  { k: 'turn', label: '회전율', unit: '회', dec: 1, dir: 1, xz: '0.0' },
+  { k: 'wait', label: '고객대기시간', unit: '분', dec: 1, dir: -1, manual: 1, xz: '0.0' },
+  { k: 'cycle', label: '재방문주기', unit: '일', dec: 0, dir: -1, manual: 1, xz: '0' },
+  { k: 'peak', label: '피크타임점유율', unit: '%', dec: 0, dir: 1, manual: 1, pct: 1 },
+  { k: 'same', label: '동일매장성장률', unit: '%', dec: 1, dir: 1, pct: 1 },
+  { k: 'stores', label: '매장수', unit: '개', dec: 0, dir: 1, xz: '0' },
+  { k: 'rating', label: '고객평점', unit: '점', dec: 0, dir: 1, xz: '0' },
+  { k: 'ebg', label: 'EBG통과점장수', unit: '명', dec: 0, dir: 1, manual: 1, xz: '0' },
+  { k: 'acand', label: 'A점장후보수', unit: '명', dec: 0, dir: 1, manual: 1, xz: '0' },
+  { k: 'labor', label: '인건비율', unit: '%', dec: 1, dir: -1, pct: 1 }
+];
+const SUB_LEFT = [['gross', '외형매출', '백만원'], ['sales', '실매출', '백만원'], ['mfg', '제조경비', '백만원'], ['gp', '매출총이익', '백만원'], ['op', '영업이익', '백만원'], ['labor', '인건비율', '%'], ['food', '원가율', '%']];
+const SUB_COL = { t: 'target', a: 'actual', p: 'prev' };
+const daysIn = ym => new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
+const numOrNull = v => (v === '' || v == null || !isFinite(+v)) ? null : +v;
+const subFmt = (v, d) => v == null ? '' : (+v).toLocaleString('ko-KR', { minimumFractionDigits: d, maximumFractionDigits: d });
+
+async function loadSubmit(ym, to) {
+  const [st, inp] = await Promise.all([
+    sb.rpc('pnl_submit_stats', { p_from: ym + '-01', p_to: to || null }),
+    pageAll((a, b) => sb.from('pnl_submit_input').select('ym,k,col,val').order('ym').order('k').order('col').range(a, b))
+  ]);
+  if (st.error) throw st.error;
+  const all = {};
+  for (const r of inp) { const o = all[r.ym] = all[r.ym] || {}; (o[r.k] = o[r.k] || {})[r.col] = r.val == null ? null : +r.val; }
+  const saved = all[ym] || {};
+  const hasT = Object.values(saved).some(x => x.target != null);
+  const prevYms = Object.keys(all).filter(m => m < ym && Object.values(all[m]).some(x => x.target != null)).sort();
+  const carry = {};   // 이 달 목표를 아직 저장하지 않았으면 직전에 저장한 달의 목표를 채워 둔다 (저장을 눌러야 이 달 값으로 남음)
+  if (!hasT && prevYms.length) for (const [k, x] of Object.entries(all[prevYms[prevYms.length - 1]])) if (x.target != null) carry[k] = x.target;
+  return { ym, state: 'ready', stats: st.data, to: st.data.to, last: st.data.last_date, saved, carry, carryFrom: hasT || !prevYms.length ? '' : prevYms[prevYms.length - 1] };
+}
+
+// 자동 계산값 (목표·직접 입력값은 화면 칸에서 읽는다)
+function subAuto() {
+  const d = S.sub.stats, C = S.C, B = C.brand, st = d.stores || [];
+  const N = +String(d.to).slice(8, 10);
+  const cs = st.filter(x => x.cur_days > 0), ps = st.filter(x => x.prev_days > 0);
+  const sum = (a, f) => a.reduce((t, x) => t + (+f(x) || 0), 0);
+  const per = (a, sk) => a.length ? sum(a, x => x[sk]) / a.length / 1e8 : null;
+  const turn = (a, dk, gk) => { const cap = sum(a, x => (x[dk] || 0) * (x.seats || 0) * 0.7); return cap > 0 ? sum(a, x => x[gk]) / cap : null; };
+  const same = st.filter(x => x.cur_days >= 0.9 * N && x.prev_days >= 0.9 * N);
+  const sPrev = sum(same, x => x.prev_sales);
+  const pa = S.act[shiftYm(S.ym, -12)];
+  const ratio = (M, code) => M && M.sales ? (M[code] || 0) / M.sales * 100 : null;
+  const rat = d.rating && d.rating.n > 0 ? +d.rating.avg * 20 : null;   // 5점 만점 평균 별점 → 100점 환산
+  const A = {
+    perstore: { a: per(cs, 'cur_sales'), p: per(ps, 'prev_sales') },
+    food: { a: ratio(B, 'cogs.2'), p: ratio(pa, 'cogs.2') },
+    turn: { a: turn(cs, 'cur_days', 'cur_guests'), p: turn(ps, 'prev_days', 'prev_guests') },
+    same: { a: same.length >= 3 && sPrev > 0 ? (sum(same, x => x.cur_sales) / sPrev - 1) * 100 : null, p: null },
+    stores: { a: cs.length, p: ps.length },
+    rating: { a: rat, p: null },
+    labor: { a: ratio(B, 'cogs.3'), p: ratio(pa, 'cogs.3') }
+  };
+  const L = { gross: B.gross / 1e6, sales: B.sales / 1e6, mfg: B['cogs.4'] / 1e6, gp: B.gp / 1e6, op: B.op / 1e6, labor: ratio(B, 'cogs.3'), food: ratio(B, 'cogs.2') };
+  return { A, L, N, nSame: same.length };
+}
+
+function renderSubmit() {
+  const box = $('subBody'); if (!box || S.tab !== 'submit' || !S.planner) return;
+  const act = document.activeElement;
+  if (act && $('view-submit').contains(act) && (act.tagName === 'INPUT')) return;   // 숫자를 입력하는 중에는 다시 그리지 않는다
+  if (!S.sub || S.sub.ym !== S.ym || S.sub.reload) {
+    if (!S.sub || S.sub.state !== 'loading' || S.sub.ym !== S.ym) {
+      const ym = S.ym, same = S.sub && S.sub.ym === ym, to = same ? S.sub.pickTo : null, draft = same ? (S.sub.draft || {}) : {}; S.sub = { ym, state: 'loading', pickTo: to, draft };
+      box.innerHTML = '<p class="dnote" style="padding:12px">매출·객수와 저장된 입력값을 불러오는 중…</p>';
+      loadSubmit(ym, to).then(d => { if (S.ym === ym) { S.sub = { ...d, pickTo: to, draft }; renderSubmit(); } }).catch(e => { if (S.ym === ym) { S.sub = { ym, state: 'error', pickTo: to, draft }; box.innerHTML = `<p class="dnote" style="padding:12px;color:var(--crit)">불러오지 못했습니다: ${esc(e.message || e)}</p>`; } });
+    }
+    return;
+  }
+  if (S.sub.state !== 'ready') return;
+  const { A, L, N } = subAuto(), sub = S.sub, saved = sub.saved, dim = daysIn(S.ym);
+  const md = `${+sub.to.slice(5, 7)}.${+sub.to.slice(8, 10)}`, ymL = `${+S.ym.slice(5)}월`;
+  const dr = sub.draft || (sub.draft = {});
+  const inp = (k, c, v, ph) => { const dv = dr[`${k}.${c}`]; const x = dv !== undefined ? dv : v; return `<input class="subin" type="number" step="any" data-k="${k}" data-c="${c}" value="${x == null ? '' : x}"${ph ? ` placeholder="${ph}"` : ''}>`; };
+  const left = SUB_LEFT.map(([k, lab, u]) => `<label class="sub-f"><span>${lab}${k === 'labor' || k === 'food' ? ' <small>(예상 기준)</small>' : ''}</span><span class="sub-v"><input class="subin ro" type="text" readonly value="${subFmt(L[k], u === '%' ? 1 : 0)}"><em>${u}</em></span></label>`).join('');
+  const rows = SUB_KPI.map(d => {
+    const au = A[d.k] || {}, tv = saved[d.k] && saved[d.k].target != null ? saved[d.k].target : (sub.carry[d.k] != null ? sub.carry[d.k] : null);
+    const manA = d.manual || au.a == null, manP = d.manual || au.p == null;
+    const sv = c => saved[d.k] && saved[d.k][c] != null ? saved[d.k][c] : null;
+    const av = d.manual ? sv('actual') : au.a, pv = d.manual ? sv('prev') : au.p;
+    const cellA = manA ? inp(d.k, 'a', d.manual ? sv('actual') : sv('actual'), '입력') : `<span class="sub-auto" data-k="${d.k}" data-c="a" data-v="${au.a}">${subFmt(au.a, d.dec)}</span>`;
+    const cellP = manP ? inp(d.k, 'p', sv('prev'), '입력') : `<span class="sub-auto" data-k="${d.k}" data-c="p" data-v="${au.p}">${subFmt(au.p, d.dec)}</span>`;
+    return `<tr data-row="${d.k}"><th class="lbl">${d.label} <small>${d.unit}</small></th><td>${inp(d.k, 't', tv)}</td><td class="num sub-tt"></td><td class="num">${cellA}</td><td class="num">${cellP}</td><td class="num sub-ach"></td><td class="num sub-gro"></td></tr>`;
+  }).join('');
+  box.innerHTML = `<div class="sub-grid"><div class="sub-left"><h3>${ymL} 예상</h3>${left}<p class="dnote">브랜드 탭의 ${ymL} 예상실적 값입니다 (매출액 대비 비율).</p></div>` +
+    `<div class="sub-right"><table class="sub-kpi"><thead><tr><th>지표</th><th>목표<small>(월말)</small></th><th>목표<small>(~${md})</small></th><th>실적<small>(~${md})</small></th><th>전년<small>(같은 기간)</small></th><th>달성</th><th>성장</th></tr></thead><tbody>${rows}</tbody></table>` +
+    `<p class="dnote">실적·전년은 ${+sub.to.slice(5, 7)}월 1일~${+sub.to.slice(8, 10)}일 누적(전년은 같은 날짜 범위)입니다. 달성 = 실적 − 목표(~${md}), 성장 = 실적 − 전년. 점당매출 목표(~${md})는 월말 목표를 ${N}/${dim}일로 나눈 값, 나머지 목표는 월말 값 그대로입니다.</p></div></div>`;
+  $('subBar').innerHTML = `<label class="fld" style="min-width:150px">기준일<input id="subTo" type="date" min="${S.ym}-01" max="${lastDay(S.ym)}" value="${sub.to}"></label>` +
+    `<button id="subSave" class="btn btn-sm" type="button">입력 저장</button><button id="subXls" class="btn btn-sm" type="button">엑셀 다운로드</button>` +
+    `<span class="dnote" style="margin:0">매출·객수 최신 날짜: ${sub.last ? sub.last.slice(5).replace('-', '/') : '없음'}${sub.carryFrom ? ` · 목표는 ${+sub.carryFrom.slice(5)}월에 저장한 값을 채워 두었습니다` : ''}</span>`;
+  $('subTo').onchange = () => { S.sub.pickTo = $('subTo').value; S.sub.reload = true; renderSubmit(); };
+  $('subSave').onclick = saveSubmit; $('subXls').onclick = downloadSubmit;
+  box.querySelectorAll('input.subin:not(.ro)').forEach(i => { i.oninput = () => { dr[`${i.dataset.k}.${i.dataset.c}`] = i.value; subRefresh(i.dataset.k); }; });
+  SUB_KPI.forEach(d => subRefresh(d.k));
+}
+// 한 줄의 목표(~기준일)·달성·성장을 다시 계산한다 (칸에 숫자를 입력하는 대로)
+function subCells(k) {
+  const d = SUB_KPI.find(x => x.k === k), tr = document.querySelector(`#subBody tr[data-row="${k}"]`); if (!tr) return null;
+  const val = c => { const i = tr.querySelector(`input[data-c="${c}"]`); if (i) return numOrNull(i.value); const s = tr.querySelector(`.sub-auto[data-c="${c}"]`); return s ? numOrNull(s.dataset.v === 'null' ? null : s.dataset.v) : null; };
+  const t = val('t'), a = val('a'), p = val('p');
+  const dim = daysIn(S.ym), N = +String(S.sub.to).slice(8, 10);
+  const tt = t == null ? null : (d.prorate ? t * N / dim : t);
+  return { d, tr, t, tt, a, p, ach: a != null && tt != null ? a - tt : null, gro: a != null && p != null ? a - p : null };
+}
+function subRefresh(k) {
+  const c = subCells(k); if (!c) return;
+  const sg = (v, dir) => { if (v == null) return ''; const r = Math.round(v * 10 ** c.d.dec) / 10 ** c.d.dec; const cls = r === 0 ? '' : ((r > 0) === (dir > 0) ? 'sub-good' : 'sub-bad'); return `<span class="${cls}">${r > 0 ? '+' : ''}${subFmt(r, c.d.dec)} ${c.d.unit}</span>`; };
+  c.tr.querySelector('.sub-tt').textContent = c.tt == null ? '' : `${subFmt(c.tt, c.d.dec)}`;
+  c.tr.querySelector('.sub-ach').innerHTML = sg(c.ach, c.d.dir);
+  c.tr.querySelector('.sub-gro').innerHTML = sg(c.gro, c.d.dir);
+}
+async function saveSubmit() {
+  setMsg('저장 중…');
+  const rows = [];
+  for (const d of SUB_KPI) {
+    const c = subCells(d.k); if (!c) continue;
+    for (const [short, col] of Object.entries(SUB_COL)) {
+      const i = c.tr.querySelector(`input[data-c="${short}"]`); if (!i) continue;   // 자동 계산 칸은 저장하지 않는다
+      const v = numOrNull(i.value); if (v != null) rows.push({ ym: S.ym, k: d.k, col, val: v });
+    }
+  }
+  const del = await sb.from('pnl_submit_input').delete().eq('ym', S.ym);
+  if (del.error) { setMsg('저장 실패: ' + del.error.message, true); return; }
+  if (rows.length) { const { error } = await sb.from('pnl_submit_input').insert(rows); if (error) { setMsg('저장 실패: ' + error.message, true); return; } }
+  S.sub.saved = {}; for (const r of rows) ((S.sub.saved[r.k] = S.sub.saved[r.k] || {})[r.col] = r.val); S.sub.carry = {}; S.sub.carryFrom = ''; S.sub.draft = {};
+  setMsg(`저장했습니다 (${rows.length}칸)`);
+  setTimeout(() => { if ($('plMsg').textContent.startsWith('저장했습니다')) setMsg(''); }, 1800);
+}
+// 엑셀: 왼쪽 위 '○월 예상' 아래로 7개 값, 오른쪽에 목표·목표(기준일까지)·실적·전년 12줄 — 그대로 복사해 붙여넣는 모양
+function downloadSubmit() {
+  if (!S.sub || S.sub.state !== 'ready') return;
+  const { L } = subAuto();
+  const cell = (v, z, pct) => v == null ? null : { t: 'n', v: pct ? v / 100 : v, z };
+  const left = [cell(L.gross, '#,##0;-#,##0;"-"'), cell(L.sales, '#,##0;-#,##0;"-"'), cell(L.mfg, '#,##0;-#,##0;"-"'), cell(L.gp, '#,##0;-#,##0;"-"'), cell(Math.abs(L.op) < 0.5 ? 0 : L.op, '#,##0;-#,##0;"-"'), cell(L.labor, '0%', 1), cell(L.food, '0%', 1)].map(c => c && (Math.round(c.v) === c.v || c.z === '0%' ? c : { ...c, v: Math.round(c.v) }));
+  const aoa = [[`${+S.ym.slice(5)}월 예상`, '목표', '목표', '실적', '전년']];
+  SUB_KPI.forEach((d, i) => {
+    const c = subCells(d.k), z = d.pct ? '0%' : d.xz;
+    aoa.push([left[i] || null, cell(c.t, z, d.pct), cell(c.tt, z, d.pct), cell(c.a, z, d.pct), cell(c.p, z, d.pct)]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 14 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '실적제출');
+  XLSX.writeFile(wb, `로운_실적제출_${S.ym}.xlsx`);
 }
 
 function renderNotes(C) {

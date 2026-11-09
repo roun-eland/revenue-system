@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="../ot.css?v=202611032300">
 <link rel="stylesheet" href="../nav.css?v=202610211230">
-<link rel="stylesheet" href="../pnl.css?v=202611050700">
+<link rel="stylesheet" href="../pnl.css?v=202611091200">
 </head>
 <body>
 
@@ -35,6 +35,7 @@
     <button data-view="fcst">매장예측</button>
     <button data-view="actual">실적 추이</button>
     <button data-view="fb">피드백</button>
+    <button data-view="submit">실적 제출</button>
     <button data-view="upload">전표 업로드</button>
   </nav>
 
@@ -90,6 +91,13 @@
       <div id="fbReasons"></div>
     </section>
 
+    <section id="view-submit" class="view" hidden>
+      <h2>실적 제출</h2>
+      <p class="view-sub">위의 "예상 월"을 고르고 기준일(기본 = 매출·객수가 들어온 마지막 날)을 정하면, 그 달의 실적이 KPI 표로 정리됩니다. 점당매출·식자재원가율·회전율·동일매장성장률·매장수·고객평점·인건비율은 자동 계산이고, 고객대기시간·재방문주기·피크타임점유율·EBG통과점장수·A점장후보수는 직접 입력합니다. "엑셀 다운로드"로 내려받은 표를 그대로 복사해 붙여넣을 수 있습니다. (기획자 전용)</p>
+      <div class="adjform" id="subBar"></div>
+      <div id="subBody"></div>
+    </section>
+
     <section id="view-upload" class="view" hidden>
       <h2>전표 업로드</h2>
       <p class="view-sub">SAP 원가요소 전표 엑셀(이름·전표 헤더 텍스트·원가 요소·원가요소이름·금액·코스트 센터·기능 영역·전표 번호·전기일)을 올리면, 파일에 들어 있는 월의 전표를 교체해 저장합니다. 다음 달부터도 같은 화면으로 올리면 됩니다.</p>
@@ -134,12 +142,12 @@
 
 <script src="../vendor/supabase.min.js"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
-<script src="../nav.js?v=202611060100"></script>
+<script src="../nav.js?v=202611091200"></script>
 <script src="../ot-seed.js?v=202610291500"></script>
 <script src="../labor-calc.js?v=202611031003"></script>
 <script src="../pnl-accounts.js?v=202611041000"></script>
 <script src="../pnl-gl.js?v=202611042300"></script>
 <script src="../pnl-est.js?v=202611041700"></script>
-<script src="../pnl.js?v=202611060100"></script>
+<script src="../pnl.js?v=202611091200"></script>
 </body>
 </html>
