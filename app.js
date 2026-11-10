@@ -430,6 +430,14 @@ function setupTabNav() {
       }
     });
   });
+  // 다른 화면의 사이드바 링크(?v=season-design 등)·새로고침으로 들어온 경우 그 탭을 연다.
+  // nav.js는 appView가 보이는 즉시 탭 버튼을 눌러 보지만, 그 시점엔 위 핸들러가 아직 안 붙어(시즌 로딩 await 전) 클릭이 무시되고
+  // 항상 대시보드로 열렸다(2026-11-10). 핸들러가 붙은 뒤 여기서 한 번 더 눌러 준다. 권한상 숨겨진 탭은 navStart가 걸러낸다.
+  const startTab = typeof window.navStart === 'function' ? window.navStart('pivot') : 'pivot';
+  if (startTab && startTab !== 'pivot') {
+    const b = document.querySelector(`.tab-btn[data-tab="${startTab}"]`);
+    if (b && !b.hidden) b.click();
+  }
 }
 
 // =====================================================================
