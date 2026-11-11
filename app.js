@@ -4963,10 +4963,12 @@ function renderPivotWeekOptions() {
   const [y, m] = monthValue.split('-').map(Number);
   const weeks = computeWeekOptionsForMonth(y, m);
   sel.innerHTML = weeks.map(w => `<option value="${w.periodStart}|${w.periodEnd}">${w.label}</option>`).join('');
-  // 기본값 = 오늘이 속한 주차 (다른 달을 보고 있으면 그 달 마지막 주차)
+  // 기본값 = 오늘 기준 "끝난 주차 중 가장 최근 것" (2026-11-11 변경 — 예전엔 오늘이 속한 주차라 진행 중인 주는 자재 사용량이 없어 늘 빈 화면이었음).
+  // 이번 달에 끝난 주차가 아직 없으면 첫 주차, 다른 달을 보고 있으면 그 달 마지막 주차(오늘이 그 달 이후라 전부 끝남).
   const now = new Date();
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const cur = weeks.find(w => w.periodStart <= today && today <= w.periodEnd) || weeks[weeks.length - 1];
+  const done = weeks.filter(w => w.periodEnd < today);
+  const cur = done.length ? done[done.length - 1] : weeks[0];
   if (cur) sel.value = `${cur.periodStart}|${cur.periodEnd}`;
 }
 function renderPivotSeasonOptions() {
@@ -5010,6 +5012,9 @@ function updatePivotUnitVisibility() {
   updatePivotUnitVisibility();
 })();
 $('#pivotMonthInput').addEventListener('change', e => { if (e.isTrusted) pivotMonthTouched = true; });
+let pivotWeekTouched = false;   // 사용자가 주차를 직접 골랐는지 (골랐으면 빈 주차여도 자동으로 앞 주로 물러나지 않는다)
+$('#pivotWeekSelect').addEventListener('change', e => { if (e.isTrusted) pivotWeekTouched = true; });
+$('#pivotMonthInput').addEventListener('change', e => { if (e.isTrusted) pivotWeekTouched = false; });
 $('#pivotMonthInput').addEventListener('change', renderPivotWeekOptions);
 $('#pivotUnitSelect').addEventListener('change', updatePivotUnitVisibility);
 $('#pivotSeasonSelect').addEventListener('change', loadPivotCompareView);
@@ -5881,6 +5886,13 @@ async function loadPivotCompareView() {
   if (!data.error) {
     await attachPivotUnmatched(data);
     if (myToken !== pivotLoadToken) return;
+  }
+  // 기본 주차가 방금 끝나 아직 자재 사용량이 업로드되지 않은 경우(예: 월요일 실사 직후) — 사용자가 주차를 고르기 전이면
+  // 데이터가 없는 주차는 한 칸씩 앞 주로 물러나 "가장 최근 데이터가 있는 주"로 맞춘다.
+  const noUsage = data.error ? /자재사용량 데이터가 없/.test(data.error) : !(data.stores || []).length;
+  if (noUsage && $('#pivotUnitSelect').value === 'w' && !pivotWeekTouched) {
+    const wsel = $('#pivotWeekSelect');
+    if (wsel.selectedIndex > 0) { wsel.selectedIndex -= 1; return loadPivotCompareView(); }
   }
   pivotCompareCache = data;
   if (!data.error && pivotTab === 'A') {
