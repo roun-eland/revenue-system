@@ -343,7 +343,7 @@ function hasVisibleChild(a, mode) {
 }
 // "대분류만" 보기 — 계정 트리의 1단계가 아니라 사용자가 정한 요약 줄들 (원가·인건비·제조경비는 매출원가의 (1-1)(1-2)(1-3))
 const L1_ROWS = [
-  ['sales', '매출액'], ['cogs.2', '원가'], ['cogs.3', '인건비'], ['cogs.4', '제조경비'], ['gp', '매출총이익'],
+  ['gross', '외형매출'], ['cogs.2', '원가'], ['cogs.3', '인건비'], ['cogs.4', '제조경비'], ['gp', '매출총이익'],
   ['sga', '판관비'], ['op', '영업이익'], ['net', '당기순이익'], ['true_net', '진이익', '당기순이익 − 72백만원(추정)']
 ];
 const L1_PSEUDO = L1_ROWS.map(([code, label, pend]) => ({ code, label, pend, level: 1, children: [], calc: null, main: false, id: PNL_BY[code].id }));
@@ -434,7 +434,7 @@ function renderBrand(C) {
     const ed = editable(a, S.mode);
     h += `<tr class="${rowCls(a)}">${labelCell(a, S.mode)}` + cols.map(([n, M]) => {
       const cell = S.planner && ed && n === '특이비용';   // 표에서 직접 입력은 기획자만
-      return `<td class="num${cell ? ' ed' : ''}"${cell ? ` data-ed="${a.code}" title="눌러서 직접 입력 (Enter 저장, Esc 취소)"` : ''}>${nf(M[a.code])}</td><td class="num r">${pf(M[a.code], M.sales)}</td>`;
+      return `<td class="num${cell ? ' ed' : ''}"${cell ? ` data-ed="${a.code}" title="눌러서 직접 입력 (Enter 저장, Esc 취소)"` : ''}>${nf(M[a.code])}</td><td class="num r">${a.code === 'gross' ? '' : pf(M[a.code], M.sales)}</td>`;   // 외형매출 줄은 비율 칸 비움 (비율 기준은 매출액 = 외형 ÷ 1.1)
     }).join('') + '</tr>';
   }
   $('brandTable').innerHTML = h + '</tbody></table>';
