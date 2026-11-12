@@ -593,7 +593,7 @@ async function loadFb(ym) {
   if (s.error) throw s.error;
   const act = {}; let nVoucher = 0;
   for (const r of g) { if (r.ym !== ym) continue; nVoucher++; (act[r.store_code] = act[r.store_code] || {})[r.leaf] = +r.amount; }
-  for (const L of Object.values(act)) L.food = (L.food_gross || 0) - GL_MFG.reduce((t, k) => t + (L[k] || 0), 0) - (L.skip72 || 0);   // 식재료원가 = 총 식재료 − 제조 계정 − 72 (실적 추이와 같은 규칙)
+  for (const L of Object.values(act)) L.food = glFood(L, true);   // 식재료원가 — 식재료 계정이 있는 달은 그 합계, 없으면 파생식 (실적 추이와 같은 규칙, pnl-gl.js glFood)
   for (const r of s.data || []) if (r.ym === ym) { const L = act[r.store_code] = act[r.store_code] || {}, gr = +r.gross || 0; L.gross_direct = gr; L.vat = gr - gr / 1.1; }
   const snap = {}; let snapAt = '';
   for (const r of sn) { (snap[r.store_code] = snap[r.store_code] || {})[r.account_code] = +r.amount; if (r.snapped_at > snapAt) snapAt = r.snapped_at; }

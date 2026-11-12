@@ -4,12 +4,24 @@
 //  · 전표 업로드 탭: 엑셀 파일 또는 엑셀에서 복사해 붙여넣은 표(G/L 형식·원가요소 형식 모두) → gl_voucher (해당 월 교체)
 //  · 분류 규칙: 코스트센터가 store_info.cost_center 와 일치(끝 S 는 판관용 코스트센터) → 매장 / 그 밖의 비매장 중 텍스트에 EP → 법인 안분 / 나머지 → 브랜드 안분
 //  · 인건비 계열(급여·퇴직급여·상여, gl_acct_map.hide_detail)은 업로드 때 전표번호·텍스트를 비우고 금액만 저장, 화면에서도 내역을 보여주지 않는다
-//  · 식재료원가(전표 기준) = 식품매출원가(42010301) − 제조 비용 합 — 브랜드 실적표와 월 40~260백만원 차이가 나는 파생 값이다 (원가 시스템 값을 그대로 쓰는 예상 쪽과 다름)
+//  · 식재료원가(전표 기준): 새 G/L 형식 달은 식재료 계정 합계(glFood), 예전 달은 식품매출원가(42010301) − 제조 비용 합의 파생 근사치 — 브랜드 실적표보다 월 25~340백만원 낮게 나온다
 
 const GL_MFG = ['cogs.4.1', 'cogs.4.2', 'cogs.4.3.1', 'cogs.4.3.2', 'cogs.4.4.1', 'cogs.4.4.2', 'cogs.4.5', 'cogs.4.6', 'cogs.4.7.1', 'cogs.4.7.2', 'cogs.4.7.3', 'cogs.4.8', 'cogs.4.9', 'cogs.4.10', 'pay_ft', 'pay_pt', 'retire', 'cogs.3.3', 'cogs.5', 'cogs.7'];
 const GL_NO_BELOW_OP = ['other', 'fin', 'pretax', 'tax_val', 'tax', 'net', 'true_net', 'true_ded'];   // 매장 단위에는 영업외·세금 이하를 보여주지 않는다
 const GL_NO_TAX = ['tax_val', 'tax', 'net', 'true_net', 'true_ded'];                                      // 법인세는 추정식이라 전표 기준 표에는 넣지 않는다
 const GL_PART_LABEL = { store: '매장', corp: '법인 안분', brand: '브랜드 안분' };
+
+// 식재료원가(직영점원가) — 새 G/L 형식(2026-10~)에는 식재료원가 계정이 직접 들어온다:
+//   leaf 'food'   = 원재료비_기타_FI · 반제품비_기타_FI (42910119·42910123 — 매장별로 EATS 사용금액과 ±0.5백만원 안에서 일치)
+//   leaf 'food72' = 식자재원가_CK사내거래 · 당월제품제조원가 (72110436·72110397 — 금액이 거의 0)
+// 그 계정이 있는 달은 합계가 곧 식재료원가다. 없는 달(예전 원가요소 추출)은 파생식 = 식품매출원가 − 제조 계정 − 72
+// (식품매출원가가 제조비를 전부 품는다고 가정한 근사치라 EATS·실적표보다 매월 25~340백만원 낮게 나온다 — 그 달을 새 G/L 형식으로 다시 올리면 정확해진다)
+function glFood(L, withMfg) {
+  const direct = L.food || 0;
+  if (direct) return direct + (L.food72 || 0);
+  if (!withMfg) return L.food_gross || 0;
+  return (L.food_gross || 0) - GL_MFG.reduce((t, c) => t + (L[c] || 0), 0) - (L.skip72 || 0) - (L.food72 || 0);
+}
 
 // 조회 API 는 한 번에 1000행까지만 준다 — 그보다 큰 집계(매장×월×계정 등)는 range 로 나눠 끝까지 읽는다 (2026-11-04: 이걸 안 해서 매장별 전표 일부가 빠져 수광비·감가상각이 낮게 나왔다)
 // make(from, to) → .range(from, to) 가 붙은 조회. 반환 = 전체 행 배열. 순서가 흔들리지 않게 호출쪽에서 order 를 붙인다.
@@ -90,8 +102,7 @@ async function loadGlScope(key) {
   const yms = Object.keys(byYm).sort(), M = {};
   for (const ym of yms) {
     const L = { ...byYm[ym] };
-    if (kind === 'store' || kind === 'stores' || kind === 'all') L.food = (L.food_gross || 0) - GL_MFG.reduce((t, c) => t + (L[c] || 0), 0) - (L.skip72 || 0);
-    else L.food = L.food_gross || 0;
+    L.food = glFood(L, kind === 'store' || kind === 'stores' || kind === 'all');
     if (needSales) { const gr = gross[ym] || 0; L.gross_direct = gr; L.vat = gr - gr / 1.1; }
     M[ym] = evalTree(L);
   }
@@ -169,7 +180,7 @@ function renderActual(C) {
   const li = [];
   if (kind === 'sheet') li.push('받은 브랜드 실적표(백만원)입니다. 칸을 누르면 같은 월의 전표 합계 내역을 볼 수 있습니다 (실적표와 반올림·분류 차이가 있을 수 있음).');
   else {
-    li.push('전표 합계 기준입니다 — 인건비·제조경비·판관비는 브랜드 실적표와 월 ±1~2백만원 안에서 맞습니다. <b>식재료원가</b>는 식품매출원가에서 제조 비용을 뺀 파생 값이라 원가 시스템 값과 다를 수 있습니다.');
+    li.push('전표 합계 기준입니다 — 인건비·제조경비·판관비는 브랜드 실적표와 월 ±1~2백만원 안에서 맞습니다. <b>식재료원가</b>는 새 G/L 형식으로 올린 달(2026-10~)은 식재료 계정(원재료비·반제품비 등) 합계라 원가 시스템 값과 맞고, 그 이전 달은 식품매출원가에서 제조 비용을 뺀 파생 값이라 매월 수십~수백백만원 낮게 나옵니다(그 달을 새 형식으로 다시 올리면 정확해집니다).');
     if (kind === 'store' || kind === 'stores') li.push('매출은 매출 앱(store_sales) 기준 순매출(÷1.1)입니다. 매장 단위에는 영업외·법인세를 넣지 않았습니다. <b>브랜드·법인 안분비</b>는 그 달 안분 전표 합계(법인 = 텍스트에 EP, 브랜드 = 그 밖의 비매장)를 매장 순매출 비율로 나눈 값이고, <b>안분 후 영업이익</b> = 영업이익 − 두 안분비입니다 (영업이익 줄을 누르면 안분비 줄이 접힙니다).');
     const un = Object.keys((S.gl[S.acScope] || {}).unmapped || {});
     if (un.length) li.push(`<span style="color:var(--crit)">계정 매핑이 없는 전표가 있습니다 (${un.join(', ')}) — gl_acct_map 에 추가해야 반영됩니다.</span>`);
