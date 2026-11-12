@@ -1,7 +1,7 @@
 // 예상실적 — 전표(원가요소 단위) 기반 과거 실적 · 전표 업로드 (2026-11-03)
 // pnl.js 보다 먼저 불러온다(최상위에서는 pnl.js 의 값을 쓰지 않고, 함수 안에서만 쓴다).
 //  · 실적 추이 탭: 보기 대상(브랜드 실적표 / 브랜드·매장합계·법인안분·브랜드안분·매장별 전표 합계) + 계정 칸을 누르면 전표 내역
-//  · 전표 업로드 탭: 엑셀(이름·전표 헤더 텍스트(분류용)·원가 요소·금액·코스트 센터·기능 영역·전표 번호·전기일) → gl_voucher (해당 월 교체)
+//  · 전표 업로드 탭: 엑셀 파일 또는 엑셀에서 복사해 붙여넣은 표(G/L 형식·원가요소 형식 모두) → gl_voucher (해당 월 교체)
 //  · 분류 규칙: 코스트센터가 store_info.cost_center 와 일치(끝 S 는 판관용 코스트센터) → 매장 / 그 밖의 비매장 중 텍스트에 EP → 법인 안분 / 나머지 → 브랜드 안분
 //  · 인건비 계열(급여·퇴직급여·상여, gl_acct_map.hide_detail)은 업로드 때 전표번호·텍스트를 비우고 금액만 저장, 화면에서도 내역을 보여주지 않는다
 //  · 식재료원가(전표 기준) = 식품매출원가(42010301) − 제조 비용 합 — 브랜드 실적표와 월 40~260백만원 차이가 나는 파생 값이다 (원가 시스템 값을 그대로 쓰는 예상 쪽과 다름)
@@ -214,35 +214,84 @@ const GL_EP = /(^|[^A-Za-z])EP/i;
 const U = { rows: [], file: '', existing: [], busy: false };
 function glYmd(v) {
   if (v instanceof Date && !isNaN(v)) { const d = new Date(v.getTime() + 43200000); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`; }
-  const m = typeof v === 'string' && v.trim().match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  if (typeof v === 'number' && v > 20000 && v < 80000) return glYmd(new Date(Math.round((v - 25569) * 86400000)));   // 엑셀 날짜 일련번호
+  const s = typeof v === 'string' ? v.trim() : '';
+  const m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/) || s.match(/^(\d{4})(\d{2})(\d{2})$/);
   return m ? `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}` : null;
 }
-// 엑셀 → 행 목록 (시트마다 머리글 줄을 찾는다). 반복된 머리글·합계 줄은 날짜·금액이 없어 자동으로 빠진다
+// 금액: 숫자 · "1,234" · "-1,234" · "(1,234)" · SAP 식 뒤 마이너스 "1,234-" 모두 허용
+function glNum(v) {
+  if (typeof v === 'number') return v;
+  if (v == null) return NaN;
+  let s = String(v).replace(/[,\s ]/g, '');
+  if (!s) return NaN;
+  let neg = false;
+  if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+  if (s.endsWith('-')) { neg = !neg; s = s.slice(0, -1); }
+  const n = Number(s);
+  return isFinite(n) ? (neg ? -Math.abs(n) : n) : NaN;
+}
+// 행렬(첫 시트 전체 또는 붙여넣은 표) → 행 목록. 머리글 줄을 찾아 열을 맞춘다.
+//  · 옛 형식: 이름(=텍스트) · 전표 헤더 텍스트 · 원가 요소 · 원가요소이름 · Var 금액 · 코스트 센터 · 기능 영역 · 전표 번호 · 전기일
+//  · 새 형식(G/L): 전표 번호 · 전기일 · 입력일 · G/L 계정 · 이름(=계정명) · 금액(현지 통화) · 텍스트 · 코스트 센터 · 손익 센터 · 기능 영역
+//  반복된 머리글·합계 줄은 날짜·금액이 없어 자동으로 빠진다
+function glRows(rows, name, out, skipped) {
+  const cell = c => String(c == null ? '' : c).trim();
+  let hi = rows.findIndex(r => r && r.some(c => cell(c) === '코스트 센터'));
+  let col;
+  if (hi >= 0) {
+    const H = rows[hi].map(cell);
+    const ix = k => H.findIndex(h => h === k);
+    if (ix('G/L 계정') >= 0) {   // 새 형식 — 이름은 계정명, 텍스트는 표시용이자 법인 안분(EP) 판정용
+      const amt = (i => i >= 0 ? i : H.findIndex(h => h.startsWith('금액')))(H.findIndex(h => h.startsWith('금액(')));
+      col = { hdr: ix('텍스트'), text: ix('텍스트'), acct: ix('G/L 계정'), acctName: ix('이름'), amt, cc: ix('코스트 센터'), ccName: -1, func: ix('기능 영역'), doc: ix('전표 번호'), date: ix('전기일') };
+    } else {
+      const amt = (i => i >= 0 ? i : H.findIndex(h => h.startsWith('금액')))(H.findIndex(h => h.startsWith('Var')));
+      col = { hdr: ix('전표 헤더 텍스트'), text: ix('이름'), acct: ix('원가 요소'), acctName: ix('원가요소이름'), amt, cc: ix('코스트 센터'), ccName: ix('CO 오브젝트이름'), func: ix('기능 영역'), doc: ix('전표 번호'), date: ix('전기일') };
+    }
+  } else if (rows[0] && rows[0].length >= 10 && glYmd(rows[0][1])) {
+    // 머리글 없이 데이터만 붙여넣은 경우 — 새 형식의 열 순서로 본다
+    hi = -1;
+    col = { doc: 0, date: 1, acct: 3, acctName: 4, amt: 5, text: 6, hdr: 6, cc: 7, func: 9, ccName: -1 };
+  } else { skipped.noHeader.push(name); return; }
+  if ([col.acct, col.amt, col.cc, col.func, col.date].some(v => v < 0)) { skipped.noHeader.push(name); return; }
+  for (let i = hi + 1; i < rows.length; i++) {
+    const r = rows[i]; if (!r || r[col.cc] == null || cell(r[col.cc]) === '') continue;
+    const posted = glYmd(r[col.date]), amt = glNum(r[col.amt]);
+    if (!posted || !isFinite(amt)) { skipped.bad++; continue; }
+    out.push({
+      ym: posted.slice(0, 7), posted, doc: r[col.doc] == null || cell(r[col.doc]) === '' ? null : cell(r[col.doc]), cc: cell(r[col.cc]), ccName: col.ccName >= 0 && r[col.ccName] != null ? cell(r[col.ccName]) : null,
+      acct: cell(r[col.acct]), acctName: col.acctName >= 0 && r[col.acctName] != null ? cell(r[col.acctName]) : null, func: cell(r[col.func]),
+      amount: amt,
+      hdr: col.hdr >= 0 && r[col.hdr] != null ? cell(r[col.hdr]) : null,                    // 법인 안분(EP) 분류에만 쓴다 (옛 형식: 전표 헤더 텍스트, 새 형식: 텍스트)
+      text: col.text >= 0 && r[col.text] != null ? cell(r[col.text]) || null : null          // 전표 내역에 보이는 텍스트 (옛 형식: '이름' 열, 새 형식: '텍스트' 열)
+    });
+  }
+}
 async function glParse(file) {
   const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
   const out = [], skipped = { noHeader: [], bad: 0 };
-  for (const name of wb.SheetNames) {
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
-    const hi = rows.findIndex(r => r && r.some(c => String(c == null ? '' : c).trim() === '코스트 센터'));
-    if (hi < 0) { skipped.noHeader.push(name); continue; }
-    const H = rows[hi].map(c => String(c == null ? '' : c).trim());
-    const ix = k => H.findIndex(h => h === k);
-    const col = { hdr: ix('전표 헤더 텍스트'), text: ix('이름'), acct: ix('원가 요소'), acctName: ix('원가요소이름'), amt: H.findIndex(h => h.startsWith('Var')), cc: ix('코스트 센터'), ccName: ix('CO 오브젝트이름'), func: ix('기능 영역'), doc: ix('전표 번호'), date: ix('전기일') };
-    if ([col.acct, col.amt, col.cc, col.func, col.date].some(v => v < 0)) { skipped.noHeader.push(name); continue; }
-    for (let i = hi + 1; i < rows.length; i++) {
-      const r = rows[i]; if (!r || r[col.cc] == null) continue;
-      const posted = glYmd(r[col.date]);
-      const amt = typeof r[col.amt] === 'number' ? r[col.amt] : Number(String(r[col.amt]).replace(/,/g, ''));
-      if (!posted || !isFinite(amt)) { skipped.bad++; continue; }
-      out.push({
-        ym: posted.slice(0, 7), posted, doc: r[col.doc] == null ? null : String(r[col.doc]).trim(), cc: String(r[col.cc]).trim(), ccName: col.ccName >= 0 && r[col.ccName] != null ? String(r[col.ccName]).trim() : null,
-        acct: String(r[col.acct]).trim(), acctName: col.acctName >= 0 && r[col.acctName] != null ? String(r[col.acctName]).trim() : null, func: String(r[col.func]).trim(),
-        amount: amt,
-        hdr: col.hdr >= 0 && r[col.hdr] != null ? String(r[col.hdr]).trim() : null,                    // 전표 헤더 텍스트 — 법인 안분(EP) 분류에만 쓰고 저장·표시하지 않는다
-        text: col.text >= 0 && r[col.text] != null ? String(r[col.text]).trim() || null : null          // 전표 내역에 보이는 텍스트 = '이름' 열
-      });
-    }
+  for (const name of wb.SheetNames) glRows(XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null }), name, out, skipped);
+  return { rows: out, skipped };
+}
+// 엑셀에서 복사해 붙인 글자(탭으로 나뉜 표) → 행렬. 따옴표로 감싼 칸(줄바꿈·탭·큰따옴표 포함)을 처리한다
+function glTsv(text) {
+  const rows = []; let row = [], cur = '', q = false;
+  const s = String(text).replace(/\r\n?/g, '\n');
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (q) { if (ch === '"') { if (s[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"' && cur === '') q = true;
+    else if (ch === '\t') { row.push(cur); cur = ''; }
+    else if (ch === '\n') { row.push(cur); cur = ''; rows.push(row); row = []; }
+    else cur += ch;
   }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+function glParseText(text) {
+  const out = [], skipped = { noHeader: [], bad: 0 };
+  glRows(glTsv(text), '붙여넣은 내용', out, skipped);
   return { rows: out, skipped };
 }
 // 분류: 매장(코스트센터 일치) / 법인 안분(텍스트 EP) / 브랜드 안분
@@ -266,11 +315,26 @@ async function glChoose(file) {
   const msg = $('upMsg'), box = $('upPreview');
   $('upSave').disabled = true; U.rows = [];
   if (!file) { box.innerHTML = ''; msg.textContent = ''; return; }
-  msg.textContent = '엑셀을 읽는 중…'; msg.className = 'plan-msg';
+  $('upPaste').value = '';
+  await glShow(() => glParse(file), file.name, '엑셀을 읽는 중…');
+}
+// 엑셀에서 복사한 표를 붙여넣는 칸 — 붙여넣거나 "읽기"를 누르면 같은 미리보기가 나온다
+async function glPasteRead() {
+  const msg = $('upMsg'), box = $('upPreview'), t = $('upPaste').value;
+  $('upSave').disabled = true; U.rows = [];
+  if (!t.trim()) { box.innerHTML = ''; msg.textContent = ''; return; }
+  $('upFile').value = '';
+  await glShow(() => glParseText(t), '붙여넣은 내용', '붙여넣은 내용을 읽는 중…');
+}
+async function glShow(parse, label, wait) {
+  const msg = $('upMsg'), box = $('upPreview');
+  msg.textContent = wait; msg.className = 'plan-msg';
+  await new Promise(r => setTimeout(r, 30));   // 안내 문구가 먼저 그려지게 한다 (8천 행은 잠깐 걸린다)
   try {
-    const [{ rows, skipped }, pairs, ex] = await Promise.all([glParse(file), glLoadPairs(), sb.rpc('gl_monthly', { p_scope: 'all', p_store: null })]);
-    if (!rows.length) { msg.textContent = '읽을 수 있는 전표 행이 없습니다. 머리글(코스트 센터·원가 요소·전기일 등)을 확인해 주세요.'; msg.className = 'plan-msg err'; box.innerHTML = ''; return; }
+    const [{ rows, skipped }, pairs, ex] = await Promise.all([Promise.resolve().then(parse), glLoadPairs(), sb.rpc('gl_monthly', { p_scope: 'all', p_store: null })]);
+    if (!rows.length) { msg.textContent = '읽을 수 있는 전표 행이 없습니다. 머리글(코스트 센터·G/L 계정(또는 원가 요소)·금액·기능 영역·전기일)까지 포함해서 복사했는지 확인해 주세요.'; msg.className = 'plan-msg err'; box.innerHTML = ''; return; }
     glClassify(rows, S.storeByCc, pairs.hidden);
+    const file = { name: label };
     U.rows = rows; U.file = file.name; U.existing = [...new Set(((ex && ex.data) || []).map(r => r.ym))];
     const yms = [...new Set(rows.map(r => r.ym))].sort();
     const by = {}; for (const y of yms) by[y] = { n: 0, amt: 0, store: 0, corp: 0, brand: 0 };
@@ -314,10 +378,12 @@ async function glSave() {
       msg.textContent = `저장 중… ${Math.min(N, i + CH).toLocaleString('ko-KR')} / ${N.toLocaleString('ko-KR')}`;
     }
     const names = {}; for (const r of U.rows) if (r.ccName) names[r.cc] = r.ccName;
-    const { error: e2 } = await sb.from('gl_cc_names').upsert(Object.entries(names).map(([cost_center, name]) => ({ cost_center, name })), { onConflict: 'cost_center' });
-    if (e2) return fail('코스트센터 이름 저장 실패: ' + e2.message);
+    if (Object.keys(names).length) {   // 새 형식(G/L)에는 코스트센터 이름이 없다 — 그땐 기존 이름을 그대로 둔다
+      const { error: e2 } = await sb.from('gl_cc_names').upsert(Object.entries(names).map(([cost_center, name]) => ({ cost_center, name })), { onConflict: 'cost_center' });
+      if (e2) return fail('코스트센터 이름 저장 실패: ' + e2.message);
+    }
     S.gl = {}; S.glAlloc = null;                 // 캐시 비우기 → 실적 추이가 새 전표로 다시 계산된다
     msg.textContent = `저장했습니다 — 전표 ${N.toLocaleString('ko-KR')}행 (${yms[0]} ~ ${yms[yms.length - 1]}). "실적 추이"에서 확인하세요.`; msg.className = 'plan-msg ok';
-    U.rows = []; U.busy = false; $('upFile').value = '';
+    U.rows = []; U.busy = false; $('upFile').value = ''; $('upPaste').value = '';
   } catch (e) { fail('저장 실패: ' + (e.message || e)); }
 }

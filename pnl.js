@@ -49,6 +49,8 @@ async function init() {
   $('acScope').onchange = () => { S.acScope = $('acScope').value; S.actScrolled = false; renderAll(); if (S.tab === 'actual') showTab('actual'); };
   $('upFile').onchange = () => glChoose($('upFile').files[0]);
   $('upSave').onclick = glSave;
+  $('upRead').onclick = glPasteRead;
+  $('upPaste').addEventListener('paste', () => setTimeout(glPasteRead, 50));   // 붙여넣으면 바로 읽는다 (붙여넣은 글자가 칸에 들어간 뒤)
   $('glClose').onclick = () => { $('glModal').hidden = true; };
   $('glModal').onclick = e => { if (e.target === $('glModal')) $('glModal').hidden = true; };
   $('adjAdd').onclick = addAdjust;

@@ -100,10 +100,14 @@
 
     <section id="view-upload" class="view" hidden>
       <h2>전표 업로드</h2>
-      <p class="view-sub">SAP 원가요소 전표 엑셀(이름·전표 헤더 텍스트·원가 요소·원가요소이름·금액·코스트 센터·기능 영역·전표 번호·전기일)을 올리면, 파일에 들어 있는 월의 전표를 교체해 저장합니다. 다음 달부터도 같은 화면으로 올리면 됩니다.</p>
+      <p class="view-sub">SAP 전표를 <b>엑셀에서 복사해 아래 칸에 붙여넣거나</b> 엑셀 파일을 올리면, 그 안에 들어 있는 월의 전표를 교체해 저장합니다. 두 가지 형식을 모두 읽습니다 — ① G/L 형식(전표 번호·전기일·입력일·G/L 계정·이름·금액(현지 통화)·텍스트·코스트 센터·손익 센터·기능 영역), ② 원가요소 형식(이름·전표 헤더 텍스트·원가 요소·원가요소이름·금액·코스트 센터·기능 영역·전표 번호·전기일). 머리글 줄까지 함께 복사하세요.</p>
       <div class="card">
+        <label class="fld" style="display:block;margin-bottom:10px">붙여넣기 (엑셀에서 머리글 포함 전체 복사 → 여기에 Ctrl+V)
+          <textarea id="upPaste" rows="5" spellcheck="false" placeholder="전표 번호&#9;전기일&#9;입력일&#9;G/L 계정&#9;이름&#9;금액(현지 통화)&#9;텍스트&#9;코스트 센터&#9;손익 센터&#9;기능 영역&#10;…" style="width:100%;box-sizing:border-box;font:12px/1.5 Consolas,monospace;white-space:pre;overflow:auto;padding:8px;border:1px solid #cfd6d3;border-radius:6px"></textarea>
+        </label>
         <div class="adjform">
-          <label class="fld" style="min-width:320px">엑셀 파일<input id="upFile" type="file" accept=".xlsx,.xls"></label>
+          <button id="upRead" class="btn btn-sm" type="button">붙여넣은 내용 읽기</button>
+          <label class="fld" style="min-width:320px">또는 엑셀 파일<input id="upFile" type="file" accept=".xlsx,.xls"></label>
           <button id="upSave" class="btn btn-sm" type="button" disabled>저장 (해당 월 교체)</button>
           <span id="upMsg" class="plan-msg"></span>
         </div>
@@ -146,8 +150,8 @@
 <script src="../ot-seed.js?v=202610291500"></script>
 <script src="../labor-calc.js?v=202611031003"></script>
 <script src="../pnl-accounts.js?v=202611041000"></script>
-<script src="../pnl-gl.js?v=202611042300"></script>
+<script src="../pnl-gl.js?v=202611121530"></script>
 <script src="../pnl-est.js?v=202611041700"></script>
-<script src="../pnl.js?v=202611111100"></script>
+<script src="../pnl.js?v=202611121530"></script>
 </body>
 </html>
