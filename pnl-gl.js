@@ -244,7 +244,7 @@ function glRows(rows, name, out, skipped) {
     const ix = k => H.findIndex(h => h === k);
     if (ix('G/L 계정') >= 0) {   // 새 형식 — 이름은 계정명, 텍스트는 표시용이자 법인 안분(EP) 판정용
       const amt = (i => i >= 0 ? i : H.findIndex(h => h.startsWith('금액')))(H.findIndex(h => h.startsWith('금액(')));
-      col = { hdr: ix('텍스트'), text: ix('텍스트'), acct: ix('G/L 계정'), acctName: ix('이름'), amt, cc: ix('코스트 센터'), ccName: -1, func: ix('기능 영역'), doc: ix('전표 번호'), date: ix('전기일') };
+      col = { hdr: ix('텍스트'), text: ix('텍스트'), acct: ix('G/L 계정'), acctName: ix('이름'), amt, cc: ix('코스트 센터'), pc: ix('손익 센터'), ccName: -1, func: ix('기능 영역'), doc: ix('전표 번호'), date: ix('전기일') };
     } else {
       const amt = (i => i >= 0 ? i : H.findIndex(h => h.startsWith('금액')))(H.findIndex(h => h.startsWith('Var')));
       col = { hdr: ix('전표 헤더 텍스트'), text: ix('이름'), acct: ix('원가 요소'), acctName: ix('원가요소이름'), amt, cc: ix('코스트 센터'), ccName: ix('CO 오브젝트이름'), func: ix('기능 영역'), doc: ix('전표 번호'), date: ix('전기일') };
@@ -252,15 +252,23 @@ function glRows(rows, name, out, skipped) {
   } else if (rows[0] && rows[0].length >= 10 && glYmd(rows[0][1])) {
     // 머리글 없이 데이터만 붙여넣은 경우 — 새 형식의 열 순서로 본다
     hi = -1;
-    col = { doc: 0, date: 1, acct: 3, acctName: 4, amt: 5, text: 6, hdr: 6, cc: 7, func: 9, ccName: -1 };
+    col = { doc: 0, date: 1, acct: 3, acctName: 4, amt: 5, text: 6, hdr: 6, cc: 7, pc: 8, func: 9, ccName: -1 };
   } else { skipped.noHeader.push(name); return; }
   if ([col.acct, col.amt, col.cc, col.func, col.date].some(v => v < 0)) { skipped.noHeader.push(name); return; }
+  skipped.hasHeader = hi >= 0; skipped.nocc = skipped.nocc || 0; skipped.badRows = skipped.badRows || [];
   for (let i = hi + 1; i < rows.length; i++) {
-    const r = rows[i]; if (!r || r[col.cc] == null || cell(r[col.cc]) === '') continue;
+    const r = rows[i]; if (!r || !r.some(c => cell(c) !== '')) continue;                 // 완전히 빈 줄
+    if (cell(r[col.cc]) === '코스트 센터') continue;                                      // 중간에 반복된 머리글
     const posted = glYmd(r[col.date]), amt = glNum(r[col.amt]);
-    if (!posted || !isFinite(amt)) { skipped.bad++; continue; }
+    let cc = cell(r[col.cc]);
+    if (!posted || !isFinite(amt)) {
+      if (cc === '') continue;                                                            // 날짜·금액·코스트센터가 모두 없는 줄(합계·소계 등)
+      skipped.bad++; if (skipped.badRows.length < 5) skipped.badRows.push(r.slice(0, 10).map(cell).join(' | ')); continue;
+    }
+    // 코스트 센터가 비어 있는 전표(매출·영업외 등 손익센터만 있는 줄) — 버리면 행수·합계가 파일과 안 맞는다. 손익 센터로 대신하고, 그것도 없으면 '(없음)'
+    if (cc === '') { skipped.nocc++; cc = col.pc >= 0 && cell(r[col.pc]) !== '' ? cell(r[col.pc]) : '(없음)'; }
     out.push({
-      ym: posted.slice(0, 7), posted, doc: r[col.doc] == null || cell(r[col.doc]) === '' ? null : cell(r[col.doc]), cc: cell(r[col.cc]), ccName: col.ccName >= 0 && r[col.ccName] != null ? cell(r[col.ccName]) : null,
+      ym: posted.slice(0, 7), posted, doc: r[col.doc] == null || cell(r[col.doc]) === '' ? null : cell(r[col.doc]), cc, ccName: col.ccName >= 0 && r[col.ccName] != null ? cell(r[col.ccName]) : null,
       acct: cell(r[col.acct]), acctName: col.acctName >= 0 && r[col.acctName] != null ? cell(r[col.acctName]) : null, func: cell(r[col.func]),
       amount: amt,
       hdr: col.hdr >= 0 && r[col.hdr] != null ? cell(r[col.hdr]) : null,                    // 법인 안분(EP) 분류에만 쓴다 (옛 형식: 전표 헤더 텍스트, 새 형식: 텍스트)
@@ -276,13 +284,25 @@ async function glParse(file) {
 }
 // 엑셀에서 복사해 붙인 글자(탭으로 나뉜 표) → 행렬. 따옴표로 감싼 칸(줄바꿈·탭·큰따옴표 포함)을 처리한다
 function glTsv(text) {
-  const rows = []; let row = [], cur = '', q = false;
-  const s = String(text).replace(/\r\n?/g, '\n');
-  for (let i = 0; i < s.length; i++) {
+  const rows = []; let row = [], cur = '';
+  const s = String(text).replace(/\r\n?/g, '\n'), N = s.length;
+  // 칸이 따옴표로 시작하면, 칸 끝(따옴표 바로 뒤가 탭·줄바꿈·끝)에서 닫히는 경우에만 "감싼 칸"으로 본다. 닫히지 않으면 그냥 글자 — 줄이 통째로 합쳐지는 것을 막는다
+  const quotedEnd = i => {
+    for (let j = i + 1; j < N && j < i + 3000; j++) {
+      if (s[j] !== '"') continue;
+      if (s[j + 1] === '"') { j++; continue; }
+      if (j + 1 === N || s[j + 1] === '\t' || s[j + 1] === '\n') return j;
+      return -1;
+    }
+    return -1;
+  };
+  for (let i = 0; i < N; i++) {
     const ch = s[i];
-    if (q) { if (ch === '"') { if (s[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
-    else if (ch === '"' && cur === '') q = true;
-    else if (ch === '\t') { row.push(cur); cur = ''; }
+    if (ch === '"' && cur === '') {
+      const e = quotedEnd(i);
+      if (e > 0) { cur = s.slice(i + 1, e).replace(/""/g, '"'); i = e; continue; }
+    }
+    if (ch === '\t') { row.push(cur); cur = ''; }
     else if (ch === '\n') { row.push(cur); cur = ''; rows.push(row); row = []; }
     else cur += ch;
   }
@@ -291,7 +311,10 @@ function glTsv(text) {
 }
 function glParseText(text) {
   const out = [], skipped = { noHeader: [], bad: 0 };
-  glRows(glTsv(text), '붙여넣은 내용', out, skipped);
+  const M = glTsv(text);
+  glRows(M, '붙여넣은 내용', out, skipped);
+  skipped.pasted = M.filter(r => r.some(c => String(c).trim() !== '')).length - (skipped.hasHeader ? 1 : 0);   // 표로 읽힌 데이터 줄 수(머리글 제외) — 읽은 전표 행수와 비교해 빠진 줄을 찾는다
+  skipped.rawLines = String(text).split(/\r\n?|\n/).filter(x => x.trim() !== '').length;
   return { rows: out, skipped };
 }
 // 분류: 매장(코스트센터 일치) / 법인 안분(텍스트 EP) / 브랜드 안분
@@ -344,12 +367,15 @@ async function glShow(parse, label, wait) {
     const looksStore = Object.keys(nonStoreCc).filter(c => /^RU01S\d{4}S?$/.test(c));
     const hiddenN = rows.filter(r => r.hide).length;
     const money = v => Math.round(v / 1e6).toLocaleString('ko-KR');
-    let h = `<p class="dnote" style="margin:0 0 8px"><b>${esc(file.name)}</b> — 전표 ${rows.length.toLocaleString('ko-KR')}행 · ${yms.length}개월 (${yms[0]} ~ ${yms[yms.length - 1]})${skipped.bad ? ` · 날짜·금액이 없어 건너뛴 줄 ${skipped.bad}` : ''}${skipped.noHeader.length ? ` · 머리글을 못 찾은 시트: ${esc(skipped.noHeader.join(', '))}` : ''}</p>` +
+    let h = `<p class="dnote" style="margin:0 0 8px"><b>${esc(file.name)}</b> — 전표 ${rows.length.toLocaleString('ko-KR')}행 · ${yms.length}개월 (${yms[0]} ~ ${yms[yms.length - 1]})${skipped.bad ? ` · <span style="color:var(--crit)">날짜·금액이 잘못돼 건너뛴 줄 ${skipped.bad}</span>` : ''}${skipped.noHeader.length ? ` · 머리글을 못 찾은 시트: ${esc(skipped.noHeader.join(', '))}` : ''}</p>` +
       '<div class="tblwrap"><table class="pnl small"><thead><tr><th>월</th><th class="num">행수</th><th class="num">합계(백만원)</th><th class="num">매장</th><th class="num">법인 안분</th><th class="num">브랜드 안분</th><th>저장 시</th></tr></thead><tbody>' +
       yms.map(y => { const b = by[y]; return `<tr><td>${y}</td><td class="num">${b.n.toLocaleString('ko-KR')}</td><td class="num">${money(b.amt)}</td><td class="num">${b.store.toLocaleString('ko-KR')}</td><td class="num">${b.corp.toLocaleString('ko-KR')}</td><td class="num">${b.brand.toLocaleString('ko-KR')}</td><td>${U.existing.includes(y) ? '<span style="color:var(--crit)">기존 전표 교체</span>' : '신규'}</td></tr>`; }).join('') + '</tbody></table></div>';
     const li = [];
     li.push(`매장 매칭 코스트센터 ${new Set(rows.filter(r => r.store).map(r => r.store)).size}개 매장 · 비매장 코스트센터 ${Object.keys(nonStoreCc).length}개는 안분(텍스트에 EP → 법인, 나머지 → 브랜드)`);
     li.push(`인건비 계열 ${hiddenN.toLocaleString('ko-KR')}행은 전표번호·텍스트를 비우고 금액만 저장합니다.`);
+    if (skipped.pasted) li.push(`붙여넣은 줄 ${skipped.rawLines.toLocaleString('ko-KR')}개(머리글 포함) → 표로 읽힌 데이터 ${skipped.pasted.toLocaleString('ko-KR')}행 → 전표 ${rows.length.toLocaleString('ko-KR')}행${skipped.pasted !== rows.length ? ` <span style="color:var(--crit)">(${(skipped.pasted - rows.length).toLocaleString('ko-KR')}행이 빠짐 — 위 건너뛴 줄 참고)</span>` : ' — 모두 읽었습니다'}`);
+    if (skipped.nocc) li.push(`코스트 센터가 비어 있는 전표 ${skipped.nocc.toLocaleString('ko-KR')}행은 손익 센터(없으면 '(없음)')로 대신해 포함했습니다 — 매출·영업외처럼 코스트센터 없이 손익센터로만 올라온 줄입니다. 계정 매핑이 없는 것은 아래에 표시됩니다.`);
+    if (skipped.badRows && skipped.badRows.length) li.push(`<span style="color:var(--crit)">건너뛴 줄 예시: ${skipped.badRows.map(esc).join(' ⏎ ')}</span>`);
     if (looksStore.length) li.push(`<span style="color:var(--crit)">매장 코스트센터처럼 보이지만 매장정보(코스트센터)에 없는 것: ${esc(looksStore.join(', '))} — 매장정보에서 코스트센터를 맞춘 뒤 다시 올리거나, 이대로 저장하면 브랜드 안분으로 들어갑니다.</span>`);
     const um = Object.entries(unmapped);
     if (um.length) li.push(`<span style="color:var(--crit)">계정 매핑이 없는 원가요소 ${um.length}개 (기능영역별): ${esc(um.slice(0, 8).map(([k, v]) => `${k} ${v.name || ''}(${v.n}행)`).join(', '))}${um.length > 8 ? ' …' : ''} — 저장은 되지만 gl_acct_map 에 추가해야 손익 계정에 반영됩니다.</span>`);
