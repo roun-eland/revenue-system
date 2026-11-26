@@ -3921,7 +3921,7 @@ async function saveUsageRecords(rows, periodStart, periodEnd) {
 
   const { error } = await sb.from('material_usage').insert(rows);
   if (error) throw new Error(error.message);
-  await loadUsageView();
+  await Promise.all([loadUsageSummary(), loadUsageView()]);
   return toDelete.length;
 }
 
@@ -4157,6 +4157,55 @@ $('#saveMeatPriceGridBtn').addEventListener('click', async () => {
 });
 
 let usageViewCache = [];
+// 저장된 식자재 사용량 — 기간(주차)별 요약 (잘못/중복 올린 기간은 삭제). 부자재(loadSubView)와 같은 형식 + "최근 등록" 일시.
+// 시즌 선택과 무관하게 위의 "등록 연월" 기준 — 시즌 범위로 자르면 시즌 경계의 업로드가 가려진다.
+let usageSummaryReq = 0;
+async function loadUsageSummary() {
+  const body = $('#usageSummaryBody');
+  const month = $('#usageMonthInput').value; // "YYYY-MM"
+  const req = ++usageSummaryReq;
+  const note = (msg) => { body.innerHTML = `<tr><td colspan="6" class="hint">${msg}</td></tr>`; };
+  if (!month) { note('등록 연월을 선택해주세요.'); return; }
+  note('불러오는 중…');
+  const { data, error } = await fetchAllRows('material_usage', q => q.eq('usage_month', `${month}-01`),
+    'period_start, period_end, store_code, actual_usage_amount, created_at');
+  if (req !== usageSummaryReq) return; // 그 사이 다른 연월을 고름
+  if (error) { note('불러오기 실패: ' + error.message); return; }
+  const by = {};
+  (data || []).forEach(r => {
+    if (!r.period_start || !r.period_end) return;
+    const k = `${r.period_start}|${r.period_end}`;
+    const b = by[k] = by[k] || { stores: new Set(), n: 0, amt: 0, at: '' };
+    b.stores.add(r.store_code); b.n++; b.amt += Number(r.actual_usage_amount) || 0;
+    if (r.created_at && r.created_at > b.at) b.at = r.created_at;
+  });
+  if (!Object.keys(by).length) { note(`${month}에 저장된 식자재 사용량이 없습니다.`); return; }
+  const fmtAt = (iso) => {
+    const d = new Date(iso);
+    if (!iso || isNaN(d)) return '-';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getMonth() + 1}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  body.innerHTML = Object.keys(by).sort().reverse().map(k => {
+    const [s, e2] = k.split('|'), b = by[k];
+    return `<tr data-k="${k}"><td>${s} ~ ${e2}</td><td>${b.stores.size}</td><td>${b.n.toLocaleString('ko-KR')}</td><td>${Math.round(b.amt).toLocaleString('ko-KR')}</td><td>${fmtAt(b.at)}</td><td><button type="button" class="row-del-btn" title="이 기간 삭제">×</button></td></tr>`;
+  }).join('');
+  body.querySelectorAll('.row-del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const [s, e2] = btn.closest('tr').dataset.k.split('|');
+      if (!confirm(`${s} ~ ${e2} 식자재 사용량 전체(전 매장)를 삭제할까요? 되돌릴 수 없습니다.`)) return;
+      btn.disabled = true;
+      flash($('#usageSaveMsg'), '삭제 중…');
+      const { error: delErr } = await sb.from('material_usage').delete()
+        .eq('usage_month', `${month}-01`).eq('period_start', s).eq('period_end', e2);
+      if (delErr) { btn.disabled = false; flash($('#usageSaveMsg'), '삭제 실패: ' + delErr.message, false); return; }
+      flash($('#usageSaveMsg'), `${s} ~ ${e2} 삭제되었습니다.`);
+      await Promise.all([loadUsageSummary(), loadUsageView()]);
+    });
+  });
+}
+$('#usageMonthInput').addEventListener('change', loadUsageSummary);
+loadUsageSummary();
 async function loadUsageView() {
   if (!state.currentSeasonId) return;
   const { data: raw, error } = await fetchAllRows('material_usage', q => applySeasonDateFilter(q, 'period_end'));

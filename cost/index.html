@@ -646,6 +646,12 @@
           <input type="file" id="usageFileInput" accept=".xlsx,.xls">
           <span id="usageSaveMsg" class="save-msg"></span>
         </div>
+        <div class="table-scroll" style="margin-top:8px">
+          <table class="data-table">
+            <thead><tr><th>기간</th><th>매장 수</th><th>행 수</th><th>식자재 사용액(원)</th><th>최근 등록</th><th></th></tr></thead>
+            <tbody id="usageSummaryBody"><tr><td colspan="6" class="hint">불러오는 중…</td></tr></tbody>
+          </table>
+        </div>
         <details style="margin-top:6px">
           <summary class="hint" style="cursor:pointer">직접 붙여넣기 (백업 — 파일이 없을 때)</summary>
           <div class="history-year-row" style="margin-top:6px">
@@ -875,6 +881,6 @@
 <script src="../nav.js?v=202611091200"></script>
 <script src="../vendor/xlsx.full.min.js"></script>
 <script src="../export-tables.js?v=202610021405"></script>
-<script src="../app.js?v=202611111030"></script>
+<script src="../app.js?v=202611261000"></script>
 </body>
 </html>
